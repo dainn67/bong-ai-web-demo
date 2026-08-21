@@ -122,6 +122,26 @@ Real hardware has no image decoder and the backend pre-converts stills to
 RGB565 for it. A browser has no such problem, so the simulator can show
 animation the badge cannot yet — which is the point of having one.
 
+## Mock artwork
+
+Nothing sends `display` frames yet, so there is no way to see the device
+showing real content — or to demo it — without inventing the content. `Mock
+screen` in the drawer does that:
+
+- **Drawn faces**, on by default. Stand-in artwork per expression instead of
+  emoji, since the emoji were always a placeholder for artwork that does not
+  exist.
+- **Four scenes** — bedtime, forest, rocket, colours — standing in for lesson
+  and story pictures. Pushing one goes through the same reducer a real
+  `display` frame does, so it exercises that path rather than working around
+  it. The packet log marks them `display (mock)` so they are never mistaken
+  for something the backend sent.
+
+Everything lives in `public/mock/` as self-contained animated SVG: no network,
+no dependency, and it still works on a laptop with no wifi in front of someone
+you are trying to impress. Replace the files to swap in real artwork — the
+paths in `src/mock/screen-assets.ts` are the only contract.
+
 ## Two protocol details that will waste your afternoon
 
 Both come from the handshake, and both fail quietly rather than loudly:

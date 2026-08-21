@@ -7,6 +7,7 @@
  */
 
 import { useSimulatorStore } from '../store/simulator-store';
+import { MOCK_FACES } from '../mock/screen-assets';
 import type { Emotion, Expression } from '../protocol/message-types';
 import type { FaceMode } from './face-state-machine';
 
@@ -55,15 +56,17 @@ export function RoundScreen() {
   const face = useSimulatorStore((state) => state.face);
   const status = useSimulatorStore((state) => state.status);
   const speaking = useSimulatorStore((state) => state.speaking);
+  const mockFaces = useSimulatorStore((state) => state.mockFaces);
 
   const isAwake = status === 'connected';
   // Precedence, strongest first: artwork the backend sent, a face it named,
   // the talking face, then the mood we inferred from the reply.
-  const glyph = face.expression
-    ? EXPRESSION_FACES[face.expression]
-    : face.mode === 'speaking'
-      ? SPEAKING_FACE
-      : FACES[face.emotion];
+  const expression: Expression = !isAwake
+    ? 'sleeping'
+    : (face.expression ?? (face.mode === 'speaking' ? 'talking' : face.emotion));
+  const glyph = isAwake
+    ? (face.expression ? EXPRESSION_FACES[face.expression] : face.mode === 'speaking' ? SPEAKING_FACE : FACES[face.emotion])
+    : '😴';
 
   return (
     <div className={`relative ${isAwake ? 'animate-bob' : ''}`}>
@@ -83,13 +86,23 @@ export function RoundScreen() {
               <img src={face.imageUrl} alt="" className="h-full w-full object-cover" />
             ) : (
               <div className="flex flex-col items-center gap-4 px-10 text-center">
-                <span
-                  className={`text-8xl leading-none drop-shadow-[0_0_18px_rgba(255,255,255,0.25)] ${
-                    face.mode === 'speaking' ? 'animate-pulse' : 'animate-breathe'
-                  }`}
-                >
-                  {isAwake ? glyph : '😴'}
-                </span>
+                {mockFaces ? (
+                  // Artwork is already animated in the file, so no CSS breathing
+                  // on top of it — two rhythms at once reads as a glitch.
+                  <img
+                    src={MOCK_FACES[expression]}
+                    alt=""
+                    className="h-48 w-48 sm:h-56 sm:w-56"
+                  />
+                ) : (
+                  <span
+                    className={`text-8xl leading-none drop-shadow-[0_0_18px_rgba(255,255,255,0.25)] ${
+                      face.mode === 'speaking' ? 'animate-pulse' : 'animate-breathe'
+                    }`}
+                  >
+                    {glyph}
+                  </span>
+                )}
                 {!isAwake && (
                   <p className="text-sm font-medium text-ink-300">Bống đang ngủ</p>
                 )}
