@@ -68,6 +68,14 @@ interface SimulatorState {
   framesIn: number;
   framesOut: number;
 
+  /**
+   * Draw faces from the mock artwork instead of emoji.
+   *
+   * On by default: the emoji were always a placeholder for artwork that does
+   * not exist yet, and a demo should show the thing it is pretending to be.
+   */
+  mockFaces: boolean;
+
   updateConfig: (patch: Partial<DeviceConfig>) => void;
   connect: () => void;
   disconnect: () => void;
@@ -78,6 +86,10 @@ interface SimulatorState {
   startListening: () => Promise<void>;
   stopListening: () => void;
   setVolume: (volume: number) => void;
+
+  setMockFaces: (enabled: boolean) => void;
+  /** Puts a stand-in picture on the screen, or clears it with null. */
+  showMockScene: (url: string | null) => void;
 }
 
 /**
@@ -109,6 +121,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   audioError: null,
   framesIn: 0,
   framesOut: 0,
+  mockFaces: true,
 
   updateConfig: (patch) => {
     const config = { ...get().config, ...patch };
@@ -209,6 +222,19 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   setVolume: (volume) => {
     player?.setVolume(volume);
     set({ volume });
+  },
+
+  setMockFaces: (mockFaces) => set({ mockFaces }),
+
+  /**
+   * Deliberately routed through the same reducer a real frame goes through,
+   * rather than writing `imageUrl` directly. Pushing a mock picture is then a
+   * genuine exercise of the display path, and cannot drift away from it.
+   */
+  showMockScene: (url) => {
+    const message: IncomingMessage = { type: 'display', action: 'show_image', url: url ?? undefined };
+    appendPacket(set, get, 'in', 'display (mock)', message);
+    handleMessage(set, get, message);
   },
 }));
 
