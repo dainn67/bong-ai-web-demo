@@ -86,6 +86,33 @@ The worklet is excluded from Vite's asset inlining in `vite.config.ts`:
 `audioWorklet.addModule()` refuses a `data:` URL, and dev serves a real path
 either way, so inlining breaks the built bundle only.
 
+## Server-driven screen content
+
+The backend can take the screen over: a face by name, or an image — a GIF, a
+lesson picture — that fills the circle in place of any face.
+
+```json
+{"type":"display","action":"expression","name":"thinking"}
+{"type":"display","action":"show_image","url":"https://…/story.gif"}
+{"type":"display","action":"show_image","url":null}
+```
+
+That last one, an image frame with no URL, clears the screen.
+
+Two caveats, because none of this has ever come over the live socket:
+
+- **Two spellings exist.** The backend schema builds `{"type":"display",
+  "action":…}`; an older client listens for `{"type":"display_expression"}` and
+  `{"type":"display_image"}`. Both are accepted here. When the backend picks
+  one, delete the other.
+- **Named faces outrank the mood** we infer from a reply, until the next reply
+  arrives. Images outlive replies entirely, and go only when replaced or
+  cleared — a lesson picture should not vanish because the badge said something.
+
+Real hardware has no image decoder and the backend pre-converts stills to
+RGB565 for it. A browser has no such problem, so the simulator can show
+animation the badge cannot yet — which is the point of having one.
+
 ## Two protocol details that will waste your afternoon
 
 Both come from the handshake, and both fail quietly rather than loudly:
@@ -103,7 +130,13 @@ Both come from the handshake, and both fail quietly rather than loudly:
 
 ```bash
 npm test
+node scripts/fake-server.mjs   # a backend that says what you tell it to
 ```
+
+The live server is intermittent and never sends `display` frames, so the fake
+one is how you exercise screen content and any other reply you need on demand.
+Point the connection panel at `ws://localhost:5181/`, with a dead OTA URL so
+the client falls back to it.
 
 Tests cover the pure logic — frame parsing, URL building, the face state
 machine. They run in Node with no DOM, so the whole suite is near-instant.

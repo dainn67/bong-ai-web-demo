@@ -65,6 +65,64 @@ describe('face state machine', () => {
     expect(state).toBe(INITIAL_FACE_STATE);
   });
 
+  it('shows an image the backend sends, in either spelling', () => {
+    const schema = reduceFace(INITIAL_FACE_STATE, {
+      type: 'display',
+      action: 'show_image',
+      url: 'https://cdn/story.gif',
+    });
+    const legacy = reduceFace(INITIAL_FACE_STATE, {
+      type: 'display_image',
+      url: 'https://cdn/story.gif',
+    });
+
+    // Two spellings are in circulation and neither has been seen live, so the
+    // simulator has to accept whichever the backend settles on.
+    expect(schema.imageUrl).toBe('https://cdn/story.gif');
+    expect(legacy.imageUrl).toBe('https://cdn/story.gif');
+  });
+
+  it('treats an image frame with no url as clearing the screen', () => {
+    const showing = reduceFace(INITIAL_FACE_STATE, { type: 'display_image', url: 'https://cdn/a.gif' });
+    const cleared = reduceFace(showing, { type: 'display_image', url: null });
+
+    expect(cleared.imageUrl).toBeNull();
+  });
+
+  it('wears a face the backend names outright, including ones no reply produces', () => {
+    const next = reduceFace(INITIAL_FACE_STATE, {
+      type: 'display',
+      action: 'expression',
+      name: 'thinking',
+    });
+
+    // `thinking` is a device state, not a conversational mood — it has no
+    // route in through `llm`.
+    expect(next.expression).toBe('thinking');
+  });
+
+  it('ignores a face name it does not know rather than blanking the screen', () => {
+    const named = reduceFace(INITIAL_FACE_STATE, { type: 'display', action: 'expression', name: 'smug' });
+    expect(named).toBe(INITIAL_FACE_STATE);
+  });
+
+  it('drops a named face when the next reply arrives, but keeps the artwork', () => {
+    const named = reduceFace(INITIAL_FACE_STATE, { type: 'display', action: 'expression', name: 'thinking' });
+    const withImage = reduceFace(named, { type: 'display_image', url: 'https://cdn/lesson.gif' });
+    const replied = reduceFace(withImage, { type: 'llm', text: 'xong rồi', emotion: 'happy' });
+
+    // A fresh mood supersedes a face the backend named a moment ago. Artwork
+    // outlives it: a lesson image stays up across the whole exchange.
+    expect(replied.expression).toBeNull();
+    expect(replied.emotion).toBe('happy');
+    expect(replied.imageUrl).toBe('https://cdn/lesson.gif');
+  });
+
+  it('clears artwork on a fresh handshake so a reconnect starts clean', () => {
+    const showing = reduceFace(INITIAL_FACE_STATE, { type: 'display_image', url: 'https://cdn/a.gif' });
+    expect(reduceFace(showing, { type: 'hello', session_id: 's3' })).toEqual(INITIAL_FACE_STATE);
+  });
+
   it('resets on a fresh handshake so a reconnect starts clean', () => {
     const speaking = reduceFace(INITIAL_FACE_STATE, { type: 'tts', state: 'start' });
     const rehello: IncomingMessage = { type: 'hello', session_id: 's2' };

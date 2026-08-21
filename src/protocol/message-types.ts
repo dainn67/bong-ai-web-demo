@@ -56,6 +56,97 @@ export interface IotIn {
   commands: unknown[];
 }
 
+/**
+ * Faces the backend can command directly, as opposed to the mood it infers.
+ *
+ * A superset of `Emotion`: the display command carries device states like
+ * `thinking` and `listening` that a conversation never produces.
+ */
+export const EXPRESSIONS = [
+  'happy',
+  'sad',
+  'angry',
+  'surprised',
+  'neutral',
+  'thinking',
+  'excited',
+  'sleeping',
+  'listening',
+  'talking',
+  'confused',
+  'waving',
+  'offline',
+] as const;
+export type Expression = (typeof EXPRESSIONS)[number];
+
+export function toExpression(value: unknown): Expression | null {
+  return EXPRESSIONS.includes(value as Expression) ? (value as Expression) : null;
+}
+
+/**
+ * Server-driven screen content: a named face, or an image to show instead.
+ *
+ * Two spellings are in circulation. The backend schema builds
+ * `{ type: 'display', action: 'expression' | 'show_image' }`; an older client
+ * listens for `{ type: 'display_expression' }` and `{ type: 'display_image' }`.
+ * Nothing has ever sent either over the live socket, so neither is proven —
+ * accepting both is the cheap way to be right whichever wins.
+ */
+export interface DisplayIn {
+  type: 'display';
+  action: 'expression' | 'show_image';
+  name?: string;
+  url?: string;
+  width?: number;
+  height?: number;
+  format?: string;
+}
+
+export interface DisplayExpressionIn {
+  type: 'display_expression';
+  name?: string;
+}
+
+export interface DisplayImageIn {
+  type: 'display_image';
+  url?: string | null;
+}
+
+/** What a display frame resolves to once the spelling is normalised away. */
+export type DisplayCommand =
+  | { kind: 'expression'; name: Expression }
+  | { kind: 'image'; url: string }
+  /** An image frame carrying no URL is the server clearing the screen. */
+  | { kind: 'clear' };
+
+/** Reads either spelling, or returns null for anything that is not a display frame. */
+export function toDisplayCommand(message: IncomingMessage): DisplayCommand | null {
+  if (message.type === 'display_expression' || message.type === 'display_image') {
+    return fromParts(
+      message.type === 'display_expression' ? 'expression' : 'show_image',
+      (message as DisplayExpressionIn).name,
+      (message as DisplayImageIn).url,
+    );
+  }
+  if (message.type === 'display') return fromParts(message.action, message.name, message.url);
+  return null;
+}
+
+function fromParts(
+  action: string,
+  name?: string,
+  url?: string | null,
+): DisplayCommand | null {
+  if (action === 'expression') {
+    const expression = toExpression(name);
+    // An unknown face name is dropped rather than guessed at: leaving the
+    // current one up is always better than showing the wrong feeling.
+    return expression ? { kind: 'expression', name: expression } : null;
+  }
+  if (action === 'show_image') return url ? { kind: 'image', url } : { kind: 'clear' };
+  return null;
+}
+
 /** Model-context-protocol payload. Safe to ignore — we declare `mcp: false`. */
 export interface McpIn {
   type: 'mcp';
@@ -79,6 +170,9 @@ export type IncomingMessage =
   | SttIn
   | LlmIn
   | TtsIn
+  | DisplayIn
+  | DisplayExpressionIn
+  | DisplayImageIn
   | IotIn
   | McpIn
   | ServerIn

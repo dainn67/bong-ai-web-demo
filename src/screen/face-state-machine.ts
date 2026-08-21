@@ -6,7 +6,13 @@
  * instead of by watching a screen and hoping.
  */
 
-import { toEmotion, type Emotion, type IncomingMessage } from '../protocol/message-types';
+import {
+  toDisplayCommand,
+  toEmotion,
+  type Emotion,
+  type Expression,
+  type IncomingMessage,
+} from '../protocol/message-types';
 
 export type FaceMode = 'idle' | 'emotion' | 'speaking';
 
@@ -16,12 +22,29 @@ export interface FaceState {
   emotion: Emotion;
   /** One line under the face: what was heard, or what is being said. */
   statusText: string;
+  /**
+   * Image or animation the backend told us to show, in place of any face.
+   *
+   * Takes the whole circle while set — lesson artwork and stickers are the
+   * point of the screen when they are up, not decoration around a face.
+   */
+  imageUrl: string | null;
+  /**
+   * A face the backend named outright, overriding the mood we inferred.
+   *
+   * Separate from `emotion` because it covers device states like `thinking`
+   * that no conversation produces, and because the next reply's mood should
+   * take the screen back.
+   */
+  expression: Expression | null;
 }
 
 export const INITIAL_FACE_STATE: FaceState = {
   mode: 'idle',
   emotion: 'neutral',
   statusText: '',
+  imageUrl: null,
+  expression: null,
 };
 
 /**
@@ -50,8 +73,15 @@ export function reduceFace(state: FaceState, message: IncomingMessage): FaceStat
       // An unknown or absent emotion keeps the current face rather than
       // resetting it — the backend adding a new mood must not blank the screen.
       const emotion = toEmotion(message.emotion) ?? state.emotion;
-      return { mode: 'emotion', emotion, statusText: message.text };
+      // A fresh reply supersedes a face the backend named earlier, but not an
+      // image: artwork stays up until it is replaced or explicitly cleared.
+      return { ...state, mode: 'emotion', emotion, statusText: message.text, expression: null };
     }
+
+    case 'display':
+    case 'display_expression':
+    case 'display_image':
+      return reduceDisplay(state, message);
 
     case 'tts':
       return reduceTts(state, message.state, message.text);
@@ -64,6 +94,21 @@ export function reduceFace(state: FaceState, message: IncomingMessage): FaceStat
 
     default:
       return state;
+  }
+}
+
+function reduceDisplay(state: FaceState, message: IncomingMessage): FaceState {
+  const command = toDisplayCommand(message);
+  // Unrecognised display frames leave the screen exactly as it was.
+  if (!command) return state;
+
+  switch (command.kind) {
+    case 'expression':
+      return { ...state, expression: command.name, imageUrl: null };
+    case 'image':
+      return { ...state, imageUrl: command.url };
+    case 'clear':
+      return { ...state, imageUrl: null };
   }
 }
 
