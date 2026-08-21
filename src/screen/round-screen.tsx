@@ -64,10 +64,10 @@ export function RoundScreen() {
   const status = useSimulatorStore((state) => state.status);
   const speaking = useSimulatorStore((state) => state.speaking);
   const listening = useSimulatorStore((state) => state.micState === 'listening');
-  const toggleListening = useSimulatorStore((state) => state.toggleListening);
+  const tapScreen = useSimulatorStore((state) => state.tapScreen);
 
   const isAwake = status === 'connected';
-  const { displayRef, ripple, pointerHandlers } = useDisplayTouch(isAwake, toggleListening);
+  const { displayRef, ripple, pointerHandlers } = useDisplayTouch(tapScreen);
   // Precedence, strongest first: artwork the backend sent, a face it named,
   // the talking face, then the mood we inferred from the reply.
   const glyph = face.expression
@@ -88,7 +88,7 @@ export function RoundScreen() {
           <div
             ref={displayRef}
             {...pointerHandlers}
-            className={`relative flex h-72 w-72 touch-none select-none items-center justify-center overflow-hidden rounded-full bg-screen transition-shadow duration-500 sm:h-80 sm:w-80 ${GLOW[face.mode]} ${isAwake ? 'cursor-pointer' : ''}`}
+            className={`relative flex h-72 w-72 cursor-pointer touch-none select-none items-center justify-center overflow-hidden rounded-full bg-screen transition-shadow duration-500 sm:h-80 sm:w-80 ${GLOW[face.mode]}`}
           >
             {isAwake && face.imageUrl ? (
               // Fills the circle edge to edge. The parent clips it, which is
@@ -104,7 +104,9 @@ export function RoundScreen() {
                   {isAwake ? glyph : '😴'}
                 </span>
                 {!isAwake && (
-                  <p className="text-sm font-medium text-ink-300">Bống đang ngủ</p>
+                  <p className="text-sm font-medium text-ink-300">
+                    {status === 'connecting' ? 'Bống đang dậy…' : 'Chạm để đánh thức Bống'}
+                  </p>
                 )}
               </div>
             )}
@@ -198,7 +200,7 @@ interface Ripple {
  * cancelled — a browser gesture stealing it, a finger sliding off — leaves
  * nothing behind that a later release could mistake for a tap.
  */
-function useDisplayTouch(isAwake: boolean, onTap: () => void) {
+function useDisplayTouch(onTap: () => void) {
   const displayRef = useRef<HTMLDivElement>(null);
   const starts = useRef(new Map<number, TouchStart>());
   const nextRipple = useRef(0);
@@ -211,9 +213,9 @@ function useDisplayTouch(isAwake: boolean, onTap: () => void) {
   };
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    // A dark screen is a dead screen: the badge is not listening for touches
-    // any more than it is listening for speech.
-    if (!isAwake) return;
+    // The glass responds even with the screen dark. Waking the badge is a
+    // touch like any other, and a device that ignored you until it was already
+    // awake would be a strange thing to hand a child.
     const point = pointAt(event);
     if (!point || !isInsideDisplay(point)) return;
 

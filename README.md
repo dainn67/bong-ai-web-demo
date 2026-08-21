@@ -124,9 +124,18 @@ animation the badge cannot yet — which is the point of having one.
 
 ## Touch
 
-The glass is an input surface. Tapping it toggles the microphone — the same
-thing the mic button does, routed through the same action so the two cannot
-drift apart.
+The glass is the badge's whole physical interface, and what a touch means
+depends on what the device is doing:
+
+| State | A tap |
+|---|---|
+| Asleep | Wakes it — connects and says hello |
+| Waking | Nothing. The wake is already under way, and a second one would tear down the socket that is opening |
+| Awake | Opens or closes the microphone, through the same action the mic button calls |
+
+The hardware has one surface and no labels on it, so the meaning has to come
+from context. It responds with the screen dark, too — a device that ignored you
+until it was already awake would be a strange thing to hand a child.
 
 `src/screen/touch-input.ts` holds the rules as pure functions, so what counts
 as a touch is tested without a screen to poke at:

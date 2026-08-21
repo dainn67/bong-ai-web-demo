@@ -77,8 +77,9 @@ interface SimulatorState {
 
   startListening: () => Promise<void>;
   stopListening: () => void;
-  /** What a tap on the screen does. Same thing the mic button does. */
   toggleListening: () => void;
+  /** What a tap on the glass does, which depends on whether the badge is awake. */
+  tapScreen: () => void;
   setVolume: (volume: number) => void;
 }
 
@@ -212,6 +213,21 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     const { micState, startListening, stopListening } = get();
     if (micState === 'listening') stopListening();
     else void startListening();
+  },
+
+  /**
+   * The whole of the badge's physical interface, in one gesture.
+   *
+   * Asleep, a touch wakes it; awake, it opens and closes the microphone. The
+   * hardware has one surface and no labels on it, so what a touch means has to
+   * come from what the device is currently doing.
+   */
+  tapScreen: () => {
+    const { status, connect, toggleListening } = get();
+    if (status === 'disconnected') connect();
+    else if (status === 'connected') toggleListening();
+    // Mid-connection a tap is ignored rather than queued: the wake is already
+    // under way, and a second one would tear down the socket that is opening.
   },
 
   setVolume: (volume) => {

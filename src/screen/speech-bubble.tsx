@@ -15,7 +15,11 @@ export function SpeechBubble() {
   const status = useSimulatorStore((state) => state.status);
 
   const connected = status === 'connected';
-  const text = connected ? statusText : 'Tap Wake up to start';
+  const text = connected
+    ? statusText
+    : status === 'connecting'
+      ? 'Waking up…'
+      : 'Tap Bống to wake him up';
   // Reserve the space even when empty, or the device jumps every time the
   // caption appears and disappears.
   const empty = !text;
