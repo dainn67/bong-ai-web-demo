@@ -41,8 +41,9 @@ function randomMac(): string {
 }
 
 export const DEFAULT_CONFIG: DeviceConfig = {
-  otaUrl: import.meta.env.VITE_OTA_URL ?? 'http://localhost:8003/xiaozhi/ota/',
-  fallbackWsUrl: import.meta.env.VITE_WS_URL ?? 'ws://localhost:8000/xiaozhi/v1/',
+  otaUrl: import.meta.env.VITE_OTA_URL ?? 'https://bong-ai-esp.bcserver.xyz/xiaozhi/ota/',
+  fallbackWsUrl:
+    import.meta.env.VITE_WS_URL ?? 'wss://bong-ai-esp.bcserver.xyz/xiaozhi/v1/',
   macAddress: randomMac(),
   deviceName: 'round-badge',
   sampleRate: 24000,

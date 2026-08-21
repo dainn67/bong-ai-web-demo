@@ -38,15 +38,22 @@ settings panel, because dev servers often don't have OTA deployed.
 
 Endpoints:
 
-| | OTA (HTTP) | WebSocket |
+| | OTA | WebSocket |
 |---|---|---|
+| Shared dev (default) | `https://bong-ai-esp.bcserver.xyz/xiaozhi/ota/` | `wss://bong-ai-esp.bcserver.xyz/xiaozhi/v1/` |
 | Local | `http://localhost:8003/xiaozhi/ota/` | `ws://localhost:8000/xiaozhi/v1/` |
-| Production | `http://mini-8003.bcserver.xyz/xiaozhi/ota/` | `ws://mini-8000.bcserver.xyz/xiaozhi/v1/` |
+| Older prod | `http://mini-8003.bcserver.xyz/xiaozhi/ota/` | `ws://mini-8000.bcserver.xyz/xiaozhi/v1/` |
 
-Two things worth knowing about production: those subdomains are served on port
-80 only, so they are `ws://` and not `wss://` — a page on https will refuse to
-open the socket. And `bong-api.bcserver.xyz` does **not** route `/xiaozhi/`; it
-falls through to FastAPI, which has no such endpoint.
+`bong-ai-esp` is the one to point at. It terminates TLS, so `https`/`wss` work
+and the page can be served over https; its OTA endpoint replies with
+`Access-Control-Allow-Origin: *`, so the browser reaches it with no proxy. It
+issues an empty token, which `buildSocketUrl` already omits rather than sending
+as `token=`.
+
+The `mini-*` hosts are served on port 80 only, so they are `ws://` and not
+`wss://` — a page on https will refuse to open the socket. And
+`bong-api.bcserver.xyz` does **not** route `/xiaozhi/`; it falls through to
+FastAPI, which has no such endpoint.
 
 ## Two protocol details that will waste your afternoon
 
@@ -54,9 +61,12 @@ Both come from the handshake, and both fail quietly rather than loudly:
 
 - **`features.emoji` must be `true`**, or the backend never attaches `emotion`
   to `llm` frames and the face sits on neutral forever.
-- **`audio_params` must be declared.** Stay silent and the backend assumes
-  24000 Hz. Send 16 kHz audio into that and everything plays at the wrong
-  speed — it sounds like a fault in the codec, but it's the handshake.
+- **`audio_params` must be declared.** The server echoes back whatever rate you
+  declare and encodes its TTS at it, so this field is a live knob, not a
+  formality. Stay silent and it answers `24000` with `frame_duration: 60`. Send
+  16 kHz audio into that and everything plays at the wrong speed — it sounds
+  like a fault in the codec, but it's the handshake. Whatever the decoder is
+  configured with must come from `config.sampleRate`, not a constant.
 
 ## Testing
 
