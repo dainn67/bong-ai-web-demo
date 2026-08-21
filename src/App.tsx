@@ -1,5 +1,6 @@
 import { RoundScreen } from './screen/round-screen';
 import { ConnectionPanel } from './dev/connection-panel';
+import { AudioPanel } from './dev/audio-panel';
 import { PacketInspector } from './dev/packet-inspector';
 import { TextInputPanel } from './dev/text-input-panel';
 
@@ -19,6 +20,7 @@ export default function App() {
       <div className="flex min-h-0 w-96 flex-col gap-4">
         <ConnectionPanel />
         <TextInputPanel />
+        <AudioPanel />
         <PacketInspector />
       </div>
     </main>

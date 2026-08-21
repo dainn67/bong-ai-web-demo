@@ -55,6 +55,37 @@ The `mini-*` hosts are served on port 80 only, so they are `ws://` and not
 `bong-api.bcserver.xyz` does **not** route `/xiaozhi/`; it falls through to
 FastAPI, which has no such endpoint.
 
+## Audio
+
+Opus in both directions, mono, at whatever `sample_rate` the handshake settles
+on — 16000 by default, matching the badge and the speech recogniser behind it.
+Frames are 60 ms, which is `frame_duration` in the server's own reply.
+
+| | |
+|---|---|
+| `src/audio/pcm-worklet.js` | mic tap on the audio thread, one frame per message |
+| `src/audio/mic-capture.ts` | `getUserMedia` → `AudioEncoder` → socket |
+| `src/audio/opus-player.ts` | `AudioDecoder` → buffers queued on the audio clock |
+
+Three things here were found the hard way and are easy to undo by accident:
+
+- **The recogniser needs a trailing gap.** Audio that stops abruptly is never
+  transcribed — the backend's VAD waits for silence to decide the turn ended,
+  and without it the whole utterance is discarded in silence. A live mic
+  supplies that gap naturally; anything replaying a fixed clip must pad it.
+- **Opus always decodes to 48 kHz**, whatever rate the decoder is configured
+  with. The playback `AudioContext` is deliberately left at the device default
+  rather than pinned to `sampleRate`, and each buffer is built from
+  `data.sampleRate`.
+- **The mic is muted while the speaker is active**, plus a short hangover. A
+  laptop has no echo cancellation between its own speaker and its own mic, so
+  without this the badge transcribes itself and interrupts itself. The level
+  meter keeps running while muted, which is what makes barge-in work.
+
+The worklet is excluded from Vite's asset inlining in `vite.config.ts`:
+`audioWorklet.addModule()` refuses a `data:` URL, and dev serves a real path
+either way, so inlining breaks the built bundle only.
+
 ## Two protocol details that will waste your afternoon
 
 Both come from the handshake, and both fail quietly rather than loudly:
@@ -81,9 +112,13 @@ machine. They run in Node with no DOM, so the whole suite is near-instant.
 
 Working: OTA handshake, WebSocket with `hello`, heartbeat, backoff reconnect,
 typed-text conversation, the round screen and its state machine, packet
-inspector.
+inspector, and the audio pipeline in both directions.
 
-Not built yet: the audio pipeline. `src/audio/` is empty. Receiving and decoding
-Opus comes first, then microphone capture and encoding — in that order, since
-hearing the backend talk is what proves the loop before you add a second
-failure point.
+Verified against the shared dev server: playback decodes and schedules real TTS
+(the frame counter in the audio panel is the proof — Opus frames are the one
+thing the packet inspector does not log), `llm` frames arrive carrying
+`emotion`, and speech sent up as Opus comes back transcribed in `stt`.
+
+Not verified: `getUserMedia` and the worklet, on a machine with no microphone.
+The encoder they feed is verified — the same configuration, driven from a file
+instead of a mic, produced frames the backend transcribed correctly.

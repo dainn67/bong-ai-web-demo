@@ -19,7 +19,11 @@ export interface DeviceConfig {
   /** Stands in for the badge's MAC address. Identifies the device to the backend. */
   macAddress: string;
   deviceName: string;
-  /** Must match what the backend expects; it defaults to 24000 if we stay silent. */
+  /**
+   * Governs both directions: the server echoes this back and encodes its TTS at
+   * it. Stay silent and it assumes 24000. The badge itself uses 16000, which is
+   * also what the speech recogniser behind it wants.
+   */
   sampleRate: number;
 }
 
@@ -46,7 +50,7 @@ export const DEFAULT_CONFIG: DeviceConfig = {
     import.meta.env.VITE_WS_URL ?? 'wss://bong-ai-esp.bcserver.xyz/xiaozhi/v1/',
   macAddress: randomMac(),
   deviceName: 'round-badge',
-  sampleRate: 24000,
+  sampleRate: 16000,
 };
 
 export function loadConfig(): DeviceConfig {

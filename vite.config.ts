@@ -9,6 +9,13 @@ export default defineConfig({
   server: {
     port: 5180,
   },
+  build: {
+    // The mic worklet is small enough that Vite would inline it as a `data:`
+    // URL, and `audioWorklet.addModule()` refuses those — it wants a real
+    // same-origin URL. Dev serves a real path either way, so left alone this
+    // breaks only in a built bundle, which is the worst place to find it.
+    assetsInlineLimit: (filePath) => (filePath.includes('pcm-worklet') ? false : undefined),
+  },
   test: {
     // Node, not jsdom: the protocol client and the face state machine are pure
     // logic. Components that need a DOM can opt in per-file later.
