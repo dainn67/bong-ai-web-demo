@@ -6,7 +6,15 @@
  * so the thing on screen reads as hardware you could clip to a stuffed animal.
  */
 
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useSimulatorStore } from '../store/simulator-store';
+import {
+  DISPLAY_SIZE,
+  isInsideDisplay,
+  isTap,
+  toDevicePoint,
+  type TouchStart,
+} from './touch-input';
 import type { Emotion, Expression } from '../protocol/message-types';
 import type { FaceMode } from './face-state-machine';
 
@@ -55,8 +63,11 @@ export function RoundScreen() {
   const face = useSimulatorStore((state) => state.face);
   const status = useSimulatorStore((state) => state.status);
   const speaking = useSimulatorStore((state) => state.speaking);
+  const listening = useSimulatorStore((state) => state.micState === 'listening');
+  const toggleListening = useSimulatorStore((state) => state.toggleListening);
 
   const isAwake = status === 'connected';
+  const { displayRef, ripple, pointerHandlers } = useDisplayTouch(isAwake, toggleListening);
   // Precedence, strongest first: artwork the backend sent, a face it named,
   // the talking face, then the mood we inferred from the reply.
   const glyph = face.expression
@@ -75,7 +86,9 @@ export function RoundScreen() {
         <div className="rounded-full bg-gradient-to-b from-ink-700 to-ink-900 p-2.5 shadow-inner">
           {/* Display: everything inside here is under firmware control. */}
           <div
-            className={`relative flex h-72 w-72 items-center justify-center overflow-hidden rounded-full bg-screen transition-shadow duration-500 sm:h-80 sm:w-80 ${GLOW[face.mode]}`}
+            ref={displayRef}
+            {...pointerHandlers}
+            className={`relative flex h-72 w-72 touch-none select-none items-center justify-center overflow-hidden rounded-full bg-screen transition-shadow duration-500 sm:h-80 sm:w-80 ${GLOW[face.mode]} ${isAwake ? 'cursor-pointer' : ''}`}
           >
             {isAwake && face.imageUrl ? (
               // Fills the circle edge to edge. The parent clips it, which is
@@ -94,6 +107,25 @@ export function RoundScreen() {
                   <p className="text-sm font-medium text-ink-300">Bống đang ngủ</p>
                 )}
               </div>
+            )}
+
+            {/* Listening ring, drawn on the device rather than only in the
+                controls: a tap on the glass is the thing that turned the mic
+                on, so the glass has to be where you see that it worked. */}
+            {listening && (
+              <div className="pointer-events-none absolute inset-2 animate-pulse rounded-full ring-2 ring-mint-400/60" />
+            )}
+
+            {ripple && (
+              <span
+                key={ripple.id}
+                className="animate-ripple pointer-events-none absolute h-16 w-16 rounded-full bg-white/25"
+                style={{
+                  left: `${(ripple.x / DISPLAY_SIZE) * 100}%`,
+                  top: `${(ripple.y / DISPLAY_SIZE) * 100}%`,
+                  transform: 'translate(-50%, -50%)',
+                }}
+              />
             )}
 
             {/* Glass: a fixed highlight across the top, so it reads as covered. */}
@@ -150,4 +182,64 @@ function Grille() {
       ))}
     </div>
   );
+}
+
+interface Ripple {
+  id: number;
+  x: number;
+  y: number;
+}
+
+/**
+ * The glass, as an input device.
+ *
+ * Pointers are tracked by id so that more than one finger is a matter of
+ * reading the map rather than restructuring this, and so a pointer that is
+ * cancelled — a browser gesture stealing it, a finger sliding off — leaves
+ * nothing behind that a later release could mistake for a tap.
+ */
+function useDisplayTouch(isAwake: boolean, onTap: () => void) {
+  const displayRef = useRef<HTMLDivElement>(null);
+  const starts = useRef(new Map<number, TouchStart>());
+  const nextRipple = useRef(0);
+  const [ripple, setRipple] = useState<Ripple | null>(null);
+
+  const pointAt = (event: ReactPointerEvent): TouchStart | null => {
+    const rect = displayRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return { ...toDevicePoint(event.clientX, event.clientY, rect), at: event.timeStamp };
+  };
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    // A dark screen is a dead screen: the badge is not listening for touches
+    // any more than it is listening for speech.
+    if (!isAwake) return;
+    const point = pointAt(event);
+    if (!point || !isInsideDisplay(point)) return;
+
+    starts.current.set(event.pointerId, point);
+    // Capture so a finger that slides off still reports its release here,
+    // which is what stops a stuck entry in the map.
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setRipple({ id: nextRipple.current++, x: point.x, y: point.y });
+  };
+
+  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = starts.current.get(event.pointerId);
+    starts.current.delete(event.pointerId);
+    if (!start) return;
+
+    const end = pointAt(event);
+    if (end && isInsideDisplay(end) && isTap(start, end)) onTap();
+  };
+
+  const onPointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    starts.current.delete(event.pointerId);
+  };
+
+  return {
+    displayRef,
+    ripple,
+    pointerHandlers: { onPointerDown, onPointerUp, onPointerCancel },
+  };
 }

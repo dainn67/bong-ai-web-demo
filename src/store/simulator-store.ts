@@ -77,6 +77,8 @@ interface SimulatorState {
 
   startListening: () => Promise<void>;
   stopListening: () => void;
+  /** What a tap on the screen does. Same thing the mic button does. */
+  toggleListening: () => void;
   setVolume: (volume: number) => void;
 }
 
@@ -204,6 +206,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     mic = null;
     clearUnmuteTimer();
     set({ micState: 'off', micLevel: 0 });
+  },
+
+  toggleListening: () => {
+    const { micState, startListening, stopListening } = get();
+    if (micState === 'listening') stopListening();
+    else void startListening();
   },
 
   setVolume: (volume) => {

@@ -122,6 +122,28 @@ Real hardware has no image decoder and the backend pre-converts stills to
 RGB565 for it. A browser has no such problem, so the simulator can show
 animation the badge cannot yet — which is the point of having one.
 
+## Touch
+
+The glass is an input surface. Tapping it toggles the microphone — the same
+thing the mic button does, routed through the same action so the two cannot
+drift apart.
+
+`src/screen/touch-input.ts` holds the rules as pure functions, so what counts
+as a touch is tested without a screen to poke at:
+
+- **Coordinates are the device's**, 0–240, whatever size the badge is drawn at.
+  The firmware only ever thinks in its own pixels, so everything above that
+  line does too.
+- **The corners are not the device.** The display is round and its element is
+  square, so a click in the corner is inside the box and outside the hardware.
+  A real badge feels nothing there.
+- **A drag is not a tap.** Worth enforcing now rather than when swipe arrives:
+  otherwise every swipe would also toggle the mic on release.
+
+Pointers are tracked by `pointerId` — one path for finger, mouse and stylus,
+and more than one finger becomes a matter of reading the map rather than
+restructuring anything.
+
 ## Two protocol details that will waste your afternoon
 
 Both come from the handshake, and both fail quietly rather than loudly:

@@ -19,8 +19,7 @@ export function TalkBar() {
   const sendText = useSimulatorStore((state) => state.sendText);
   const abort = useSimulatorStore((state) => state.abort);
   const connect = useSimulatorStore((state) => state.connect);
-  const startListening = useSimulatorStore((state) => state.startListening);
-  const stopListening = useSimulatorStore((state) => state.stopListening);
+  const toggleListening = useSimulatorStore((state) => state.toggleListening);
 
   const connected = status === 'connected';
   const listening = micState === 'listening';
@@ -54,7 +53,7 @@ export function TalkBar() {
           listening={listening}
           level={micLevel}
           muted={speaking}
-          onClick={() => (listening ? stopListening() : void startListening())}
+          onClick={toggleListening}
         />
         {speaking && (
           <button

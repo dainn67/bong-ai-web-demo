@@ -58,3 +58,10 @@ body {
   50% { transform: translateY(-5px); }
 }
 .animate-bob { animation: bob 2.4s ease-in-out infinite; }
+
+/* Touch feedback on the glass: a quick spreading circle under the finger. */
+@keyframes ripple {
+  from { transform: translate(-50%, -50%) scale(0.3); opacity: 0.5; }
+  to { transform: translate(-50%, -50%) scale(2.6); opacity: 0; }
+}
+.animate-ripple { animation: ripple 520ms ease-out forwards; }
