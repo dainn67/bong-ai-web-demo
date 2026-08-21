@@ -1,1 +1,60 @@
 @import 'tailwindcss';
+
+/**
+ * A warm, soft palette — this is a toy for a small child, and the demo should
+ * feel like one. Nothing here is pure black or pure grey: the darks are warm
+ * browns and the neutrals carry a little cream, which is what keeps a screen
+ * full of controls from reading as an instrument panel.
+ */
+@theme {
+  --color-cream-50: #fffcf7;
+  --color-cream-100: #fff6ea;
+  --color-cream-200: #ffecd6;
+  --color-cream-300: #f7ddbf;
+
+  --color-ink-900: #3d2c24;
+  --color-ink-700: #5c463b;
+  --color-ink-500: #8a7065;
+  --color-ink-300: #b8a196;
+
+  --color-coral-400: #ff8a6b;
+  --color-coral-500: #ff6b4a;
+  --color-coral-600: #e85735;
+
+  --color-mint-400: #4ed9a4;
+  --color-mint-500: #2bbf8a;
+
+  --color-sunny-400: #ffc95c;
+  --color-berry-500: #e5645d;
+
+  /* The badge's own screen. Warm near-black, so the face glows on it. */
+  --color-screen: #241c18;
+
+  /* macOS gives a genuinely rounded face here for free, no font to download. */
+  --font-display: ui-rounded, 'SF Pro Rounded', 'Nunito', system-ui, sans-serif;
+
+  --radius-blob: 1.75rem;
+}
+
+body {
+  background:
+    radial-gradient(ellipse 80% 60% at 50% -10%, var(--color-cream-200), transparent 70%),
+    var(--color-cream-50);
+  color: var(--color-ink-900);
+  font-family: var(--font-display);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The badge's breathing while it waits. Slower and shallower than a pulse — it
+   should read as alive, not as a loading spinner. */
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.025); }
+}
+.animate-breathe { animation: breathe 4s ease-in-out infinite; }
+
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+.animate-bob { animation: bob 2.4s ease-in-out infinite; }

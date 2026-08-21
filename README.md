@@ -26,8 +26,17 @@ The simulator is three things stacked together:
 | Audio | `src/audio/` | Mic → Opus → send; receive Opus → speaker |
 | Screen | `src/screen/` | Round display and its face state machine |
 
-`src/dev/` holds the instruments — connection panel, packet inspector, text
-input. Nothing in there exists on real hardware.
+`src/dev/` holds the instruments — connection panel, packet inspector, audio
+counters, and the box you type into. Nothing in there exists on real hardware,
+which is why it all lives behind the **Dev** button rather than beside the
+device: what is being shown here is a toy a small child talks to, and a packet
+log competing with it for attention makes the product look like a debugging
+session. Escape closes the drawer.
+
+The badge itself is drawn as an object — shell, bezel, glass, ears, status LED,
+speaker grille. Only what is inside the round display is under firmware
+control; the rest is there so it reads as hardware you could clip to a stuffed
+animal.
 
 ## Connecting
 

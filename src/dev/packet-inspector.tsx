@@ -7,33 +7,35 @@
 
 import { useState } from 'react';
 import { useSimulatorStore, type PacketLogEntry } from '../store/simulator-store';
+import { Panel } from './dev-drawer';
 
 export function PacketInspector() {
   // Subscribing to just this slice is why the log can update freely without
-  // re-rendering the round screen next to it.
+  // re-rendering the badge next to it.
   const packets = useSimulatorStore((state) => state.packets);
   const clearPackets = useSimulatorStore((state) => state.clearPackets);
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col gap-2 rounded-xl bg-slate-900 p-4">
-      <header className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-200">Packets</h2>
+    <Panel
+      title="Packets"
+      grow
+      action={
         <button
           type="button"
           onClick={clearPackets}
-          className="text-xs text-slate-500 hover:text-slate-300"
+          className="text-xs font-semibold text-ink-300 transition hover:text-coral-500"
         >
           Clear
         </button>
-      </header>
-
-      <ol className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto font-mono text-xs">
+      }
+    >
+      <ol className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
         {packets.map((packet) => (
           <PacketRow key={packet.id} packet={packet} />
         ))}
-        {packets.length === 0 && <p className="text-slate-600">No traffic yet.</p>}
+        {packets.length === 0 && <p className="text-sm text-ink-300">No traffic yet.</p>}
       </ol>
-    </section>
+    </Panel>
   );
 }
 
@@ -46,18 +48,22 @@ function PacketRow({ packet }: { packet: PacketLogEntry }) {
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
-        className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-slate-800"
+        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-cream-100"
       >
-        <span className={inbound ? 'text-sky-400' : 'text-emerald-400'}>
-          {inbound ? '<-' : '->'}
+        <span
+          className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
+            inbound ? 'bg-coral-500/15 text-coral-600' : 'bg-mint-400/20 text-mint-500'
+          }`}
+        >
+          {inbound ? 'IN' : 'OUT'}
         </span>
-        <span className="text-slate-200">{packet.type}</span>
-        <span className="ml-auto text-slate-600">
+        <span className="font-mono text-xs font-semibold text-ink-900">{packet.type}</span>
+        <span className="ml-auto font-mono text-[10px] text-ink-300">
           {new Date(packet.at).toLocaleTimeString()}
         </span>
       </button>
       {expanded && (
-        <pre className="overflow-x-auto rounded bg-slate-950 p-2 text-slate-400">
+        <pre className="mt-1 overflow-x-auto rounded-lg bg-screen p-3 font-mono text-[11px] leading-relaxed text-cream-200">
           {JSON.stringify(packet.payload, null, 2)}
         </pre>
       )}

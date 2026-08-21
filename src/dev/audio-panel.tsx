@@ -1,5 +1,5 @@
 /**
- * Microphone and speaker controls.
+ * Speaker volume and the proof that audio is moving.
  *
  * The frame counters matter more than they look: Opus frames are the one part
  * of the protocol the packet inspector deliberately does not log, so without a
@@ -8,47 +8,35 @@
  */
 
 import { useSimulatorStore } from '../store/simulator-store';
+import { Panel } from './dev-drawer';
 
 export function AudioPanel() {
-  const micState = useSimulatorStore((state) => state.micState);
-  const micLevel = useSimulatorStore((state) => state.micLevel);
   const speaking = useSimulatorStore((state) => state.speaking);
   const volume = useSimulatorStore((state) => state.volume);
-  const status = useSimulatorStore((state) => state.status);
-  const audioError = useSimulatorStore((state) => state.audioError);
   const framesIn = useSimulatorStore((state) => state.framesIn);
   const framesOut = useSimulatorStore((state) => state.framesOut);
-  const startListening = useSimulatorStore((state) => state.startListening);
-  const stopListening = useSimulatorStore((state) => state.stopListening);
   const setVolume = useSimulatorStore((state) => state.setVolume);
 
-  const isConnected = status === 'connected';
-  const isListening = micState === 'listening';
-
   return (
-    <section className="flex flex-col gap-3 rounded-xl bg-slate-900 p-4">
-      <header className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-200">Audio</h2>
-        <span className="font-mono text-xs text-slate-600">
-          in {framesIn} · out {framesOut}
+    <Panel
+      title="Audio"
+      action={
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+            speaking ? 'bg-mint-400/20 text-mint-500' : 'bg-cream-200 text-ink-500'
+          }`}
+        >
+          {speaking ? 'speaker on' : 'quiet'}
         </span>
-      </header>
-
-      <button
-        type="button"
-        disabled={!isConnected}
-        onClick={() => (isListening ? stopListening() : void startListening())}
-        className={`rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 ${
-          isListening ? 'bg-rose-600 hover:bg-rose-500' : 'bg-emerald-600 hover:bg-emerald-500'
-        }`}
-      >
-        {isListening ? 'Stop microphone' : 'Start microphone'}
-      </button>
-
-      <LevelMeter level={micLevel} active={isListening} muted={speaking} />
+      }
+    >
+      <div className="grid grid-cols-2 gap-2">
+        <Counter label="frames in" value={framesIn} />
+        <Counter label="frames out" value={framesOut} />
+      </div>
 
       <label className="flex items-center gap-3">
-        <span className="text-xs text-slate-400">Volume</span>
+        <span className="text-xs font-semibold text-ink-500">Volume</span>
         <input
           type="range"
           min={0}
@@ -56,47 +44,18 @@ export function AudioPanel() {
           step={0.05}
           value={volume}
           onChange={(event) => setVolume(Number(event.target.value))}
-          className="flex-1 accent-sky-500"
+          className="flex-1 accent-coral-500"
         />
       </label>
-
-      <div className="flex items-center gap-2 text-xs">
-        <span
-          className={`h-2 w-2 rounded-full ${speaking ? 'animate-pulse bg-emerald-500' : 'bg-slate-700'}`}
-        />
-        <span className="text-slate-400">{speaking ? 'Speaker active' : 'Speaker idle'}</span>
-      </div>
-
-      {audioError && <p className="text-xs text-rose-400">{audioError}</p>}
-    </section>
+    </Panel>
   );
 }
 
-interface LevelMeterProps {
-  level: number;
-  active: boolean;
-  muted: boolean;
-}
-
-/**
- * Mic loudness.
- *
- * Goes amber while the badge is talking: the mic is still open and still being
- * measured — that is what makes barge-in work — but nothing is being sent, and
- * a meter that moved while transmitting nothing would be a lie.
- */
-function LevelMeter({ level, active, muted }: LevelMeterProps) {
+function Counter({ label, value }: { label: string; value: number }) {
   return (
-    <div className="flex flex-col gap-1">
-      <div className="h-2 overflow-hidden rounded-full bg-slate-800">
-        <div
-          className={`h-full transition-[width] duration-75 ${muted ? 'bg-amber-500' : 'bg-emerald-500'}`}
-          style={{ width: `${Math.round(level * 100)}%` }}
-        />
-      </div>
-      <span className="text-xs text-slate-500">
-        {!active ? 'Microphone off' : muted ? 'Muted while speaking' : 'Listening'}
-      </span>
+    <div className="rounded-xl bg-cream-100 px-3 py-2">
+      <p className="font-mono text-lg font-bold leading-tight text-ink-900">{value}</p>
+      <p className="text-xs text-ink-500">{label}</p>
     </div>
   );
 }

@@ -6,12 +6,7 @@
  */
 
 import { useSimulatorStore } from '../store/simulator-store';
-
-const STATUS_STYLE = {
-  connected: 'bg-emerald-500',
-  connecting: 'bg-amber-500 animate-pulse',
-  disconnected: 'bg-slate-600',
-} as const;
+import { Panel } from './dev-drawer';
 
 export function ConnectionPanel() {
   const config = useSimulatorStore((state) => state.config);
@@ -24,15 +19,7 @@ export function ConnectionPanel() {
   const isOffline = status === 'disconnected';
 
   return (
-    <section className="flex flex-col gap-3 rounded-xl bg-slate-900 p-4">
-      <header className="flex items-center gap-2">
-        <span className={`h-2.5 w-2.5 rounded-full ${STATUS_STYLE[status]}`} />
-        <h2 className="text-sm font-semibold text-slate-200">{status}</h2>
-        {sessionId && (
-          <code className="ml-auto truncate text-xs text-slate-500">{sessionId}</code>
-        )}
-      </header>
-
+    <Panel title="Connection">
       <Field
         label="OTA URL"
         value={config.otaUrl}
@@ -46,22 +33,35 @@ export function ConnectionPanel() {
         onChange={(fallbackWsUrl) => updateConfig({ fallbackWsUrl })}
       />
       <Field
-        label="MAC address"
+        label="Device ID"
         value={config.macAddress}
         disabled={!isOffline}
         onChange={(macAddress) => updateConfig({ macAddress })}
       />
+      <Field
+        label="Sample rate"
+        value={String(config.sampleRate)}
+        disabled={!isOffline}
+        onChange={(value) => updateConfig({ sampleRate: Number(value) || 16000 })}
+      />
+
+      {!isOffline && (
+        <p className="text-xs text-ink-300">Disconnect to edit — changing these mid-session does nothing</p>
+      )}
+      {sessionId && (
+        <p className="truncate font-mono text-xs text-ink-300">session {sessionId}</p>
+      )}
 
       <button
         type="button"
         onClick={isOffline ? connect : disconnect}
-        className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${
-          isOffline ? 'bg-sky-600 hover:bg-sky-500' : 'bg-rose-600 hover:bg-rose-500'
+        className={`rounded-blob px-4 py-2.5 text-sm font-bold text-white transition active:scale-95 ${
+          isOffline ? 'bg-coral-500 hover:bg-coral-400' : 'bg-berry-500 hover:opacity-90'
         }`}
       >
         {isOffline ? 'Connect' : 'Disconnect'}
       </button>
-    </section>
+    </Panel>
   );
 }
 
@@ -76,13 +76,13 @@ interface FieldProps {
 function Field({ label, value, disabled, onChange }: FieldProps) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-xs text-slate-400">{label}</span>
+      <span className="text-xs font-semibold text-ink-500">{label}</span>
       <input
         type="text"
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
-        className="rounded-lg bg-slate-800 px-3 py-2 font-mono text-xs text-slate-200 disabled:opacity-50"
+        className="rounded-xl bg-cream-100 px-3 py-2 font-mono text-xs text-ink-900 outline-none transition focus:bg-cream-200 disabled:text-ink-300"
       />
     </label>
   );
