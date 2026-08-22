@@ -21,12 +21,12 @@ export interface FaceState {
   /** Which face to wear. Held across `speaking` so the reply keeps its mood. */
   emotion: Emotion;
   /**
-   * One line under the face, prefixed with whoever is speaking: `Nghe thấy:`
-   * for what the child was understood to say, `Bống:` for the reply.
+   * One line under the face: the conversation, and nothing else.
    *
-   * Sentences arriving during playback carry no prefix — by then the badge is
-   * plainly the one talking, and repeating its name every sentence reads as a
-   * transcript rather than speech.
+   * The badge's own words carry `Bống:`; the child's appear as they are, since
+   * we have no name to put in front of them. Sentences arriving during
+   * playback are unprefixed too — by then the badge is audibly the one
+   * talking, and naming it every sentence reads as a transcript.
    */
   statusText: string;
   /**
@@ -73,8 +73,16 @@ export function reduceFace(state: FaceState, message: IncomingMessage): FaceStat
     case 'hello':
       return INITIAL_FACE_STATE;
 
-    case 'stt':
-      return { ...state, statusText: `Nghe thấy: ${message.text}` };
+    case 'stt': {
+      // The backend also uses this frame to announce a tool call — the LLM
+      // deciding to start a lesson arrives as `% start_learning_session`. That
+      // is machinery, not something anyone said, and captioning it as speech
+      // put a function name on a toy's face.
+      if (isToolCall(message.text)) return state;
+      // No prefix: we do not know the child's name, and `Nghe thấy:` on their
+      // own words made the badge sound like it was filing a report.
+      return { ...state, statusText: message.text };
+    }
 
     case 'llm': {
       // An unknown or absent emotion keeps the current face rather than
@@ -99,11 +107,12 @@ export function reduceFace(state: FaceState, message: IncomingMessage): FaceStat
     case 'tts':
       return reduceTts(state, message.state, message.text);
 
+    // Commands and server notices are deliberately invisible. The face shows a
+    // conversation; anything else belongs in the packet inspector, where the
+    // person debugging it is already looking.
     case 'iot':
-      return { ...state, statusText: `Nhận lệnh (${message.commands.length})` };
-
     case 'server':
-      return { ...state, statusText: message.content ?? message.status ?? 'Thông báo từ máy chủ' };
+      return state;
 
     default:
       return state;
@@ -140,6 +149,18 @@ function reduceTts(state: FaceState, ttsState: string, text?: string): FaceState
     default:
       return state;
   }
+}
+
+/**
+ * Whether an `stt` frame is a tool call rather than speech.
+ *
+ * `%` is the marker, which is xiaozhi's convention and not written down in the
+ * backend here — so this is drawn from what the server actually sends. Every
+ * tool call observed has carried it, and no real transcript has. If a call
+ * ever slips through unmarked, this is the one place to widen.
+ */
+function isToolCall(text: string): boolean {
+  return text.trimStart().startsWith('%');
 }
 
 /** The settled state after the post-speech delay expires. */

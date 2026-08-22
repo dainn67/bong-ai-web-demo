@@ -55,9 +55,27 @@ describe('face state machine', () => {
     expect(toIdle(stopped).mode).toBe('idle');
   });
 
-  it('reports what the child was heard saying, and says who said it', () => {
+  it('shows the child their own words, unprefixed', () => {
     const next = reduceFace(INITIAL_FACE_STATE, { type: 'stt', text: 'con muốn nghe truyện' });
-    expect(next.statusText).toBe('Nghe thấy: con muốn nghe truyện');
+    expect(next.statusText).toBe('con muốn nghe truyện');
+  });
+
+  it('hides the tool calls the backend sends down the stt channel', () => {
+    const said = reduceFace(INITIAL_FACE_STATE, { type: 'stt', text: 'kể chuyện vịt con' });
+    const tool = reduceFace(said, { type: 'stt', text: '% start_learning_session' });
+
+    // The LLM deciding to start a lesson arrives as an `stt` frame. Captioning
+    // it would put a function name on the toy's face, so the screen holds what
+    // the child actually said.
+    expect(tool).toBe(said);
+  });
+
+  it('keeps commands and server notices off the face entirely', () => {
+    const said = reduceFace(INITIAL_FACE_STATE, { type: 'stt', text: 'chào Bống' });
+
+    // They are still in the packet log; they are just not conversation.
+    expect(reduceFace(said, { type: 'iot', commands: [{}, {}] })).toBe(said);
+    expect(reduceFace(said, { type: 'server', content: 'config updated' })).toBe(said);
   });
 
   it('leaves spoken sentences unprefixed', () => {
