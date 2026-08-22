@@ -8,6 +8,7 @@
 
 import { useState } from 'react';
 import { useSimulatorStore } from '../store/simulator-store';
+import { HeardBubble } from '../screen/speech-bubble';
 
 export function TalkBar() {
   const [text, setText] = useState('');
@@ -65,6 +66,8 @@ export function TalkBar() {
           </button>
         )}
       </div>
+
+      <HeardBubble />
 
       <div className="flex w-full items-center gap-2 rounded-blob bg-white p-2 shadow-[0_8px_24px_-12px_rgba(61,44,36,0.3)]">
         <input

@@ -21,14 +21,20 @@ export interface FaceState {
   /** Which face to wear. Held across `speaking` so the reply keeps its mood. */
   emotion: Emotion;
   /**
-   * One line under the face: the conversation, and nothing else.
+   * The child's last utterance, as the backend understood it.
    *
-   * The badge's own words carry `Bống:`; the child's appear as they are, since
-   * we have no name to put in front of them. Sentences arriving during
-   * playback are unprefixed too — by then the badge is audibly the one
-   * talking, and naming it every sentence reads as a transcript.
+   * Kept apart from what the badge said rather than sharing one line: they are
+   * two speakers, they are drawn as two bubbles, and a single field would mean
+   * whichever spoke last erased the other.
    */
-  statusText: string;
+  heard: string;
+  /**
+   * What the badge last said — the reply, then each sentence as it is spoken.
+   *
+   * Stored bare. Who said it is the field, and the label belongs to whatever
+   * is drawing it.
+   */
+  said: string;
   /**
    * Image or animation the backend told us to show, in place of any face.
    *
@@ -49,7 +55,8 @@ export interface FaceState {
 export const INITIAL_FACE_STATE: FaceState = {
   mode: 'idle',
   emotion: 'neutral',
-  statusText: '',
+  heard: '',
+  said: '',
   imageUrl: null,
   expression: null,
 };
@@ -79,9 +86,7 @@ export function reduceFace(state: FaceState, message: IncomingMessage): FaceStat
       // is machinery, not something anyone said, and captioning it as speech
       // put a function name on a toy's face.
       if (isToolCall(message.text)) return state;
-      // No prefix: we do not know the child's name, and `Nghe thấy:` on their
-      // own words made the badge sound like it was filing a report.
-      return { ...state, statusText: message.text };
+      return { ...state, heard: message.text };
     }
 
     case 'llm': {
@@ -90,13 +95,7 @@ export function reduceFace(state: FaceState, message: IncomingMessage): FaceStat
       const emotion = toEmotion(message.emotion) ?? state.emotion;
       // A fresh reply supersedes a face the backend named earlier, but not an
       // image: artwork stays up until it is replaced or explicitly cleared.
-      return {
-        ...state,
-        mode: 'emotion',
-        emotion,
-        statusText: `Bống: ${message.text}`,
-        expression: null,
-      };
+      return { ...state, mode: 'emotion', emotion, said: message.text, expression: null };
     }
 
     case 'display':
@@ -139,7 +138,7 @@ function reduceTts(state: FaceState, ttsState: string, text?: string): FaceState
     case 'start':
       return { ...state, mode: 'speaking' };
     case 'sentence_start':
-      return { ...state, mode: 'speaking', statusText: text ?? state.statusText };
+      return { ...state, mode: 'speaking', said: text ?? state.said };
     case 'sentence_end':
       return state;
     case 'stop':

@@ -12,8 +12,8 @@ describe('face state machine', () => {
 
     expect(next.mode).toBe('emotion');
     expect(next.emotion).toBe('happy');
-    // Prefixed, so the caption says who is talking without a second line.
-    expect(next.statusText).toBe('Bống: Ngày xửa ngày xưa...');
+    // Stored bare — the field says who spoke, the bubble adds the name.
+    expect(next.said).toBe('Ngày xửa ngày xưa...');
   });
 
   it('keeps the current face when the backend sends an emotion it does not know', () => {
@@ -23,7 +23,7 @@ describe('face state machine', () => {
     // An unrecognised mood must not blank the screen — a backend adding a new
     // emotion should degrade to "no change", never to a crash or an empty face.
     expect(next.emotion).toBe('happy');
-    expect(next.statusText).toBe('Bống: b');
+    expect(next.said).toBe('b');
   });
 
   it('holds the emotion through speech instead of resetting to neutral', () => {
@@ -42,7 +42,7 @@ describe('face state machine', () => {
       text: 'Chào con!',
     });
 
-    expect(sentence.statusText).toBe('Chào con!');
+    expect(sentence.said).toBe('Chào con!');
   });
 
   it('leaves speaking on tts.stop but only settles to idle on demand', () => {
@@ -57,7 +57,17 @@ describe('face state machine', () => {
 
   it('shows the child their own words, unprefixed', () => {
     const next = reduceFace(INITIAL_FACE_STATE, { type: 'stt', text: 'con muốn nghe truyện' });
-    expect(next.statusText).toBe('con muốn nghe truyện');
+    expect(next.heard).toBe('con muốn nghe truyện');
+  });
+
+  it('keeps the two speakers apart so neither erases the other', () => {
+    const asked = reduceFace(INITIAL_FACE_STATE, { type: 'stt', text: 'kể chuyện đi' });
+    const replied = reduceFace(asked, { type: 'llm', text: 'Ngày xửa ngày xưa', emotion: 'happy' });
+
+    // They are drawn as two bubbles; a shared line would mean whoever spoke
+    // last wiped the other out.
+    expect(replied.heard).toBe('kể chuyện đi');
+    expect(replied.said).toBe('Ngày xửa ngày xưa');
   });
 
   it('hides the tool calls the backend sends down the stt channel', () => {
@@ -78,13 +88,11 @@ describe('face state machine', () => {
     expect(reduceFace(said, { type: 'server', content: 'config updated' })).toBe(said);
   });
 
-  it('leaves spoken sentences unprefixed', () => {
+  it('treats a spoken sentence as the badge talking, like any other reply', () => {
     const speaking = reduceFace(INITIAL_FACE_STATE, { type: 'tts', state: 'start' });
     const sentence = reduceFace(speaking, { type: 'tts', state: 'sentence_start', text: 'Chào con!' });
 
-    // While the badge is audibly talking, naming it every sentence reads as a
-    // transcript rather than speech.
-    expect(sentence.statusText).toBe('Chào con!');
+    expect(sentence.said).toBe('Chào con!');
   });
 
   it('ignores message types it has no display for', () => {

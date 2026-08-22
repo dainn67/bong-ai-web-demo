@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { RoundScreen } from './screen/round-screen';
-import { SpeechBubble } from './screen/speech-bubble';
+import { BongBubble } from './screen/speech-bubble';
 import { TalkBar } from './dev/talk-bar';
 import { DevDrawer } from './dev/dev-drawer';
 import { useSimulatorStore } from './store/simulator-store';
@@ -21,7 +21,7 @@ export default function App() {
 
       <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-12">
         <RoundScreen />
-        <SpeechBubble />
+        <BongBubble />
         <TalkBar />
       </div>
 
