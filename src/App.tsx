@@ -39,7 +39,7 @@ function Header({ onOpenDev }: { onOpenDev: () => void }) {
         </span>
         <div className="leading-tight">
           <p className="font-bold text-ink-900">Bống</p>
-          <p className="text-xs text-ink-500">Device simulator</p>
+          <p className="text-xs text-ink-500">Trình giả lập thiết bị</p>
         </div>
       </div>
 
@@ -50,7 +50,7 @@ function Header({ onOpenDev }: { onOpenDev: () => void }) {
           onClick={onOpenDev}
           className="rounded-blob bg-white px-4 py-2 text-sm font-bold text-ink-700 shadow-[0_6px_16px_-10px_rgba(61,44,36,0.6)] transition hover:bg-cream-100 active:scale-95"
         >
-          Dev
+          Kỹ thuật
         </button>
       </div>
     </header>
@@ -60,6 +60,12 @@ function Header({ onOpenDev }: { onOpenDev: () => void }) {
 /** Connection state, small and out of the way until it is bad news. */
 function StatusPill() {
   const status = useSimulatorStore((state) => state.status);
+
+  const label = {
+    connected: 'đã kết nối',
+    connecting: 'đang kết nối',
+    disconnected: 'chưa kết nối',
+  }[status];
 
   const tone = {
     connected: 'bg-mint-400/20 text-mint-500',
@@ -76,7 +82,7 @@ function StatusPill() {
   return (
     <span className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-bold ${tone}`}>
       <span className={`h-2 w-2 rounded-full ${dot}`} />
-      {status}
+      {label}
     </span>
   );
 }

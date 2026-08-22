@@ -20,7 +20,14 @@ export interface FaceState {
   mode: FaceMode;
   /** Which face to wear. Held across `speaking` so the reply keeps its mood. */
   emotion: Emotion;
-  /** One line under the face: what was heard, or what is being said. */
+  /**
+   * One line under the face, prefixed with whoever is speaking: `Nghe thấy:`
+   * for what the child was understood to say, `Bống:` for the reply.
+   *
+   * Sentences arriving during playback carry no prefix — by then the badge is
+   * plainly the one talking, and repeating its name every sentence reads as a
+   * transcript rather than speech.
+   */
   statusText: string;
   /**
    * Image or animation the backend told us to show, in place of any face.
@@ -67,7 +74,7 @@ export function reduceFace(state: FaceState, message: IncomingMessage): FaceStat
       return INITIAL_FACE_STATE;
 
     case 'stt':
-      return { ...state, statusText: `Heard: ${message.text}` };
+      return { ...state, statusText: `Nghe thấy: ${message.text}` };
 
     case 'llm': {
       // An unknown or absent emotion keeps the current face rather than
@@ -75,7 +82,13 @@ export function reduceFace(state: FaceState, message: IncomingMessage): FaceStat
       const emotion = toEmotion(message.emotion) ?? state.emotion;
       // A fresh reply supersedes a face the backend named earlier, but not an
       // image: artwork stays up until it is replaced or explicitly cleared.
-      return { ...state, mode: 'emotion', emotion, statusText: message.text, expression: null };
+      return {
+        ...state,
+        mode: 'emotion',
+        emotion,
+        statusText: `Bống: ${message.text}`,
+        expression: null,
+      };
     }
 
     case 'display':
@@ -87,10 +100,10 @@ export function reduceFace(state: FaceState, message: IncomingMessage): FaceStat
       return reduceTts(state, message.state, message.text);
 
     case 'iot':
-      return { ...state, statusText: `Command received (${message.commands.length})` };
+      return { ...state, statusText: `Nhận lệnh (${message.commands.length})` };
 
     case 'server':
-      return { ...state, statusText: message.content ?? message.status ?? 'Server notice' };
+      return { ...state, statusText: message.content ?? message.status ?? 'Thông báo từ máy chủ' };
 
     default:
       return state;

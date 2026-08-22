@@ -44,15 +44,15 @@ export function DevDrawer({ open, onClose }: DevDrawerProps) {
       >
         <header className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-bold text-ink-900">Instruments</h2>
-            <p className="text-xs text-ink-500">None of this exists on real hardware</p>
+            <h2 className="text-lg font-bold text-ink-900">Công cụ</h2>
+            <p className="text-xs text-ink-500">Thiết bị thật không có thứ nào trong này</p>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="rounded-full bg-white px-3 py-1.5 text-sm font-semibold text-ink-700 shadow-sm transition hover:bg-cream-200"
           >
-            Close
+            Đóng
           </button>
         </header>
 

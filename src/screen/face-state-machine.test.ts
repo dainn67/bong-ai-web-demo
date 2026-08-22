@@ -12,7 +12,8 @@ describe('face state machine', () => {
 
     expect(next.mode).toBe('emotion');
     expect(next.emotion).toBe('happy');
-    expect(next.statusText).toBe('Ngày xửa ngày xưa...');
+    // Prefixed, so the caption says who is talking without a second line.
+    expect(next.statusText).toBe('Bống: Ngày xửa ngày xưa...');
   });
 
   it('keeps the current face when the backend sends an emotion it does not know', () => {
@@ -22,7 +23,7 @@ describe('face state machine', () => {
     // An unrecognised mood must not blank the screen — a backend adding a new
     // emotion should degrade to "no change", never to a crash or an empty face.
     expect(next.emotion).toBe('happy');
-    expect(next.statusText).toBe('b');
+    expect(next.statusText).toBe('Bống: b');
   });
 
   it('holds the emotion through speech instead of resetting to neutral', () => {
@@ -54,9 +55,18 @@ describe('face state machine', () => {
     expect(toIdle(stopped).mode).toBe('idle');
   });
 
-  it('reports what the child was heard saying', () => {
+  it('reports what the child was heard saying, and says who said it', () => {
     const next = reduceFace(INITIAL_FACE_STATE, { type: 'stt', text: 'con muốn nghe truyện' });
-    expect(next.statusText).toContain('con muốn nghe truyện');
+    expect(next.statusText).toBe('Nghe thấy: con muốn nghe truyện');
+  });
+
+  it('leaves spoken sentences unprefixed', () => {
+    const speaking = reduceFace(INITIAL_FACE_STATE, { type: 'tts', state: 'start' });
+    const sentence = reduceFace(speaking, { type: 'tts', state: 'sentence_start', text: 'Chào con!' });
+
+    // While the badge is audibly talking, naming it every sentence reads as a
+    // transcript rather than speech.
+    expect(sentence.statusText).toBe('Chào con!');
   });
 
   it('ignores message types it has no display for', () => {

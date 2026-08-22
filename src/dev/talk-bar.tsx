@@ -39,9 +39,9 @@ export function TalkBar() {
           disabled={status === 'connecting'}
           className="rounded-blob bg-coral-500 px-10 py-4 text-lg font-bold text-white shadow-[0_10px_24px_-8px_rgba(255,107,74,0.7)] transition hover:bg-coral-400 active:scale-95 disabled:opacity-60"
         >
-          {status === 'connecting' ? 'Waking up…' : 'Wake up Bống'}
+          {status === 'connecting' ? 'Đang đánh thức…' : 'Đánh thức Bống'}
         </button>
-        <p className="text-sm text-ink-500">Connects to the server and says hello</p>
+        <p className="text-sm text-ink-500">Kết nối tới máy chủ rồi chào hỏi</p>
       </div>
     );
   }
@@ -61,7 +61,7 @@ export function TalkBar() {
             onClick={abort}
             className="rounded-blob bg-white px-5 py-3 text-sm font-semibold text-ink-700 shadow-[0_6px_16px_-8px_rgba(61,44,36,0.4)] transition hover:bg-cream-100 active:scale-95"
           >
-            Shhh — stop talking
+            Suỵt, Bống dừng nói nhé
           </button>
         )}
       </div>
@@ -81,7 +81,7 @@ export function TalkBar() {
           disabled={!text.trim()}
           className="rounded-blob bg-coral-500 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-coral-400 active:scale-95 disabled:opacity-40"
         >
-          Send
+          Gửi
         </button>
       </div>
 
@@ -116,7 +116,7 @@ function MicButton({ listening, level, muted, onClick }: MicButtonProps) {
           ? 'bg-white shadow-[0_8px_24px_-8px_rgba(61,44,36,0.35)]'
           : 'bg-coral-500 text-white shadow-[0_10px_24px_-8px_rgba(255,107,74,0.7)] hover:bg-coral-400'
       }`}
-      title={listening ? 'Stop listening' : 'Let Bống hear you'}
+      title={listening ? 'Tắt micro' : 'Cho Bống nghe'}
     >
       {listening && (
         <span

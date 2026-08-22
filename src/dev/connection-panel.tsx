@@ -19,37 +19,37 @@ export function ConnectionPanel() {
   const isOffline = status === 'disconnected';
 
   return (
-    <Panel title="Connection">
+    <Panel title="Kết nối">
       <Field
-        label="OTA URL"
+        label="Địa chỉ OTA"
         value={config.otaUrl}
         disabled={!isOffline}
         onChange={(otaUrl) => updateConfig({ otaUrl })}
       />
       <Field
-        label="WebSocket fallback"
+        label="WebSocket dự phòng"
         value={config.fallbackWsUrl}
         disabled={!isOffline}
         onChange={(fallbackWsUrl) => updateConfig({ fallbackWsUrl })}
       />
       <Field
-        label="Device ID"
+        label="Mã thiết bị"
         value={config.macAddress}
         disabled={!isOffline}
         onChange={(macAddress) => updateConfig({ macAddress })}
       />
       <Field
-        label="Sample rate"
+        label="Tần số lấy mẫu"
         value={String(config.sampleRate)}
         disabled={!isOffline}
         onChange={(value) => updateConfig({ sampleRate: Number(value) || 16000 })}
       />
 
       {!isOffline && (
-        <p className="text-xs text-ink-300">Disconnect to edit — changing these mid-session does nothing</p>
+        <p className="text-xs text-ink-300">Ngắt kết nối mới sửa được — đổi giữa phiên không có tác dụng</p>
       )}
       {sessionId && (
-        <p className="truncate font-mono text-xs text-ink-300">session {sessionId}</p>
+        <p className="truncate font-mono text-xs text-ink-300">phiên {sessionId}</p>
       )}
 
       <button
@@ -59,7 +59,7 @@ export function ConnectionPanel() {
           isOffline ? 'bg-coral-500 hover:bg-coral-400' : 'bg-berry-500 hover:opacity-90'
         }`}
       >
-        {isOffline ? 'Connect' : 'Disconnect'}
+        {isOffline ? 'Kết nối' : 'Ngắt kết nối'}
       </button>
     </Panel>
   );

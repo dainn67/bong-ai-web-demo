@@ -14,12 +14,10 @@ export function SpeechBubble() {
   const mode = useSimulatorStore((state) => state.face.mode);
   const status = useSimulatorStore((state) => state.status);
 
+  // Silent while asleep: the badge's own screen already says how to wake it,
+  // and a caption repeating it is two voices telling you the same thing.
   const connected = status === 'connected';
-  const text = connected
-    ? statusText
-    : status === 'connecting'
-      ? 'Waking up…'
-      : 'Tap Bống to wake him up';
+  const text = connected ? statusText : '';
   // Reserve the space even when empty, or the device jumps every time the
   // caption appears and disappears.
   const empty = !text;

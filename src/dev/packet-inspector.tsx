@@ -17,7 +17,7 @@ export function PacketInspector() {
 
   return (
     <Panel
-      title="Packets"
+      title="Gói tin"
       grow
       action={
         <button
@@ -25,7 +25,7 @@ export function PacketInspector() {
           onClick={clearPackets}
           className="text-xs font-semibold text-ink-300 transition hover:text-coral-500"
         >
-          Clear
+          Xoá
         </button>
       }
     >
@@ -33,7 +33,7 @@ export function PacketInspector() {
         {packets.map((packet) => (
           <PacketRow key={packet.id} packet={packet} />
         ))}
-        {packets.length === 0 && <p className="text-sm text-ink-300">No traffic yet.</p>}
+        {packets.length === 0 && <p className="text-sm text-ink-300">Chưa có gói tin nào.</p>}
       </ol>
     </Panel>
   );
@@ -55,7 +55,7 @@ function PacketRow({ packet }: { packet: PacketLogEntry }) {
             inbound ? 'bg-coral-500/15 text-coral-600' : 'bg-mint-400/20 text-mint-500'
           }`}
         >
-          {inbound ? 'IN' : 'OUT'}
+          {inbound ? 'VÀO' : 'RA'}
         </span>
         <span className="font-mono text-xs font-semibold text-ink-900">{packet.type}</span>
         <span className="ml-auto font-mono text-[10px] text-ink-300">

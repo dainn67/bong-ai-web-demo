@@ -19,24 +19,24 @@ export function AudioPanel() {
 
   return (
     <Panel
-      title="Audio"
+      title="Âm thanh"
       action={
         <span
           className={`rounded-full px-2 py-0.5 text-xs font-bold ${
             speaking ? 'bg-mint-400/20 text-mint-500' : 'bg-cream-200 text-ink-500'
           }`}
         >
-          {speaking ? 'speaker on' : 'quiet'}
+          {speaking ? 'đang phát' : 'im lặng'}
         </span>
       }
     >
       <div className="grid grid-cols-2 gap-2">
-        <Counter label="frames in" value={framesIn} />
-        <Counter label="frames out" value={framesOut} />
+        <Counter label="gói nhận" value={framesIn} />
+        <Counter label="gói gửi" value={framesOut} />
       </div>
 
       <label className="flex items-center gap-3">
-        <span className="text-xs font-semibold text-ink-500">Volume</span>
+        <span className="text-xs font-semibold text-ink-500">Âm lượng</span>
         <input
           type="range"
           min={0}
