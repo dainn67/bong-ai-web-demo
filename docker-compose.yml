@@ -1,0 +1,18 @@
+services:
+  bong-ai-web-demo:
+    build:
+      context: .
+      args:
+        VITE_OTA_URL: ${VITE_OTA_URL:-https://bong-ai-esp.bcserver.xyz/xiaozhi/ota/}
+        VITE_WS_URL: ${VITE_WS_URL:-wss://bong-ai-esp.bcserver.xyz/xiaozhi/v1/}
+    container_name: bong-ai-web-demo
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3002:80"
+    networks:
+      - default
+      - nginx-proxy-manager_default
+
+networks:
+  nginx-proxy-manager_default:
+    external: true
