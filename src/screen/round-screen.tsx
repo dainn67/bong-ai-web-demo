@@ -8,6 +8,7 @@
 
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useSimulatorStore } from '../store/simulator-store';
+import { LOW_BATTERY, wifiBars } from '../hardware/hardware-state';
 import {
   DISPLAY_SIZE,
   isInsideDisplay,
@@ -64,6 +65,7 @@ export function RoundScreen() {
   const status = useSimulatorStore((state) => state.status);
   const speaking = useSimulatorStore((state) => state.speaking);
   const listening = useSimulatorStore((state) => state.micState === 'listening');
+  const hardware = useSimulatorStore((state) => state.hardware);
   const tapScreen = useSimulatorStore((state) => state.tapScreen);
 
   const isAwake = status === 'connected';
@@ -111,6 +113,16 @@ export function RoundScreen() {
               </div>
             )}
 
+            {/* Status bar, the way a small round watch face carries one: high
+                enough to clear the face, dim enough to ignore until it matters. */}
+            {isAwake && (
+              <StatusBar
+                battery={hardware.battery}
+                charging={hardware.charging}
+                rssi={hardware.wifiRssi}
+              />
+            )}
+
             {/* Listening ring, drawn on the device rather than only in the
                 controls: a tap on the glass is the thing that turned the mic
                 on, so the glass has to be where you see that it worked. */}
@@ -138,6 +150,59 @@ export function RoundScreen() {
         <StatusLight awake={isAwake} speaking={speaking} />
         <Grille />
       </div>
+    </div>
+  );
+}
+
+interface StatusBarProps {
+  battery: number;
+  charging: boolean;
+  rssi: number;
+}
+
+/**
+ * Battery and signal, on the badge's own screen.
+ *
+ * Drawn inside the glass because that is where it would be on the real thing —
+ * a child glances at the toy, not at a panel somewhere else. It turns red at
+ * the same threshold the parent app does, so both go red together.
+ */
+function StatusBar({ battery, charging, rssi }: StatusBarProps) {
+  const low = battery <= LOW_BATTERY && !charging;
+  const bars = wifiBars(rssi);
+
+  return (
+    <div className="pointer-events-none absolute top-7 flex items-center gap-2 text-[11px] font-semibold sm:top-9">
+      <span className="flex items-end gap-[2px]" title={`${rssi} dBm`}>
+        {[1, 2, 3, 4].map((bar) => (
+          <span
+            key={bar}
+            style={{ height: `${3 + bar * 2}px` }}
+            className={`w-[3px] rounded-sm ${bar <= bars ? 'bg-cream-200' : 'bg-cream-200/20'}`}
+          />
+        ))}
+      </span>
+
+      <span className={`flex items-center gap-1 ${low ? 'text-berry-500' : 'text-cream-200/80'}`}>
+        {/* Battery shell, filled proportionally, with a nub on the end. */}
+        <span
+          className={`relative flex h-[11px] w-[22px] items-center rounded-[3px] border ${
+            low ? 'border-berry-500' : 'border-cream-200/60'
+          }`}
+        >
+          <span
+            style={{ width: `${Math.max(6, battery)}%` }}
+            className={`ml-[1px] h-[7px] rounded-[1px] ${low ? 'bg-berry-500' : 'bg-cream-200/80'}`}
+          />
+          <span
+            className={`absolute -right-[3px] h-[5px] w-[2px] rounded-r-sm ${
+              low ? 'bg-berry-500' : 'bg-cream-200/60'
+            }`}
+          />
+        </span>
+        {charging && <span className="text-sunny-400">⚡</span>}
+        <span className="tabular-nums">{battery}%</span>
+      </span>
     </div>
   );
 }

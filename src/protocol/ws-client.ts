@@ -144,6 +144,34 @@ export class WsClient {
     this.socket.send(frame);
   }
 
+  /** Battery report. The badge's own condition, not part of the conversation. */
+  sendBattery(level: number, charging: boolean): void {
+    this.sendRaw({ type: 'battery', level, charging });
+  }
+
+  /** A physical button on the badge: `wake_up`, `press` or `goodbye`. */
+  sendButton(action: string): void {
+    this.sendRaw({ type: 'button', action });
+  }
+
+  /** A fault the badge has noticed in itself. */
+  sendError(code: string, message: string): void {
+    this.sendRaw({ type: 'error', code, message });
+  }
+
+  /**
+   * Ships a frame outside the typed conversation union.
+   *
+   * These are device-condition messages the chat protocol has no place for —
+   * the backend defines them, xiaozhi may or may not forward them, and neither
+   * belongs in `OutgoingMessage` alongside the frames that carry speech.
+   */
+  private sendRaw(message: { type: string } & Record<string, unknown>): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(JSON.stringify(message));
+    this.handlers.onLog('out', message.type, message);
+  }
+
   /** Interrupts the backend mid-sentence. No-op before the handshake lands. */
   abort(reason = 'user_interrupt'): void {
     if (!this.sessionId) return;

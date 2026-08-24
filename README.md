@@ -122,6 +122,35 @@ Real hardware has no image decoder and the backend pre-converts stills to
 RGB565 for it. A browser has no such problem, so the simulator can show
 animation the badge cannot yet — which is the point of having one.
 
+## Hardware
+
+The badge reports its own condition, and **Phần cứng** in the drawer is where
+you decide what that condition is: battery and charging, WiFi strength, the
+physical buttons (`wake_up` / `press` / `goodbye`), and an injected fault.
+
+Battery and signal are drawn on the badge's own screen, since that is where
+they would be on the real thing, and both go red at the same threshold the
+parent app uses.
+
+It reports over two links, because they are two systems:
+
+| | Goes to | Carries |
+|---|---|---|
+| The chat socket | xiaozhi | `battery`, `button`, `error` frames |
+| `POST /devices/{id}/telemetry` | FastAPI | the full reading, including `uptime_seconds` and `error_code` |
+
+Only the second reaches the parent app: `/devices/dashboard/list` reads what
+that endpoint writes. It is off until you fill in **API backend** in the
+connection panel, because the backend is usually not running next to you, and
+a panel full of red failures for an service you never intended to use is
+worse than one that says nothing.
+
+The fault injector matters more than it looks. `error_code` is a field the
+backend logs and the parent app can show, and nothing else in the stack can
+produce one — no device has ever sent it. Same for a flat battery: turn on
+**Tự hao pin** and the badge drains, disconnects at zero, and gives the
+parent app's offline path something real to react to.
+
 ## Touch
 
 The glass is the badge's whole physical interface, and what a touch means

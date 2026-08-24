@@ -16,9 +16,20 @@ export interface DeviceConfig {
    * often pointed at a server whose OTA endpoint is down or not yet deployed.
    */
   fallbackWsUrl: string;
+  /**
+   * Where telemetry goes — the FastAPI backend, not xiaozhi.
+   *
+   * A separate address because it is a separate system: the chat socket talks
+   * to xiaozhi, while battery and faults land in the database the parent app
+   * reads. Blank turns reporting off, which is the right default when the
+   * backend is usually not running next to you.
+   */
+  apiUrl: string;
   /** Stands in for the badge's MAC address. Identifies the device to the backend. */
   macAddress: string;
   deviceName: string;
+  /** Reported in telemetry, and what the OTA endpoint compares against. */
+  firmwareVersion: string;
   /**
    * Governs both directions: the server echoes this back and encodes its TTS at
    * it. Stay silent and it assumes 24000. The badge itself uses 16000, which is
@@ -48,8 +59,10 @@ export const DEFAULT_CONFIG: DeviceConfig = {
   otaUrl: import.meta.env.VITE_OTA_URL ?? 'https://bong-ai-esp.bcserver.xyz/xiaozhi/ota/',
   fallbackWsUrl:
     import.meta.env.VITE_WS_URL ?? 'wss://bong-ai-esp.bcserver.xyz/xiaozhi/v1/',
+  apiUrl: import.meta.env.VITE_API_URL ?? '',
   macAddress: randomMac(),
   deviceName: 'round-badge',
+  firmwareVersion: '1.0.0',
   sampleRate: 16000,
 };
 

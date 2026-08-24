@@ -9,6 +9,8 @@
 import { create } from 'zustand';
 import { loadConfig, saveConfig, type DeviceConfig } from '../config/device-config';
 import { audioSupport } from '../audio/audio-format';
+import { clampBattery, drainBattery, LOW_BATTERY } from '../hardware/hardware-state';
+import { sendTelemetry } from '../protocol/telemetry-client';
 import { MicCapture } from '../audio/mic-capture';
 import { OpusPlayer } from '../audio/opus-player';
 import type { IncomingMessage } from '../protocol/message-types';
@@ -50,6 +52,30 @@ const BARGE_IN_DEBOUNCE_MS = 1500;
 /** Whether the mic is off, or open and streaming to the backend. */
 export type MicState = 'off' | 'listening';
 
+/** A physical button on the badge. `press` is what a tap on the glass is. */
+export type ButtonAction = 'wake_up' | 'press' | 'goodbye';
+
+/** The badge's physical condition, as the parent app would eventually see it. */
+export interface HardwareState {
+  battery: number;
+  charging: boolean;
+  /** dBm. Closer to zero is stronger. */
+  wifiRssi: number;
+  /** Whether the battery moves on its own. Off by default so a demo holds still. */
+  autoDrain: boolean;
+  /** An injected fault, reported until cleared. */
+  faultCode: string | null;
+  /** Result of the last telemetry post, so the panel can say whether it landed. */
+  telemetry: 'off' | 'sending' | 'ok' | 'error';
+  telemetryError: string | null;
+}
+
+/** How often condition is reported while connected. */
+const TELEMETRY_INTERVAL_MS = 30_000;
+
+/** How often the battery is re-computed when draining. */
+const DRAIN_TICK_MS = 5_000;
+
 interface SimulatorState {
   config: DeviceConfig;
   status: ConnectionStatus;
@@ -68,6 +94,8 @@ interface SimulatorState {
   framesIn: number;
   framesOut: number;
 
+  hardware: HardwareState;
+
   updateConfig: (patch: Partial<DeviceConfig>) => void;
   connect: () => void;
   disconnect: () => void;
@@ -81,6 +109,12 @@ interface SimulatorState {
   /** What a tap on the glass does, which depends on whether the badge is awake. */
   tapScreen: () => void;
   setVolume: (volume: number) => void;
+
+  setHardware: (patch: Partial<HardwareState>) => void;
+  /** Presses a physical button. Same frames the real badge sends. */
+  pressButton: (action: ButtonAction) => void;
+  /** Reports condition now, rather than waiting for the next interval. */
+  reportCondition: () => void;
 }
 
 /**
@@ -94,6 +128,11 @@ let client: WsClient | null = null;
 let player: OpusPlayer | null = null;
 let mic: MicCapture | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
+let telemetryTimer: ReturnType<typeof setInterval> | null = null;
+let drainTimer: ReturnType<typeof setInterval> | null = null;
+let lastDrainAt = Date.now();
+/** Fixed at load: the badge has been "on" for as long as the page has. */
+const bootedAt = Date.now();
 let unmuteTimer: ReturnType<typeof setTimeout> | null = null;
 let lastBargeIn = 0;
 let nextPacketId = 0;
@@ -112,6 +151,16 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   audioError: null,
   framesIn: 0,
   framesOut: 0,
+
+  hardware: {
+    battery: 82,
+    charging: false,
+    wifiRssi: -55,
+    autoDrain: false,
+    faultCode: null,
+    telemetry: 'off',
+    telemetryError: null,
+  },
 
   updateConfig: (patch) => {
     const config = { ...get().config, ...patch };
@@ -134,6 +183,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       onLog: (direction, type, payload) => appendPacket(set, get, direction, type, payload),
     });
     void client.connect();
+    startHardwareTimers(set, get);
   },
 
   disconnect: () => {
@@ -144,6 +194,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     player = null;
     clearIdleTimer();
     clearUnmuteTimer();
+    stopHardwareTimers();
     set({
       status: 'disconnected',
       sessionId: null,
@@ -234,6 +285,62 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     player?.setVolume(volume);
     set({ volume });
   },
+
+  setHardware: (patch) => {
+    const hardware = { ...get().hardware, ...patch };
+    if (patch.battery !== undefined) hardware.battery = clampBattery(patch.battery);
+    set({ hardware });
+    // Report straight away: a slider moved by hand is a deliberate act, and
+    // waiting up to thirty seconds to see it land makes the panel feel broken.
+    get().reportCondition();
+  },
+
+  /**
+   * Presses a physical button.
+   *
+   * `wake_up` on a sleeping badge connects, the way the real one does — the
+   * button is how you turn it on, not something that needs it already on.
+   */
+  pressButton: (action) => {
+    if (action === 'wake_up' && get().status === 'disconnected') {
+      get().connect();
+      return;
+    }
+    client?.sendButton(action);
+  },
+
+  reportCondition: () => {
+    const { config, hardware } = get();
+    const reading = {
+      battery_level: hardware.battery,
+      wifi_rssi: hardware.wifiRssi,
+      is_charging: hardware.charging,
+      firmware_version: config.firmwareVersion,
+      uptime_seconds: Math.floor((Date.now() - bootedAt) / 1000),
+      ...(hardware.faultCode
+        ? { error_code: hardware.faultCode, error_message: `Giả lập: ${hardware.faultCode}` }
+        : {}),
+    };
+
+    // The socket carries it too, since a real badge reports over whichever
+    // link it already has open rather than dialling a second one.
+    client?.sendBattery(hardware.battery, hardware.charging);
+    if (hardware.faultCode) client?.sendError(hardware.faultCode, reading.error_message ?? '');
+
+    if (!config.apiUrl) {
+      set({ hardware: { ...get().hardware, telemetry: 'off', telemetryError: null } });
+      return;
+    }
+
+    set({ hardware: { ...get().hardware, telemetry: 'sending' } });
+    void sendTelemetry(config, reading)
+      .then(() => set({ hardware: { ...get().hardware, telemetry: 'ok', telemetryError: null } }))
+      .catch((error) =>
+        set({
+          hardware: { ...get().hardware, telemetry: 'error', telemetryError: String(error) },
+        }),
+      );
+  },
 }));
 
 type Setter = (partial: Partial<SimulatorState>) => void;
@@ -316,3 +423,43 @@ function clearUnmuteTimer(): void {
   if (unmuteTimer) clearTimeout(unmuteTimer);
   unmuteTimer = null;
 }
+
+/**
+ * Runs the battery down and reports condition while the badge is on.
+ *
+ * Both tick on a wall clock rather than counting ticks, so a backgrounded tab —
+ * where browsers throttle timers hard — comes back with a battery that moved by
+ * the time that actually passed.
+ */
+function startHardwareTimers(set: Setter, get: Getter): void {
+  stopHardwareTimers();
+  lastDrainAt = Date.now();
+
+  drainTimer = setInterval(() => {
+    const { hardware } = get();
+    const now = Date.now();
+    const elapsed = now - lastDrainAt;
+    lastDrainAt = now;
+    if (!hardware.autoDrain) return;
+
+    const battery = drainBattery(hardware.battery, hardware.charging, elapsed);
+    if (battery === hardware.battery) return;
+    set({ hardware: { ...hardware, battery } });
+
+    // Flat battery is the end of the session, which is exactly the state the
+    // parent app's "device offline" path needs to be tested against.
+    if (battery === 0) get().disconnect();
+  }, DRAIN_TICK_MS);
+
+  telemetryTimer = setInterval(() => get().reportCondition(), TELEMETRY_INTERVAL_MS);
+  get().reportCondition();
+}
+
+function stopHardwareTimers(): void {
+  if (drainTimer) clearInterval(drainTimer);
+  if (telemetryTimer) clearInterval(telemetryTimer);
+  drainTimer = null;
+  telemetryTimer = null;
+}
+
+export { LOW_BATTERY };
