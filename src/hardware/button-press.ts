@@ -17,19 +17,30 @@ export type ButtonAction = 'wake_up' | 'press' | 'menu' | 'goodbye';
 /**
  * What one press means.
  *
- * Asleep, anything wakes it — a child holding a dark toy should not have to
- * know how long to hold. Awake, the duration picks between three things.
+ * A quick press on a dark toy wakes it — a child should not have to know how
+ * long to hold to get a response. Holding it opens the mode menu, whether the
+ * badge is awake or not.
+ *
+ * The menu deliberately does not require a connection. A story or a lesson
+ * disconnects the socket while it plays, so if the menu needed the badge awake,
+ * leaving a story would strand the child: the menu would be unreachable until
+ * they knew to tap the glass first and wait. Nothing in the menu needs the
+ * socket anyway — the catalog is a plain fetch, and picking free talk connects.
+ *
+ * Goodbye keeps the longest hold, and only when there is something to say
+ * goodbye to. It is the destructive one, so it should take deliberate effort to
+ * reach past the menu rather than being what you hit by holding a moment too
+ * long.
  *
  * The middle tier is the mode menu, which no real badge has (see
- * `menu-state.ts`). It is put here rather than on a second control because the
- * hardware has exactly one button, and a test affordance that invents a button
- * stops testing the hardware. Goodbye keeps the longest hold — it is the
- * destructive one, and it should take deliberate effort to reach past the menu.
+ * `menu-state.ts`). It lives on this button rather than a second control
+ * because the hardware has exactly one, and a test affordance that invents a
+ * button stops testing the hardware.
  */
 export function classifyPress(heldMs: number, awake: boolean): ButtonAction {
-  if (!awake) return 'wake_up';
-  if (heldMs >= VERY_LONG_PRESS_MS) return 'goodbye';
-  return heldMs >= LONG_PRESS_MS ? 'menu' : 'press';
+  if (heldMs >= VERY_LONG_PRESS_MS) return awake ? 'goodbye' : 'menu';
+  if (heldMs >= LONG_PRESS_MS) return 'menu';
+  return awake ? 'press' : 'wake_up';
 }
 
 /** Mirrors the backend: debounce 3s, and no more than ten presses a minute. */

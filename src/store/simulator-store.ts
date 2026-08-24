@@ -344,7 +344,11 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   setVolume: (volume) => {
+    // One speaker, three things that might own it. The volume control is on
+    // the device, so it has to reach whichever one is currently playing.
     player?.setVolume(volume);
+    story?.setVolume(volume);
+    lesson?.setVolume(volume);
     set({ volume });
   },
 

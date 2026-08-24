@@ -10,10 +10,19 @@ import {
 } from './button-press';
 
 describe('classifyPress', () => {
-  it('wakes the badge however briefly it was pressed', () => {
-    // A child holding a dark toy should not have to know how long to hold.
+  it('wakes a sleeping badge on a quick press', () => {
+    // A child picking up a dark toy should not have to know how long to hold.
     expect(classifyPress(20, false)).toBe('wake_up');
-    expect(classifyPress(3000, false)).toBe('wake_up');
+    expect(classifyPress(LONG_PRESS_MS - 1, false)).toBe('wake_up');
+  });
+
+  // A story or lesson disconnects the socket while it plays. If the menu
+  // needed the badge awake, leaving one would strand the child with no way
+  // back to it short of tapping the glass and waiting for a reconnect.
+  it('opens the menu on a hold even while asleep', () => {
+    expect(classifyPress(LONG_PRESS_MS, false)).toBe('menu');
+    expect(classifyPress(VERY_LONG_PRESS_MS, false)).toBe('menu');
+    expect(classifyPress(9_000, false)).toBe('menu');
   });
 
   it('reads a short press as a press', () => {
@@ -28,10 +37,12 @@ describe('classifyPress', () => {
 
   // Goodbye keeps the longest hold: it is the destructive one, so it should
   // take deliberate effort to reach past the menu rather than being the thing
-  // you hit by holding a moment too long.
-  it('only says goodbye past the very-long threshold', () => {
+  // you hit by holding a moment too long. And there is nothing to say goodbye
+  // to when the badge is already asleep.
+  it('only says goodbye past the very-long threshold, and only when awake', () => {
     expect(classifyPress(VERY_LONG_PRESS_MS, true)).toBe('goodbye');
     expect(classifyPress(5_000, true)).toBe('goodbye');
+    expect(classifyPress(5_000, false)).toBe('menu');
   });
 });
 

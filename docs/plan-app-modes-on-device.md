@@ -275,3 +275,50 @@ menu and the player while the auth surface is still unwritten.
 message but re-arms it only on `tts.stop`. A frame arriving inside the 1s linger
 strands the face in `emotion`. Harmless today; a lesson pushes far more frames
 through that path, so fix it before phase 5 rather than debugging it there.
+
+
+---
+
+## Build notes (what changed against the plan)
+
+Written after implementing it, so the plan and the code do not drift.
+
+**The menu opens on a hold whether or not the badge is awake.** The plan said
+long-press; it did not say what happens asleep. Verifying found the gap: a story
+disconnects the socket while it plays, so after exiting one the badge is asleep
+and a hold would have woken it instead of opening the menu — leaving the child
+with no route back. Nothing in the menu needs the socket, so the hold now opens
+it either way. Goodbye still needs the badge awake, because there is nothing to
+say goodbye to otherwise.
+
+**A real touch bug, found while verifying.** The display called
+`setPointerCapture` on every pointer starting inside it. That retargets the
+pointer *and the click derived from it* to the container, so a menu row drawn
+inside the display never received its own click. On hardware the child taps a
+lesson and nothing happens. The glass now bails before capturing whenever an
+overlay owns it.
+
+**STT field name.** The service wants `audio`, not `file`. It reports
+`{"loc": ["body", "audio"]}` for anything else. Verified against the live
+endpoint, which returns `{text, raw_text, emotion, events}`.
+
+**Timeout divergence, deliberate.** `CLASSIFY_TIMEOUT_MS` is 30s here, and the
+engine imposes no second shorter one. The app aborts at 10s while its own client
+allows 25s and its comment says classify "routinely takes ~9s", so a valid slow
+answer is discarded as silence there. Noted so the difference is a decision, not
+a drift.
+
+**Not verified.** Lesson playback end to end — that needs a parent account with
+an active subscription. The signed-out path is verified: the catalog lists all
+14 lessons and picking one reports that login is required. Everything from
+loading metadata onward is covered by unit tests against fakes (31 of them,
+including every never-dead-end rule), not by a live run.
+
+**Harness gotchas**, all cost real time, none were product bugs:
+- CDP `pointerType: 'touch'` on `dispatchMouseEvent` skips the click synthesis a
+  real touchscreen performs, so `onClick` handlers never fire. Use plain mouse.
+- The 3s press debounce is real firmware behaviour. A test that mashes gets
+  throttled and looks like a dead button.
+- `innerText` applies CSS `text-transform`; an assertion on the authored casing
+  silently misses an uppercased header. Use `textContent`.
+- Re-measure element coordinates before every press. Waking shifts the layout.
