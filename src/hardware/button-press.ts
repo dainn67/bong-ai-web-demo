@@ -9,18 +9,27 @@
 /** Held longer than this and it is a long press. */
 export const LONG_PRESS_MS = 800;
 
-export type ButtonAction = 'wake_up' | 'press' | 'goodbye';
+/** Held past this and the long press becomes a goodbye instead of the menu. */
+export const VERY_LONG_PRESS_MS = 2_000;
+
+export type ButtonAction = 'wake_up' | 'press' | 'menu' | 'goodbye';
 
 /**
  * What one press means.
  *
  * Asleep, anything wakes it — a child holding a dark toy should not have to
- * know how long to hold. Awake, holding it is how you say goodbye, which is
- * the convention every device with one button uses.
+ * know how long to hold. Awake, the duration picks between three things.
+ *
+ * The middle tier is the mode menu, which no real badge has (see
+ * `menu-state.ts`). It is put here rather than on a second control because the
+ * hardware has exactly one button, and a test affordance that invents a button
+ * stops testing the hardware. Goodbye keeps the longest hold — it is the
+ * destructive one, and it should take deliberate effort to reach past the menu.
  */
 export function classifyPress(heldMs: number, awake: boolean): ButtonAction {
   if (!awake) return 'wake_up';
-  return heldMs >= LONG_PRESS_MS ? 'goodbye' : 'press';
+  if (heldMs >= VERY_LONG_PRESS_MS) return 'goodbye';
+  return heldMs >= LONG_PRESS_MS ? 'menu' : 'press';
 }
 
 /** Mirrors the backend: debounce 3s, and no more than ten presses a minute. */

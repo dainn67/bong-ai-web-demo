@@ -8,6 +8,7 @@
  */
 
 import { useEffect, type ReactNode } from 'react';
+import { AuthPanel } from './auth-panel';
 import { ConnectionPanel } from './connection-panel';
 import { AudioPanel } from './audio-panel';
 import { HardwarePanel } from './hardware-panel';
@@ -58,6 +59,7 @@ export function DevDrawer({ open, onClose }: DevDrawerProps) {
         </header>
 
         <ConnectionPanel />
+        <AuthPanel />
         <HardwarePanel />
         <AudioPanel />
         <PacketInspector />

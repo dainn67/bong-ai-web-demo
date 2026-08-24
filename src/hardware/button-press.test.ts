@@ -6,6 +6,7 @@ import {
   MAX_PRESSES_PER_MINUTE,
   pruneHistory,
   throttlePress,
+  VERY_LONG_PRESS_MS,
 } from './button-press';
 
 describe('classifyPress', () => {
@@ -15,9 +16,22 @@ describe('classifyPress', () => {
     expect(classifyPress(3000, false)).toBe('wake_up');
   });
 
-  it('reads a short press as a press and a held one as goodbye', () => {
+  it('reads a short press as a press', () => {
     expect(classifyPress(200, true)).toBe('press');
-    expect(classifyPress(LONG_PRESS_MS, true)).toBe('goodbye');
+    expect(classifyPress(LONG_PRESS_MS - 1, true)).toBe('press');
+  });
+
+  it('opens the menu on a long press', () => {
+    expect(classifyPress(LONG_PRESS_MS, true)).toBe('menu');
+    expect(classifyPress(VERY_LONG_PRESS_MS - 1, true)).toBe('menu');
+  });
+
+  // Goodbye keeps the longest hold: it is the destructive one, so it should
+  // take deliberate effort to reach past the menu rather than being the thing
+  // you hit by holding a moment too long.
+  it('only says goodbye past the very-long threshold', () => {
+    expect(classifyPress(VERY_LONG_PRESS_MS, true)).toBe('goodbye');
+    expect(classifyPress(5_000, true)).toBe('goodbye');
   });
 });
 

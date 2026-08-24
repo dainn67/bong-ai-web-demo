@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useSimulatorStore } from '../store/simulator-store';
 import { LOW_BATTERY, wifiBars } from '../hardware/hardware-state';
-import { LONG_PRESS_MS } from '../hardware/button-press';
+import { LONG_PRESS_MS, VERY_LONG_PRESS_MS } from '../hardware/button-press';
 import {
   DISPLAY_SIZE,
   isInsideDisplay,
@@ -19,6 +19,9 @@ import {
 } from './touch-input';
 import type { Emotion, Expression } from '../protocol/message-types';
 import type { FaceMode } from './face-state-machine';
+import { ScreenMenu } from './menu';
+import { ActivityView } from './activity-view';
+import { isOpen } from './menu-state';
 
 /**
  * Placeholder faces.
@@ -69,9 +72,14 @@ export function RoundScreen() {
   const hardware = useSimulatorStore((state) => state.hardware);
   const pressButton = useSimulatorStore((state) => state.pressButton);
   const tapScreen = useSimulatorStore((state) => state.tapScreen);
+  const menu = useSimulatorStore((state) => state.menu);
+  const activity = useSimulatorStore((state) => state.activity);
 
   const isAwake = status === 'connected';
-  const { displayRef, ripple, pointerHandlers } = useDisplayTouch(tapScreen);
+  // While the menu or an activity owns the glass, the glass is not an input
+  // surface — the thing drawn on it is. See the note in `useDisplayTouch`.
+  const overlaid = isOpen(menu) || activity.kind !== null;
+  const { displayRef, ripple, pointerHandlers } = useDisplayTouch(tapScreen, !overlaid);
   // Precedence, strongest first: artwork the backend sent, a face it named,
   // the talking face, then the mood we inferred from the reply.
   const glyph = face.expression
@@ -149,6 +157,12 @@ export function RoundScreen() {
                 {hardware.buttonNotice}
               </p>
             )}
+
+            {/* Both overlays live inside the display, so they are clipped by
+                the same circle the face is — nothing exists outside it. An
+                activity wins over the menu: starting one closes the other. */}
+            <ActivityView />
+            <ScreenMenu />
 
             {/* Glass: a fixed highlight across the top, so it reads as covered. */}
             <div className="pointer-events-none absolute inset-0 rounded-full bg-gradient-to-b from-white/12 via-transparent to-transparent" />
@@ -293,7 +307,11 @@ function PowerButton({ onPress }: { onPress: (heldMs: number) => void }) {
     setHeld(0);
   };
 
-  const progress = Math.min(1, held / LONG_PRESS_MS);
+  // Fills across the whole hold, so both thresholds are visible as they pass
+  // rather than the child discovering afterwards which one they landed on.
+  const progress = Math.min(1, held / VERY_LONG_PRESS_MS);
+  const tier =
+    held >= VERY_LONG_PRESS_MS ? 'goodbye' : held >= LONG_PRESS_MS ? 'menu' : 'press';
 
   return (
     <button
@@ -301,15 +319,20 @@ function PowerButton({ onPress }: { onPress: (heldMs: number) => void }) {
       onPointerDown={start}
       onPointerUp={end}
       onPointerCancel={cancel}
-      title="Bấm nhanh để nói · giữ lâu để tạm biệt"
+      title="Bấm nhanh để nói · giữ để mở menu · giữ lâu hơn để tạm biệt"
       className="absolute -right-1.5 top-1/2 h-14 w-4 -translate-y-1/2 overflow-hidden rounded-r-lg bg-gradient-to-r from-cream-300 to-cream-200 shadow-[2px_2px_6px_-2px_rgba(61,44,36,0.5)] transition active:translate-x-[1px]"
     >
-      {/* Fills from the bottom as it is held, reaching the top at goodbye. */}
       <span
         style={{ height: `${progress * 100}%` }}
         className={`absolute bottom-0 left-0 w-full transition-[height] duration-75 ${
-          progress >= 1 ? 'bg-berry-500' : 'bg-coral-400'
+          tier === 'goodbye' ? 'bg-berry-500' : tier === 'menu' ? 'bg-sunny-400' : 'bg-coral-400'
         }`}
+      />
+      {/* A hairline where the menu threshold sits, so the middle tier is not
+          something you can only find by accident. */}
+      <span
+        style={{ bottom: `${(LONG_PRESS_MS / VERY_LONG_PRESS_MS) * 100}%` }}
+        className="absolute left-0 h-px w-full bg-ink-700/30"
       />
     </button>
   );
@@ -340,7 +363,7 @@ interface Ripple {
  * cancelled — a browser gesture stealing it, a finger sliding off — leaves
  * nothing behind that a later release could mistake for a tap.
  */
-function useDisplayTouch(onTap: () => void) {
+function useDisplayTouch(onTap: () => void, enabled: boolean) {
   const displayRef = useRef<HTMLDivElement>(null);
   const starts = useRef(new Map<number, TouchStart>());
   const nextRipple = useRef(0);
@@ -353,6 +376,15 @@ function useDisplayTouch(onTap: () => void) {
   };
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    // Bail before capturing when something is drawn on the glass.
+    //
+    // This is not merely "ignore the tap". Capturing retargets the pointer —
+    // and the click derived from it — to this container, so a menu row inside
+    // the display would never receive its own click. That is a real failure on
+    // hardware, not just in a test: the child taps a lesson and nothing at all
+    // happens.
+    if (!enabled) return;
+
     // The glass responds even with the screen dark. Waking the badge is a
     // touch like any other, and a device that ignored you until it was already
     // awake would be a strange thing to hand a child.
