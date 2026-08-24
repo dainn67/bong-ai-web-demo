@@ -125,8 +125,28 @@ animation the badge cannot yet — which is the point of having one.
 ## Hardware
 
 The badge reports its own condition, and **Phần cứng** in the drawer is where
-you decide what that condition is: battery and charging, WiFi strength, the
-physical buttons (`wake_up` / `press` / `goodbye`), and an injected fault.
+you decide what that condition is: battery and charging, WiFi strength, and an
+injected fault.
+
+The **button is on the badge**, on the rim at three o'clock, because a physical
+button is real hardware and does not belong in a drawer labelled as things real
+hardware does not have. There is one, as there is on the device, so meaning
+comes from how long it is held rather than from picking an action off a list:
+
+| | |
+|---|---|
+| Press while asleep | `wake_up` — a child holding a dark toy should not have to know how long to hold |
+| Short press | `press` |
+| Held past 800ms | `goodbye`, and the badge sleeps |
+
+It fills up as you hold it, so the goodbye is visible before it fires rather
+than a surprise afterwards. Presses are debounced 3s and capped at ten a
+minute — the same rules the backend applies, run locally too, because firmware
+debounces in the device and the badge should behave the same whether or not a
+backend is reachable. A press that does not count says so on the glass, since
+a child who sees nothing happen just presses harder. When an API address is
+set it also reports to `/devices/{id}/fallback/button-press`, which is how the
+device and the backend are ever seen to disagree about the count.
 
 Battery and signal are drawn on the badge's own screen, since that is where
 they would be on the real thing, and both go red at the same threshold the

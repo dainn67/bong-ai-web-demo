@@ -6,9 +6,10 @@
  * so the thing on screen reads as hardware you could clip to a stuffed animal.
  */
 
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useSimulatorStore } from '../store/simulator-store';
 import { LOW_BATTERY, wifiBars } from '../hardware/hardware-state';
+import { LONG_PRESS_MS } from '../hardware/button-press';
 import {
   DISPLAY_SIZE,
   isInsideDisplay,
@@ -66,6 +67,7 @@ export function RoundScreen() {
   const speaking = useSimulatorStore((state) => state.speaking);
   const listening = useSimulatorStore((state) => state.micState === 'listening');
   const hardware = useSimulatorStore((state) => state.hardware);
+  const pressButton = useSimulatorStore((state) => state.pressButton);
   const tapScreen = useSimulatorStore((state) => state.tapScreen);
 
   const isAwake = status === 'connected';
@@ -142,6 +144,12 @@ export function RoundScreen() {
               />
             )}
 
+            {hardware.buttonNotice && (
+              <p className="pointer-events-none absolute bottom-10 max-w-[70%] rounded-full bg-ink-900/70 px-3 py-1.5 text-center text-xs font-semibold text-cream-100">
+                {hardware.buttonNotice}
+              </p>
+            )}
+
             {/* Glass: a fixed highlight across the top, so it reads as covered. */}
             <div className="pointer-events-none absolute inset-0 rounded-full bg-gradient-to-b from-white/12 via-transparent to-transparent" />
           </div>
@@ -149,6 +157,7 @@ export function RoundScreen() {
 
         <StatusLight awake={isAwake} speaking={speaking} />
         <Grille />
+        <PowerButton onPress={pressButton} />
       </div>
     </div>
   );
@@ -237,6 +246,72 @@ function StatusLight({ awake, speaking }: { awake: boolean; speaking: boolean })
     <div
       className={`absolute bottom-16 right-16 h-2.5 w-2.5 rounded-full transition-all duration-300 ${tone}`}
     />
+  );
+}
+
+/**
+ * The badge's one physical button, on the rim at three o'clock.
+ *
+ * One button, because that is what the hardware has — the meaning comes from
+ * how long it is held, not from picking a labelled action off a list. Held
+ * long enough, it fills up, so you can see the goodbye coming before it fires
+ * rather than discovering afterwards that you held it too long.
+ */
+function PowerButton({ onPress }: { onPress: (heldMs: number) => void }) {
+  const downAt = useRef<number | null>(null);
+  const [holding, setHolding] = useState(false);
+  const [held, setHeld] = useState(0);
+
+  // Ticks only while the button is down, so an idle badge runs no timer.
+  useEffect(() => {
+    if (!holding) return;
+    const timer = setInterval(() => {
+      if (downAt.current !== null) setHeld(Date.now() - downAt.current);
+    }, 40);
+    return () => clearInterval(timer);
+  }, [holding]);
+
+  const start = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    downAt.current = Date.now();
+    setHeld(0);
+    setHolding(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const end = () => {
+    if (downAt.current === null) return;
+    const elapsed = Date.now() - downAt.current;
+    downAt.current = null;
+    setHolding(false);
+    setHeld(0);
+    onPress(elapsed);
+  };
+
+  const cancel = () => {
+    downAt.current = null;
+    setHolding(false);
+    setHeld(0);
+  };
+
+  const progress = Math.min(1, held / LONG_PRESS_MS);
+
+  return (
+    <button
+      type="button"
+      onPointerDown={start}
+      onPointerUp={end}
+      onPointerCancel={cancel}
+      title="Bấm nhanh để nói · giữ lâu để tạm biệt"
+      className="absolute -right-1.5 top-1/2 h-14 w-4 -translate-y-1/2 overflow-hidden rounded-r-lg bg-gradient-to-r from-cream-300 to-cream-200 shadow-[2px_2px_6px_-2px_rgba(61,44,36,0.5)] transition active:translate-x-[1px]"
+    >
+      {/* Fills from the bottom as it is held, reaching the top at goodbye. */}
+      <span
+        style={{ height: `${progress * 100}%` }}
+        className={`absolute bottom-0 left-0 w-full transition-[height] duration-75 ${
+          progress >= 1 ? 'bg-berry-500' : 'bg-coral-400'
+        }`}
+      />
+    </button>
   );
 }
 

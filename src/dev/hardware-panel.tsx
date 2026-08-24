@@ -18,9 +18,7 @@ import { Panel } from './dev-drawer';
 export function HardwarePanel() {
   const hardware = useSimulatorStore((state) => state.hardware);
   const apiUrl = useSimulatorStore((state) => state.config.apiUrl);
-  const connected = useSimulatorStore((state) => state.status === 'connected');
   const setHardware = useSimulatorStore((state) => state.setHardware);
-  const pressButton = useSimulatorStore((state) => state.pressButton);
 
   return (
     <Panel title="Phần cứng" action={<TelemetryBadge state={hardware.telemetry} hasUrl={!!apiUrl} />}>
@@ -59,24 +57,6 @@ export function HardwarePanel() {
         onChange={(wifiRssi) => setHardware({ wifiRssi })}
       />
 
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs font-semibold text-ink-500">Nút bấm</span>
-        <div className="flex gap-2">
-          {(['wake_up', 'press', 'goodbye'] as const).map((action) => (
-            <button
-              key={action}
-              type="button"
-              // `wake_up` works while asleep — it is how you turn the badge on.
-              disabled={!connected && action !== 'wake_up'}
-              onClick={() => pressButton(action)}
-              className="flex-1 rounded-xl bg-cream-100 px-2 py-2 text-xs font-bold text-ink-700 transition hover:bg-cream-200 active:scale-95 disabled:opacity-40"
-            >
-              {{ wake_up: 'Thức dậy', press: 'Bấm', goodbye: 'Tạm biệt' }[action]}
-            </button>
-          ))}
-        </div>
-      </div>
-
       <label className="flex flex-col gap-1.5">
         <span className="text-xs font-semibold text-ink-500">Báo lỗi thiết bị</span>
         <select
@@ -96,6 +76,10 @@ export function HardwarePanel() {
       {hardware.telemetryError && (
         <p className="text-xs text-berry-500">Gửi telemetry lỗi: {hardware.telemetryError}</p>
       )}
+      <p className="text-xs text-ink-300">
+        Nút bấm nằm trên thân máy — bấm nhanh để nói, giữ lâu để tạm biệt
+      </p>
+
       {!apiUrl && (
         <p className="text-xs text-ink-300">
           Đặt “API backend” trong phần Kết nối để gửi lên máy chủ mà app phụ huynh đọc

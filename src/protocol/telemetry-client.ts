@@ -45,3 +45,28 @@ export async function sendTelemetry(
     throw new Error(`HTTP ${response.status}`);
   }
 }
+
+/**
+ * Tells the backend a button was pressed, and whether it wants to allow it.
+ *
+ * The device debounces on its own — firmware does — but the backend keeps its
+ * own count, and the two disagreeing is exactly the kind of thing worth being
+ * able to see. Returns null when there is no backend to ask.
+ */
+export async function reportButtonPress(
+  config: DeviceConfig,
+): Promise<{ allowed: boolean; reason?: string; message?: string } | null> {
+  if (!config.apiUrl) return null;
+  const base = config.apiUrl.replace(/\/+$/, '');
+  const response = await fetch(
+    `${base}/api/v1/devices/${encodeURIComponent(config.macAddress)}/fallback/button-press`,
+    { method: 'POST' },
+  );
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const body = (await response.json()) as { data?: { allowed?: boolean; reason?: string; message?: string } };
+  return {
+    allowed: body.data?.allowed ?? true,
+    reason: body.data?.reason,
+    message: body.data?.message,
+  };
+}

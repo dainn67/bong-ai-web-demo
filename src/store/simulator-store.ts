@@ -10,7 +10,13 @@ import { create } from 'zustand';
 import { loadConfig, saveConfig, type DeviceConfig } from '../config/device-config';
 import { audioSupport } from '../audio/audio-format';
 import { clampBattery, drainBattery, LOW_BATTERY } from '../hardware/hardware-state';
-import { sendTelemetry } from '../protocol/telemetry-client';
+import { reportButtonPress, sendTelemetry } from '../protocol/telemetry-client';
+import {
+  classifyPress,
+  pruneHistory,
+  throttlePress,
+  type ButtonAction,
+} from '../hardware/button-press';
 import { MicCapture } from '../audio/mic-capture';
 import { OpusPlayer } from '../audio/opus-player';
 import type { IncomingMessage } from '../protocol/message-types';
@@ -52,9 +58,6 @@ const BARGE_IN_DEBOUNCE_MS = 1500;
 /** Whether the mic is off, or open and streaming to the backend. */
 export type MicState = 'off' | 'listening';
 
-/** A physical button on the badge. `press` is what a tap on the glass is. */
-export type ButtonAction = 'wake_up' | 'press' | 'goodbye';
-
 /** The badge's physical condition, as the parent app would eventually see it. */
 export interface HardwareState {
   battery: number;
@@ -68,6 +71,13 @@ export interface HardwareState {
   /** Result of the last telemetry post, so the panel can say whether it landed. */
   telemetry: 'off' | 'sending' | 'ok' | 'error';
   telemetryError: string | null;
+  /**
+   * Why the last press was ignored, if it was.
+   *
+   * Shown on the badge rather than logged: a child mashing the button needs to
+   * see that something happened, or they press harder.
+   */
+  buttonNotice: string | null;
 }
 
 /** How often condition is reported while connected. */
@@ -111,8 +121,12 @@ interface SimulatorState {
   setVolume: (volume: number) => void;
 
   setHardware: (patch: Partial<HardwareState>) => void;
-  /** Presses a physical button. Same frames the real badge sends. */
-  pressButton: (action: ButtonAction) => void;
+  /**
+   * Presses the badge's physical button, having held it for `heldMs`.
+   *
+   * One button, so how long it was held is what decides the meaning.
+   */
+  pressButton: (heldMs: number) => void;
   /** Reports condition now, rather than waiting for the next interval. */
   reportCondition: () => void;
 }
@@ -131,6 +145,9 @@ let idleTimer: ReturnType<typeof setTimeout> | null = null;
 let telemetryTimer: ReturnType<typeof setInterval> | null = null;
 let drainTimer: ReturnType<typeof setInterval> | null = null;
 let lastDrainAt = Date.now();
+/** Timestamps of presses the device accepted, for debounce and rate limiting. */
+let pressHistory: number[] = [];
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 /** Fixed at load: the badge has been "on" for as long as the page has. */
 const bootedAt = Date.now();
 let unmuteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -160,6 +177,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     faultCode: null,
     telemetry: 'off',
     telemetryError: null,
+    buttonNotice: null,
   },
 
   updateConfig: (patch) => {
@@ -295,18 +313,39 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     get().reportCondition();
   },
 
-  /**
-   * Presses a physical button.
-   *
-   * `wake_up` on a sleeping badge connects, the way the real one does — the
-   * button is how you turn it on, not something that needs it already on.
-   */
-  pressButton: (action) => {
-    if (action === 'wake_up' && get().status === 'disconnected') {
+  pressButton: (heldMs) => {
+    const now = Date.now();
+    const awake = get().status === 'connected';
+
+    // Debounced in the device, the way firmware does, so mashing behaves the
+    // same whether or not a backend is reachable.
+    const verdict = throttlePress(pressHistory, now);
+    if (!verdict.allowed) {
+      setButtonNotice(set, get, verdict.message ?? 'Bé đợi Bống một chút nhé!');
+      return;
+    }
+    pressHistory = [...pruneHistory(pressHistory, now), now];
+    setButtonNotice(set, get, null);
+
+    // The backend keeps its own count. Asking it as well is how the two are
+    // ever seen to disagree; it cannot veto a press the device already took.
+    void reportButtonPress(get().config)
+      .then((result) => {
+        if (result && !result.allowed) {
+          setButtonNotice(set, get, result.message ?? 'Máy chủ chặn bớt nút bấm');
+        }
+      })
+      .catch(() => {
+        // No backend, or it is unhappy. The button still worked.
+      });
+
+    const action: ButtonAction = classifyPress(heldMs, awake);
+    if (action === 'wake_up') {
       get().connect();
       return;
     }
     client?.sendButton(action);
+    if (action === 'goodbye') get().disconnect();
   },
 
   reportCondition: () => {
@@ -453,6 +492,18 @@ function startHardwareTimers(set: Setter, get: Getter): void {
 
   telemetryTimer = setInterval(() => get().reportCondition(), TELEMETRY_INTERVAL_MS);
   get().reportCondition();
+}
+
+/** Shows why a press was ignored, and clears it again so it does not linger. */
+function setButtonNotice(set: Setter, get: Getter, message: string | null): void {
+  if (noticeTimer) clearTimeout(noticeTimer);
+  noticeTimer = null;
+  set({ hardware: { ...get().hardware, buttonNotice: message } });
+  if (!message) return;
+  noticeTimer = setTimeout(
+    () => set({ hardware: { ...get().hardware, buttonNotice: null } }),
+    2500,
+  );
 }
 
 function stopHardwareTimers(): void {
