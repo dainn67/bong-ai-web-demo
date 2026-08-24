@@ -1,9 +1,15 @@
 /**
  * The mode picker, drawn inside the circle.
  *
- * Everything here obeys the display: rows are big enough for a small finger,
- * the list scrolls rather than shrinking to fit, and nothing sits in the
- * corners a round screen does not have.
+ * Laid out for a **round** screen, which is the thing that went wrong the first
+ * time. The original put a back arrow and a close cross in the top corners of
+ * an `inset-0` box — but at the top of a circle the chord is far narrower than
+ * the box, so both were rendered outside the glass and clipped away by
+ * `overflow-hidden`. They looked like they were missing because they were.
+ *
+ * So: no controls in the corners, everything on the centre line, and the
+ * content column inset far enough to stay inside the circle at the top and
+ * bottom rows. Navigation is on the rim buttons, where a round device puts it.
  */
 
 import { useSimulatorStore } from '../store/simulator-store';
@@ -15,7 +21,6 @@ export function ScreenMenu() {
   const catalog = useSimulatorStore((state) => state.catalog);
   const loading = useSimulatorStore((state) => state.catalogLoading);
   const error = useSimulatorStore((state) => state.catalogError);
-  const dispatch = useSimulatorStore((state) => state.menuDispatch);
   const chooseMode = useSimulatorStore((state) => state.chooseMode);
   const startEntry = useSimulatorStore((state) => state.startEntry);
 
@@ -26,36 +31,25 @@ export function ScreenMenu() {
   const rows = rowsFor(menu, catalog);
 
   return (
-    <div className="absolute inset-0 flex flex-col bg-screen/95 px-7 py-6 backdrop-blur-sm">
-      <header className="flex items-center justify-between px-1 pb-2">
-        <button
-          type="button"
-          onClick={() => dispatch({ type: 'back' })}
-          className="text-lg leading-none text-cream-200/70 transition active:scale-90"
-          aria-label="Quay lại"
-        >
-          ←
-        </button>
-        <p className="text-[11px] font-bold uppercase tracking-wider text-cream-200/60">
-          {view.screen === 'picker'
-            ? view.category === 'stories'
-              ? 'Truyện'
-              : 'Bài học'
-            : 'Chọn chế độ'}
-        </p>
-        <button
-          type="button"
-          onClick={() => dispatch({ type: 'close' })}
-          className="text-lg leading-none text-cream-200/70 transition active:scale-90"
-          aria-label="Đóng"
-        >
-          ✕
-        </button>
-      </header>
+    <div className="absolute inset-0 flex flex-col items-center justify-center bg-screen/95 backdrop-blur-sm">
+      <p className="pb-2 text-center text-[10px] font-bold uppercase tracking-[0.18em] text-cream-200/50">
+        {view.screen === 'picker'
+          ? view.category === 'stories'
+            ? 'Truyện'
+            : 'Bài học'
+          : 'Chọn chế độ'}
+      </p>
 
-      {/* The scroll area is inset from the circle's edge so the first and last
-          rows are not clipped by the curve. */}
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-1 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/*
+        Two constraints at once. The width is capped at 60% so the top and
+        bottom rows still fall inside the circle's chord, and the height at 44%
+        so the list stays in the middle band where the circle is widest. Wider
+        or taller and rows get sliced by the curve — which is what the first
+        attempt did, leaving a half-drawn row hanging over the footer.
+
+        Three rows fit; anything longer scrolls.
+      */}
+      <div className="flex max-h-[44%] w-[60%] flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {isRoot
           ? MODE_ORDER.map((mode) => (
               <Row
@@ -68,6 +62,12 @@ export function ScreenMenu() {
             ))
           : renderList({ rows, loading, error, onSelect: startEntry })}
       </div>
+
+      {/* The way out, said once. A child who opens this needs to know the way
+          back is a button on the side, not something on the glass. */}
+      <p className="pt-2.5 text-center text-[9px] font-medium text-cream-200/30">
+        Bấm nút ⌂ để quay lại
+      </p>
     </div>
   );
 }
@@ -98,6 +98,13 @@ function renderList({
   ));
 }
 
+/**
+ * One row.
+ *
+ * Centred, and the icon sits above the title rather than beside it. Inline
+ * would left-align the text block against a curved edge, and on a round screen
+ * that reads as crooked even when it is not.
+ */
 function Row({
   icon,
   title,
@@ -113,21 +120,21 @@ function Row({
     <button
       type="button"
       onClick={onSelect}
-      className="flex w-full items-center gap-2.5 rounded-2xl bg-cream-200/10 px-3 py-2.5 text-left transition active:scale-[0.97] active:bg-cream-200/20"
+      className="w-full shrink-0 rounded-2xl bg-cream-200/10 px-2 py-1.5 text-center transition active:scale-[0.97] active:bg-cream-200/20"
     >
-      <span className="shrink-0 text-lg leading-none">{icon}</span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-bold text-cream-100">{title}</span>
-        {hint && (
-          <span className="block truncate text-[10px] leading-tight text-cream-200/50">{hint}</span>
-        )}
+      <span className="flex items-center justify-center gap-1.5">
+        <span className="text-sm leading-none">{icon}</span>
+        <span className="truncate text-[13px] font-bold text-cream-100">{title}</span>
       </span>
+      {hint && (
+        <span className="mt-0.5 block truncate text-[9px] leading-tight text-cream-200/45">
+          {hint}
+        </span>
+      )}
     </button>
   );
 }
 
 function Notice({ text }: { text: string }) {
-  return (
-    <p className="px-2 py-6 text-center text-xs font-medium text-cream-200/60">{text}</p>
-  );
+  return <p className="px-2 py-6 text-center text-xs font-medium text-cream-200/60">{text}</p>;
 }

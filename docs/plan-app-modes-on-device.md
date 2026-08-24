@@ -322,3 +322,46 @@ including every never-dead-end rule), not by a live run.
 - `innerText` applies CSS `text-transform`; an assertion on the authored casing
   silently misses an uppercased header. Use `textContent`.
 - Re-measure element coordinates before every press. Waking shifts the layout.
+
+
+---
+
+## Revision — three rim buttons, and a round layout
+
+**The back button was never rendered.** The menu header put `←` and `✕` in the
+top corners of an `inset-0` box, but the display is a *circle*: near the top the
+chord is far narrower than the box, so both controls were laid out outside the
+glass and clipped by `overflow-hidden`. They looked missing because they were.
+The rule the layout now follows: content stays inside a centred column capped at
+60% width and 44% height, which is the band where the circle is widest.
+Everything is centred; nothing goes in a corner the device does not have.
+
+**One button became three.** A single button carrying talk, menu and goodbye on
+three hold durations is not something a child can discover, and there was no
+back at all.
+
+| Control | Press | Hold |
+|---|---|---|
+| ⏻ Nguồn (30%) | wake, or talk when awake | tạm biệt — sleep |
+| ⌂ Home (50%) | back one level | out to the idle face |
+| ± Âm lượng (70%) | + louder · − quieter | — |
+
+Back is the short press and home the hold, not the reverse: back is the
+frequent action, so it gets the cheap gesture. Volume is a two-ended rocker
+rather than press-up/hold-down — a hidden second meaning is exactly what made
+the one-button version unusable.
+
+`classifyPress` is back to two tiers. The middle tier existed only because there
+was nowhere else to put the menu.
+
+**Placing a button on a circular rim.** The body is a circle inscribed in a
+square, so a constant `right` offset only touches the edge at the equator. The
+inset is `50·(1 − √(1 − d²))` of the box width for a vertical distance `d` from
+centre — and it must be solved at the button's **far end**, not its centre. A
+button is tall enough to span real curvature; solving for the middle leaves the
+end nearest the pole hanging in space, which is what the first attempt looked
+like.
+
+**Removed:** the status LED and the speaker grille. Both were positioned on the
+shell but landed on the glass, where they read as an unexplained orange dot and
+a row of page-indicator dots rather than as moulded plastic.

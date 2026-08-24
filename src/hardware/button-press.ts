@@ -9,38 +9,37 @@
 /** Held longer than this and it is a long press. */
 export const LONG_PRESS_MS = 800;
 
-/** Held past this and the long press becomes a goodbye instead of the menu. */
-export const VERY_LONG_PRESS_MS = 2_000;
-
-export type ButtonAction = 'wake_up' | 'press' | 'menu' | 'goodbye';
+export type ButtonAction = 'wake_up' | 'press' | 'goodbye';
 
 /**
- * What one press means.
+ * What one press of the **power** button means.
  *
- * A quick press on a dark toy wakes it — a child should not have to know how
- * long to hold to get a response. Holding it opens the mode menu, whether the
- * badge is awake or not.
+ * Asleep, anything wakes it — a child holding a dark toy should not have to
+ * know how long to hold. Awake, holding it is how you say goodbye, which is the
+ * convention every device with a power button uses.
  *
- * The menu deliberately does not require a connection. A story or a lesson
- * disconnects the socket while it plays, so if the menu needed the badge awake,
- * leaving a story would strand the child: the menu would be unreachable until
- * they knew to tap the glass first and wait. Nothing in the menu needs the
- * socket anyway — the catalog is a plain fetch, and picking free talk connects.
- *
- * Goodbye keeps the longest hold, and only when there is something to say
- * goodbye to. It is the destructive one, so it should take deliberate effort to
- * reach past the menu rather than being what you hit by holding a moment too
- * long.
- *
- * The middle tier is the mode menu, which no real badge has (see
- * `menu-state.ts`). It lives on this button rather than a second control
- * because the hardware has exactly one, and a test affordance that invents a
- * button stops testing the hardware.
+ * Navigation is deliberately not here. It used to be — the menu lived on a
+ * middle hold tier of this one button — and that was a symptom of having only
+ * one button to spend. With a home and a back button on the rim, each control
+ * means one thing, and the tier that existed purely because we were short of
+ * buttons is gone.
  */
 export function classifyPress(heldMs: number, awake: boolean): ButtonAction {
-  if (heldMs >= VERY_LONG_PRESS_MS) return awake ? 'goodbye' : 'menu';
-  if (heldMs >= LONG_PRESS_MS) return 'menu';
-  return awake ? 'press' : 'wake_up';
+  if (!awake) return 'wake_up';
+  return heldMs >= LONG_PRESS_MS ? 'goodbye' : 'press';
+}
+
+/**
+ * How far one press moves the volume.
+ *
+ * Five steps across the range. Fewer and the jumps are coarse; more and a child
+ * is pressing all afternoon to get from quiet to loud.
+ */
+export const VOLUME_STEP = 0.2;
+
+/** Clamps a stepped volume back into range. */
+export function stepVolume(volume: number, delta: number): number {
+  return Math.min(1, Math.max(0, Math.round((volume + delta) * 100) / 100));
 }
 
 /** Mirrors the backend: debounce 3s, and no more than ten presses a minute. */

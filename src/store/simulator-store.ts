@@ -14,6 +14,7 @@ import { reportButtonPress, sendTelemetry } from '../protocol/telemetry-client';
 import {
   classifyPress,
   pruneHistory,
+  stepVolume,
   throttlePress,
   type ButtonAction,
 } from '../hardware/button-press';
@@ -149,6 +150,17 @@ interface SimulatorState {
   pressButton: (heldMs: number) => void;
   /** Reports condition now, rather than waiting for the next interval. */
   reportCondition: () => void;
+
+  /**
+   * Back — up one level: out of an activity, then up the menu, then closed.
+   *
+   * With nothing open it opens the menu, so a press always does something.
+   */
+  pressBack: () => void;
+  /** Home — the bail-out: close everything and show the idle face. */
+  pressHome: () => void;
+  /** The volume rocker. Shows the new level briefly on the glass. */
+  pressVolume: (delta: number) => void;
 
   /** Drives the mode picker. `rowCount` comes from the reducer's own `rowsFor`. */
   menuDispatch: (action: MenuAction) => void;
@@ -392,13 +404,6 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       get().connect();
       return;
     }
-    if (action === 'menu') {
-      // Local only. The menu is a test affordance, so telling the backend the
-      // button was pressed would put a frame on the wire that no real badge
-      // ever sends.
-      get().menuDispatch({ type: get().menu.view.screen === 'closed' ? 'open' : 'close' });
-      return;
-    }
     client?.sendButton(action);
     if (action === 'goodbye') get().disconnect();
   },
@@ -434,6 +439,43 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           hardware: { ...get().hardware, telemetry: 'error', telemetryError: String(error) },
         }),
       );
+  },
+
+  pressBack: () => {
+    const { activity, menu } = get();
+
+    // Out of a story or lesson, and into the mode list rather than all the way
+    // to the face — a child leaving one story is usually after another.
+    if (activity.kind) {
+      get().exitActivity();
+      get().menuDispatch({ type: 'open' });
+      return;
+    }
+
+    // Nothing open, so there is nothing to go back from. Opening the menu is
+    // the only sensible thing a press can do, and it means the button always
+    // does *something* — which is what makes it discoverable at all.
+    if (menu.view.screen === 'closed') {
+      get().menuDispatch({ type: 'open' });
+      return;
+    }
+
+    get().menuDispatch({ type: 'back' });
+  },
+
+  pressHome: () => {
+    // Home is the idle face, the way it is the home screen on a phone. This is
+    // the bail-out: whatever is open, close it.
+    if (get().activity.kind) get().exitActivity();
+    get().menuDispatch({ type: 'close' });
+  },
+
+  pressVolume: (delta) => {
+    const volume = stepVolume(get().volume, delta);
+    get().setVolume(volume);
+    // Volume with no feedback is guesswork — on a device with no numbers
+    // anywhere else, the only way to know a press registered is to show it.
+    setButtonNotice(set, get, `🔊 ${Math.round(volume * 100)}%`);
   },
 
   menuDispatch: (action) => {

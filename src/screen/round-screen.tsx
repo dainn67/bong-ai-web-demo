@@ -6,10 +6,15 @@
  * so the thing on screen reads as hardware you could clip to a stuffed animal.
  */
 
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { useSimulatorStore } from '../store/simulator-store';
 import { LOW_BATTERY, wifiBars } from '../hardware/hardware-state';
-import { LONG_PRESS_MS, VERY_LONG_PRESS_MS } from '../hardware/button-press';
+import { LONG_PRESS_MS, VOLUME_STEP } from '../hardware/button-press';
 import {
   DISPLAY_SIZE,
   isInsideDisplay,
@@ -67,10 +72,8 @@ const GLOW: Record<FaceMode, string> = {
 export function RoundScreen() {
   const face = useSimulatorStore((state) => state.face);
   const status = useSimulatorStore((state) => state.status);
-  const speaking = useSimulatorStore((state) => state.speaking);
   const listening = useSimulatorStore((state) => state.micState === 'listening');
   const hardware = useSimulatorStore((state) => state.hardware);
-  const pressButton = useSimulatorStore((state) => state.pressButton);
   const tapScreen = useSimulatorStore((state) => state.tapScreen);
   const menu = useSimulatorStore((state) => state.menu);
   const activity = useSimulatorStore((state) => state.activity);
@@ -169,9 +172,7 @@ export function RoundScreen() {
           </div>
         </div>
 
-        <StatusLight awake={isAwake} speaking={speaking} />
-        <Grille />
-        <PowerButton onPress={pressButton} />
+        <RimButtons />
       </div>
     </div>
   );
@@ -231,47 +232,100 @@ function StatusBar({ battery, charging, rssi }: StatusBarProps) {
 }
 
 /** The two felt ears that make it a creature rather than a puck. */
-function Ears() {
-  const ear =
-    'absolute h-20 w-20 rounded-full bg-gradient-to-b from-cream-200 to-cream-300 shadow-[0_8px_14px_-6px_rgba(61,44,36,0.35)]';
-  const inner = 'absolute h-9 w-9 rounded-full bg-coral-400/25';
+/**
+ * The badge's physical controls: three buttons down the right rim.
+ *
+ * One button was not enough. It had to carry talking, the mode menu and
+ * goodbye, split by how long you held it, and a child cannot discover a
+ * three-way hold. Worse, there was no way back out of a screen at all — the
+ * on-screen arrow was being clipped away by the circle, so the only exit was a
+ * hold that also happened to mean something else.
+ *
+ * Three controls, each meaning one thing:
+ *
+ * | Control | Press | Hold |
+ * |---|---|---|
+ * | ⏻ Nguồn | wake, or talk when awake | tạm biệt — sleep |
+ * | ⌂ Home | back one level | all the way out to the face |
+ * | Âm lượng | + louder · − quieter | — |
+ *
+ * Back is the *short* press and home the hold, not the other way around. Back
+ * is what you reach for constantly and home is the occasional bail-out, so the
+ * cheap gesture belongs to the frequent one.
+ */
+function RimButtons() {
+  const pressButton = useSimulatorStore((state) => state.pressButton);
+  const pressHome = useSimulatorStore((state) => state.pressHome);
+  const pressBack = useSimulatorStore((state) => state.pressBack);
+  const pressVolume = useSimulatorStore((state) => state.pressVolume);
+
   return (
     <>
-      <div className={`${ear} -top-8 left-4`}>
-        <span className={`${inner} left-5 top-5`} />
-      </div>
-      <div className={`${ear} -top-8 right-4`}>
-        <span className={`${inner} right-5 top-5`} />
-      </div>
+      <RimButton
+        top={30}
+        title="Nguồn — bấm để nói · giữ để tạm biệt"
+        icon="⏻"
+        holdMs={LONG_PRESS_MS}
+        onPress={pressButton}
+      />
+      <RimButton
+        top={50}
+        title="Home — bấm để quay lại · giữ để về màn hình chính"
+        icon="⌂"
+        tall
+        holdMs={LONG_PRESS_MS}
+        onPress={(heldMs) => (heldMs >= LONG_PRESS_MS ? pressHome() : pressBack())}
+      />
+      <VolumeRocker top={70} onChange={pressVolume} />
     </>
   );
 }
 
-/** Charge and activity light, bottom right of the shell like the real one. */
-function StatusLight({ awake, speaking }: { awake: boolean; speaking: boolean }) {
-  const tone = !awake
-    ? 'bg-ink-300'
-    : speaking
-      ? 'bg-mint-400 shadow-[0_0_12px_rgba(78,217,164,0.9)]'
-      : 'bg-sunny-400 shadow-[0_0_10px_rgba(255,201,92,0.7)]';
-  return (
-    // Placed on the rim at roughly four o'clock. The body is a circle inside a
-    // square box, so insetting from the corner would float it off the device.
-    <div
-      className={`absolute bottom-16 right-16 h-2.5 w-2.5 rounded-full transition-all duration-300 ${tone}`}
-    />
-  );
+/**
+ * How far the rim sits from the box edge, as a percentage of the box width.
+ *
+ * The body is a circle inscribed in a square, so a fixed offset only touches
+ * the edge at the equator — above and below that the circle has curved away,
+ * and a button placed by a constant inset floats off the device. For a vertical
+ * distance `d` from centre (as a fraction of the radius) the chord's half-width
+ * is `√(1 − d²)`, so the inset is `50·(1 − √(1 − d²))`.
+ *
+ * Measured at the button's **far end**, not its centre. A button is tall enough
+ * to span real curvature: solve for the middle and the end nearest the pole
+ * hangs off into space, which is exactly what the first attempt looked like.
+ * Solving for the end instead tucks the middle slightly under the rim, and a
+ * button sunk a little into the body reads as moulded rather than stuck on.
+ */
+function rimInset(topPercent: number, halfHeightPercent: number): number {
+  const far = topPercent < 50 ? topPercent - halfHeightPercent : topPercent + halfHeightPercent;
+  const d = (50 - far) / 50;
+  const inset = 50 * (1 - Math.sqrt(Math.max(0, 1 - d * d)));
+  // Straddle the edge rather than resting behind it: pull out by half a width.
+  return inset - 2.2;
+}
+
+/** Button heights as a percentage of the body box, for {@link rimInset}. */
+const HALF_HEIGHT = { short: 5, tall: 7 };
+
+interface RimButtonProps {
+  /** Vertical centre, as a percentage of the body box. */
+  top: number;
+  title: string;
+  icon: string;
+  /** Fills up to this hold, so a two-meaning button shows which one is coming. */
+  holdMs?: number;
+  tall?: boolean;
+  onPress: (heldMs: number) => void;
 }
 
 /**
- * The badge's one physical button, on the rim at three o'clock.
+ * One moulded button on the rim.
  *
- * One button, because that is what the hardware has — the meaning comes from
- * how long it is held, not from picking a labelled action off a list. Held
- * long enough, it fills up, so you can see the goodbye coming before it fires
- * rather than discovering afterwards that you held it too long.
+ * Holds are timed here rather than in the store because the fill has to track
+ * the finger, and the store should not re-render the whole badge forty times a
+ * second to animate a sliver of colour.
  */
-function PowerButton({ onPress }: { onPress: (heldMs: number) => void }) {
+function RimButton({ top, title, icon, holdMs, tall, onPress }: RimButtonProps) {
   const downAt = useRef<number | null>(null);
   const [holding, setHolding] = useState(false);
   const [held, setHeld] = useState(0);
@@ -307,11 +361,7 @@ function PowerButton({ onPress }: { onPress: (heldMs: number) => void }) {
     setHeld(0);
   };
 
-  // Fills across the whole hold, so both thresholds are visible as they pass
-  // rather than the child discovering afterwards which one they landed on.
-  const progress = Math.min(1, held / VERY_LONG_PRESS_MS);
-  const tier =
-    held >= VERY_LONG_PRESS_MS ? 'goodbye' : held >= LONG_PRESS_MS ? 'menu' : 'press';
+  const progress = holdMs ? Math.min(1, held / holdMs) : 0;
 
   return (
     <button
@@ -319,35 +369,85 @@ function PowerButton({ onPress }: { onPress: (heldMs: number) => void }) {
       onPointerDown={start}
       onPointerUp={end}
       onPointerCancel={cancel}
-      title="Bấm nhanh để nói · giữ để mở menu · giữ lâu hơn để tạm biệt"
-      className="absolute -right-1.5 top-1/2 h-14 w-4 -translate-y-1/2 overflow-hidden rounded-r-lg bg-gradient-to-r from-cream-300 to-cream-200 shadow-[2px_2px_6px_-2px_rgba(61,44,36,0.5)] transition active:translate-x-[1px]"
+      title={title}
+      style={{
+        top: `${top}%`,
+        right: `${rimInset(top, tall ? HALF_HEIGHT.tall : HALF_HEIGHT.short)}%`,
+        transform: 'translateY(-50%)',
+      }}
+      className={`absolute flex w-[15px] items-center justify-center overflow-hidden rounded-r-md bg-gradient-to-r from-cream-300 to-cream-200 text-[8px] leading-none text-ink-500 shadow-[2px_2px_6px_-2px_rgba(61,44,36,0.5)] transition active:translate-x-[1px] ${
+        tall ? 'h-12' : 'h-9'
+      }`}
     >
       <span
         style={{ height: `${progress * 100}%` }}
         className={`absolute bottom-0 left-0 w-full transition-[height] duration-75 ${
-          tier === 'goodbye' ? 'bg-berry-500' : tier === 'menu' ? 'bg-sunny-400' : 'bg-coral-400'
+          progress >= 1 ? 'bg-berry-500' : 'bg-coral-400'
         }`}
       />
-      {/* A hairline where the menu threshold sits, so the middle tier is not
-          something you can only find by accident. */}
-      <span
-        style={{ bottom: `${(LONG_PRESS_MS / VERY_LONG_PRESS_MS) * 100}%` }}
-        className="absolute left-0 h-px w-full bg-ink-700/30"
-      />
+      <span className="relative">{icon}</span>
     </button>
   );
 }
 
-/** Speaker holes, moulded into the shell at the bottom. */
-function Grille() {
+/**
+ * The volume rocker: one moulded part, pressed at either end.
+ *
+ * A rocker rather than hold-to-decrease. Volume is the one control a child will
+ * use without being shown, and "press for up, hold for down" is exactly the
+ * kind of hidden second meaning that made the single-button version unusable.
+ * Two ends of one piece are self-evident.
+ */
+function VolumeRocker({ top, onChange }: { top: number; onChange: (delta: number) => void }) {
+  const half =
+    'flex h-1/2 w-full items-center justify-center text-[8px] leading-none text-ink-500 transition active:bg-coral-400/40';
   return (
-    <div className="absolute bottom-5 left-1/2 flex -translate-x-1/2 gap-1">
-      {[0, 1, 2, 3, 4].map((i) => (
-        <span key={i} className="h-1 w-1 rounded-full bg-ink-300/40" />
-      ))}
+    <div
+      style={{
+        top: `${top}%`,
+        right: `${rimInset(top, HALF_HEIGHT.tall)}%`,
+        transform: 'translateY(-50%)',
+      }}
+      className="absolute flex h-12 w-[15px] flex-col overflow-hidden rounded-r-md bg-gradient-to-r from-cream-300 to-cream-200 shadow-[2px_2px_6px_-2px_rgba(61,44,36,0.5)]"
+    >
+      <button
+        type="button"
+        title="Tăng âm lượng"
+        onClick={() => onChange(VOLUME_STEP)}
+        className={half}
+      >
+        +
+      </button>
+      {/* The moulded seam between the two ends. */}
+      <span className="h-px w-full bg-ink-700/20" />
+      <button
+        type="button"
+        title="Giảm âm lượng"
+        onClick={() => onChange(-VOLUME_STEP)}
+        className={half}
+      >
+        −
+      </button>
     </div>
   );
 }
+
+function Ears() {
+  const ear =
+    'absolute h-20 w-20 rounded-full bg-gradient-to-b from-cream-200 to-cream-300 shadow-[0_8px_14px_-6px_rgba(61,44,36,0.35)]';
+  const inner = 'absolute h-9 w-9 rounded-full bg-coral-400/25';
+  return (
+    <>
+      <div className={`${ear} -top-8 left-4`}>
+        <span className={`${inner} left-5 top-5`} />
+      </div>
+      <div className={`${ear} -top-8 right-4`}>
+        <span className={`${inner} right-5 top-5`} />
+      </div>
+    </>
+  );
+}
+
 
 interface Ripple {
   id: number;
