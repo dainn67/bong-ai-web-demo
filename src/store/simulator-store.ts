@@ -31,13 +31,15 @@ import {
 } from '../screen/face-state-machine';
 import {
   INITIAL_MENU_STATE,
-  MODE_INTENTS,
   MODE_ORDER,
+  intentFor,
   reduceMenu,
+  rowsFor,
   type DeviceMode,
   type MenuAction,
   type MenuState,
 } from '../screen/menu-state';
+import { fetchCatalog, type LessonSummary } from '../api/catalog-client';
 
 export interface PacketLogEntry {
   id: number;
@@ -114,6 +116,15 @@ interface SimulatorState {
 
   /** The mode picker on the glass. Test instrumentation — see `menu-state.ts`. */
   menu: MenuState;
+  /**
+   * What there is to ask for.
+   *
+   * A menu, not content: the device cannot run any of these, it can only say
+   * their names. See the note at the top of `api/catalog-client.ts`.
+   */
+  catalog: LessonSummary[];
+  catalogLoading: boolean;
+  catalogError: string | null;
 
   updateConfig: (patch: Partial<DeviceConfig>) => void;
   connect: () => void;
@@ -153,12 +164,16 @@ interface SimulatorState {
 
   /** Drives the mode picker. */
   menuDispatch: (action: MenuAction) => void;
-  /**
-   * Picks a mode by saying so.
-   *
-   * There is no start-lesson frame in the protocol — see `MODE_INTENTS`.
-   */
+  loadCatalog: () => Promise<void>;
+  /** Opens the list for a mode, or starts free talk. */
   chooseMode: (mode: DeviceMode) => void;
+  /**
+   * Says the name of the entry the picker is showing, and closes.
+   *
+   * There is no "run lesson L_002" frame in the protocol, so naming it is the
+   * only lever the device has — see `intentFor`.
+   */
+  startEntry: (entry: LessonSummary) => void;
 }
 
 /**
@@ -207,6 +222,9 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   menu: INITIAL_MENU_STATE,
+  catalog: [],
+  catalogLoading: false,
+  catalogError: null,
 
   updateConfig: (patch) => {
     const config = { ...get().config, ...patch };
@@ -410,35 +428,76 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   menuDispatch: (action) => {
-    const menu = reduceMenu(get().menu, action, MODE_ORDER.length);
-    if (menu === get().menu) return;
+    const state = get();
+    // The picker's row count is the catalog slice it is showing; the root's is
+    // just the modes. Getting this wrong only breaks cursor wrapping, which is
+    // exactly the kind of quiet bug the reducer's tests exist to catch.
+    const rowCount =
+      state.menu.view.screen === 'picker'
+        ? rowsFor(state.menu, state.catalog).length
+        : MODE_ORDER.length;
+    const menu = reduceMenu(state.menu, action, rowCount);
+    if (menu === state.menu) return;
     set({ menu });
+    // Opening the menu is the moment the catalog is first wanted. Fetching it
+    // at boot would spend a request on every page load, including the ones
+    // that only ever exercise the protocol.
+    if (action.type === 'open' && state.catalog.length === 0) void get().loadCatalog();
+  },
+
+  loadCatalog: async () => {
+    if (get().catalogLoading) return;
+    set({ catalogLoading: true, catalogError: null });
+    try {
+      set({ catalog: await fetchCatalog(), catalogLoading: false });
+    } catch (error) {
+      set({
+        catalogLoading: false,
+        catalogError: error instanceof Error ? error.message : String(error),
+      });
+    }
   },
 
   /**
-   * Enters a mode by saying its name out loud.
+   * Picks a mode.
    *
-   * All three arms close the menu and make sure the socket is up, because that
-   * is all any of them can do — the badge has no other lever. Free talk is what
-   * the socket already is, so it stops there; the other two put a sentence on
-   * the wire and hand over.
+   * Free talk is what the socket already is, so it closes the menu and stops
+   * there. The other two open a list of things to ask for — `startEntry` is
+   * where the asking happens.
+   *
+   * Waking the badge first is not a detail: every one of these ends in speech,
+   * and a socket that is still opening has nothing to say into.
+   *
+   * The catch-all phrases in `MODE_INTENTS` — "Bắt đầu bài học tiếng Anh" with
+   * no title — are not dead. They let the *server* pick the lesson, which is a
+   * different thing worth testing, and they live in the Ý định drawer panel.
+   */
+  chooseMode: (mode) => {
+    if (get().status === 'disconnected') get().connect();
+    if (mode === 'freetalk') {
+      set({ menu: INITIAL_MENU_STATE });
+      return;
+    }
+    get().menuDispatch({ type: 'choose-mode', mode });
+  },
+
+  /**
+   * Starts one entry — by asking for it by name.
    *
    * Deliberately fire-and-forget. Whether the server understood is answered by
    * what comes back, not by anything decidable here, and pretending otherwise
    * would mean inventing a "starting lesson…" state the device cannot know is
    * true. If nothing happens, the packet inspector is where to look.
    */
-  chooseMode: (mode) => {
+  startEntry: (entry) => {
     set({ menu: INITIAL_MENU_STATE });
     if (get().status === 'disconnected') {
       get().connect();
-      // The socket is not open yet, so there is nothing to say into. Free talk
-      // needed no phrase anyway; for the others this connects and the tester
-      // picks again, which is one click and honest about what happened.
+      // Nothing to say into yet. Reconnecting and then picking again is one
+      // extra tap and honest about what happened.
       return;
     }
-    const intent = MODE_INTENTS[mode];
-    if (intent) get().sendText(intent);
+    get().sendText(intentFor(entry));
   },
 }));
 

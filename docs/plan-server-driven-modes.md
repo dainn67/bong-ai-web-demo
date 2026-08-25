@@ -3,8 +3,11 @@
 Goal: the simulator stops being an app that calls APIs and becomes what the
 badge actually is — a speaker, a microphone, a screen and one WebSocket. It
 POSTs `/ota`, opens the socket it is handed, and everything after that arrives
-as Opus frames and JSON control frames. No lesson APIs, no CDN fetches, no
-speech-to-text call, no parent JWT in the browser.
+as Opus frames and JSON control frames. No lesson engine, no CDN content
+fetches, no speech-to-text call, no parent JWT in the browser.
+
+Two HTTP calls survive, neither of which runs the device: provisioning it once
+against a parent account, and reading the list of things it can ask for.
 
 This supersedes the client-side approach in
 [`plan-app-modes-on-device.md`](./plan-app-modes-on-device.md). That plan was
@@ -22,7 +25,7 @@ and the 25/08/2026 entry in `../backend-python/docs/CHANGELOG.md`.
 ## Status
 
 Phases 1–4 and 6–8 are **implemented** on `feat/thin-device-server-modes`.
-Typecheck, lint and 91 tests pass; the bundle dropped from 277 kB to 237 kB.
+Typecheck, lint and 106 tests pass; the bundle dropped from 277 kB to 239 kB.
 
 Phase 0 and Phase 5 are **not done, and neither could be done here.** Phase 0
 needs the `xiaozhi-esp32-server` repo, which is not in this workspace. Phase 5
@@ -69,6 +72,8 @@ which is exactly the point.
 | `bong-ai-esp.bcserver.xyz/xiaozhi/ota/` | ask where the socket is | every connect |
 | `wss://bong-ai-esp.bcserver.xyz/xiaozhi/v1/` | everything else | for the session |
 | `bong-api.bcserver.xyz/api/v1/devices/bind-by-phone` | provisioning | once per test account |
+| `bong-api.bcserver.xyz/api/v1/lessions` | the menu of things to ask for | when the menu opens |
+| `static-bongai.bcserver.xyz/lessions/*/cover.png` | cover thumbnails, via `<img>` | with the menu |
 
 That is the whole list. Verified live while writing this — the OTA endpoint
 answers `{"websocket":{"url":"wss://bong-ai-esp.bcserver.xyz/xiaozhi/v1/","token":""}}`
@@ -88,7 +93,8 @@ Measured, not estimated:
 | Parent login drawer panel | `src/dev/auth-panel.tsx` | 164 |
 | HTTP telemetry | `src/protocol/telemetry-client.ts` | 72 |
 
-4,518 of the tree's 9,670 lines, and with them: the placeholder resolver,
+4,518 of the tree's 9,670 lines (the catalog reader came back later, ~120 of
+them), and with them: the placeholder resolver,
 the three question types, the retry counter, the `values_from` category cache,
 the FunASR upload, the group player's `decodeAudioData` path, and the four-way
 CORS problem that produced `nginx.conf`. All of it is logic the server already
@@ -212,14 +218,16 @@ Independent of everything else. Ship it first, it's useful either way.
 
 ### Phase 2 — Mode entry becomes an intent ✅
 
-`src/screen/menu.tsx`, `src/screen/menu-state.ts`, `src/store/simulator-store.ts`.
+`src/screen/menu.tsx`, `src/screen/menu-state.ts`, `src/store/simulator-store.ts`,
+`src/api/catalog-client.ts`.
 
-`chooseMode('lesson')` stops opening a picker and constructing a `LessonRunner`.
-It sends `{type:'listen', state:'detect', text:'<intent phrase>'}` and then does
-nothing else — the badge waits for the server like it waits for any reply.
+`chooseMode('lesson')` stops constructing a `LessonRunner`. It opens the picker;
+`startEntry` sends `{type:'listen', state:'detect', text:'<intent phrase>'}` and
+then does nothing else — the badge waits for the server like it waits for any
+reply.
 
-The three mode rows stayed on the glass; the per-lesson picker did not. See the
-decision section below.
+The picker survived, against the first draft of this plan. See the decision
+section below for why that reasoning was wrong.
 
 ### Phase 3 — Provisioning replaces login ✅
 
@@ -308,31 +316,33 @@ record of why lesson audio needs a signed-in account.
 
 **Did a lesson picker survive on the glass?**
 
-The old plan was already uneasy about it: *"no real badge has this menu … it
-belongs to the same family as `src/dev/`, not to the firmware being simulated."*
-Under a thin device that discomfort becomes structural — a picker needs lesson
-titles, titles come from the catalog, and the catalog is a CDN fetch, which is
-the exact dependency this plan removes. There is no device-facing catalog
-endpoint to replace it with: `/internal/device-proxy/catalog` requires internal
-auth, and the `GET /api/v1/devices/catalog` the changelog advertises **does not
-exist in the code** — the route in `devices.py` is offline flash assets, and the
-test is `test_device_proxy_catalog.py`, not `test_device_catalog.py`.
+**Yes — and the reasoning that nearly killed it was wrong.**
 
-**Decided: the picker is gone, the three mode rows stayed.** Picking a mode on
-the glass now sends its phrase and closes; there is no second screen and no
-catalog fetch. The dev drawer gained **Ý định**, an intent box with presets and
-free text, because the phrases are matched by a language model and the first
-thing you want when one stops routing is to try three more.
+The argument for dropping it was that a picker needs lesson titles, titles come
+from the catalog, and the catalog was a CDN fetch — the exact dependency this
+plan removes. That was true of the route the old code used
+(`/cdn/lessions/lessions.json`) and of the one the changelog advertises
+(`/internal/device-proxy/catalog`, which needs a shared secret only
+xiaozhi-server has). It was not true in general.
 
-The rows survived because they cost nothing once the catalog dependency is gone —
-they are three constants in `MODE_INTENTS` — and they keep the demo watchable
-without opening the drawer.
+`GET /api/v1/lessions` is open — no bearer token, no subscription check — and
+returns the same shape: 3 stories, 17 lessons, with titles, descriptions and
+cover paths. It lives on `bong-api`, which is already proxied at `/api` for
+provisioning. **The picker costs no new plumbing at all.**
 
-The alternative — keeping `/cdn` alive purely so a menu could list lesson titles —
-was rejected: it preserves the fiction that the badge browses a catalog, and it
-keeps the proxy surface that caused the production failure.
+What did change is what a tap means. It used to build a lesson engine in the
+browser. It now says the entry's title, and the server matches it — see
+`intentFor`, and the note there about why the story prefix is load-bearing.
 
----
+That is a weaker guarantee than loading `L_002` directly, and worth being honest
+about: an unusual title could fail to match, or the LLM in front of the
+orchestrator could paraphrase it away. In exchange the menu gains a second job
+it did not have before — it tells you which titles *exist*, so you know what the
+badge will recognise.
+
+The alternative that was rejected is unchanged: reviving the `/cdn` proxy just
+to list titles. It preserves the proxy surface that caused the production
+failure, and it turned out to be unnecessary.
 
 ## What is left
 

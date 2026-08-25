@@ -11,12 +11,13 @@
  * that is where it has to be exercised. It belongs to the same family as
  * `src/dev/`, not to the firmware being simulated.
  *
- * It used to be two screens deep: pick a mode, then pick a lesson from the
- * catalog. The second screen is gone. The device does not browse a catalog —
- * it says what it wants and the server decides, so choosing a mode now sends a
- * sentence and the menu's whole job is over. What lesson runs is the server's
- * call, which is the point of `plan-server-driven-modes.md`.
+ * Two screens deep: pick a mode, then pick a lesson. What changed under the
+ * thin device is not the shape of the menu but what a tap *does*. It used to
+ * build a lesson engine in the browser. Now it says the lesson's name out loud,
+ * and the server takes it from there — see `MODE_INTENTS` and `intentFor`.
  */
+
+import type { LessonCategory, LessonSummary } from '../api/catalog-client';
 
 /** What the child can start from the menu. */
 export type DeviceMode = 'freetalk' | 'lesson' | 'story';
@@ -24,7 +25,9 @@ export type DeviceMode = 'freetalk' | 'lesson' | 'story';
 export type MenuView =
   | { screen: 'closed' }
   /** The three modes. */
-  | { screen: 'root' };
+  | { screen: 'root' }
+  /** A scrollable list of catalog entries for one category. */
+  | { screen: 'picker'; category: LessonCategory };
 
 export interface MenuState {
   view: MenuView;
@@ -69,6 +72,44 @@ export const MODE_INTENTS: Record<DeviceMode, string | null> = {
   story: 'Kể chuyện cho con nghe',
 };
 
+/** Which catalog category a mode picks from, or null when it needs no picking. */
+export function categoryFor(mode: DeviceMode): LessonCategory | null {
+  switch (mode) {
+    case 'lesson':
+      return 'learning';
+    case 'story':
+      return 'stories';
+    case 'freetalk':
+      return null;
+  }
+}
+
+/**
+ * What the badge says to start one specific entry.
+ *
+ * Built to land on the backend's `_find_lesson_by_intent`, which is worth
+ * understanding because the prefix is doing real work:
+ *
+ * - An intent containing `kể chuyện` / `truyện` / `chuyện` is routed into the
+ *   **stories** category before anything else is tried, and matched on title
+ *   there. So a story has to carry one of those words, and a lesson must not.
+ * - Everything else walks `learning` first, then `stories`, matching a full
+ *   title as a substring of the intent.
+ *
+ * That difference is what keeps the two "Rùa và thỏ" entries apart — there is a
+ * lesson by that name *and* a story by that name. "Bắt đầu bài học Rùa và thỏ"
+ * finds the lesson; "Kể chuyện Rùa và Thỏ" finds the story. Swap the prefixes
+ * and you get the wrong one, silently.
+ *
+ * The title goes out verbatim, including any punctuation: the match is a plain
+ * lowercase substring test, so "Bài 2: Family" has to arrive with its colon.
+ */
+export function intentFor(entry: LessonSummary): string {
+  return entry.category === 'stories'
+    ? `Kể chuyện ${entry.title}`
+    : `Bắt đầu bài học ${entry.title}`;
+}
+
 export function isOpen(state: MenuState): boolean {
   return state.view.screen !== 'closed';
 }
@@ -90,8 +131,15 @@ export function reduceMenu(state: MenuState, action: MenuAction, rowCount = 0): 
       return state.view.screen === 'closed' ? state : INITIAL_MENU_STATE;
 
     case 'back':
-      // One screen deep, so back and close are the same thing.
-      return state.view.screen === 'closed' ? state : INITIAL_MENU_STATE;
+      switch (state.view.screen) {
+        case 'picker':
+          return { view: { screen: 'root' }, cursor: 0 };
+        case 'root':
+          return INITIAL_MENU_STATE;
+        case 'closed':
+          return state;
+      }
+      break;
 
     case 'move': {
       if (rowCount <= 0) return state;
@@ -101,10 +149,19 @@ export function reduceMenu(state: MenuState, action: MenuAction, rowCount = 0): 
       return cursor === state.cursor ? state : { ...state, cursor };
     }
 
-    case 'choose-mode':
-      // Picking a mode says a sentence and gets out of the way. Nothing to
-      // drill into — the server decides what happens next.
-      return INITIAL_MENU_STATE;
+    case 'choose-mode': {
+      const category = categoryFor(action.mode);
+      // Free talk needs nothing picked — the caller starts it and closes us.
+      if (!category) return INITIAL_MENU_STATE;
+      return { view: { screen: 'picker', category }, cursor: 0 };
+    }
   }
   return state;
+}
+
+/** Rows shown for the current view, so the cursor and the UI can't disagree. */
+export function rowsFor(state: MenuState, catalog: LessonSummary[]): LessonSummary[] {
+  if (state.view.screen !== 'picker') return [];
+  const { category } = state.view;
+  return catalog.filter((entry) => entry.category === category);
 }

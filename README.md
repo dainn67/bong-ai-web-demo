@@ -107,11 +107,27 @@ backend FSM and pushes the result back as speech, Opus clips and image frames.
 From the badge's side a lesson is indistinguishable from a conversation, which
 is exactly what it is meant to be.
 
-The three rows on the glass send one of these phrases each (`MODE_INTENTS` in
-`menu-state.ts`); **Ý định** in the drawer sends the same ones plus anything you
-type. The wording is matched by a language model, not a parser, so a phrase that
-works today can stop working when the prompt changes — that is why the free-text
-box is there.
+**The menu on the glass** shows what there is to ask for. Tap **Bài học** or
+**Đọc truyện** and it lists the catalog — 3 stories and 17 lessons, from the open
+`GET /api/v1/lessions`, through the same `/api` proxy provisioning uses. Tapping
+a row says *that lesson's title*, which is how the badge asks for one in
+particular.
+
+The list is a menu, not content. It does not tell the device how to run
+anything and the device could not act on it if it did — take it away and the
+badge still works, you just have to know what to ask for.
+
+The prefix on the phrase is doing real work. `Kể chuyện <title>` is routed into
+the **stories** list by the backend before anything else is tried;
+`Bắt đầu bài học <title>` walks lessons first. That is what keeps the two "Rùa và
+thỏ" entries apart — there is a lesson by that name *and* a story by that name.
+See `intentFor` in `menu-state.ts`.
+
+**Ý định** in the drawer covers the rest: the catch-all phrases that let the
+*server* pick a lesson, resuming yesterday's, quitting — plus a box for anything
+you want to type. The wording is matched by a language model, not a parser, so a
+phrase that works today can stop working when the prompt changes, which is why
+the free-text box is there.
 
 You can tell it routed by watching the packet inspector for an `stt` frame
 reading `% start_learning_session`. That is the tool call, not speech, and

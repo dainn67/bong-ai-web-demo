@@ -13,13 +13,22 @@
  */
 
 import { useSimulatorStore } from '../store/simulator-store';
-import { MODE_LABELS, MODE_ORDER } from './menu-state';
+import { MODE_LABELS, MODE_ORDER, rowsFor } from './menu-state';
+import type { LessonSummary } from '../api/catalog-client';
 
 export function ScreenMenu() {
   const menu = useSimulatorStore((state) => state.menu);
+  const catalog = useSimulatorStore((state) => state.catalog);
+  const loading = useSimulatorStore((state) => state.catalogLoading);
+  const error = useSimulatorStore((state) => state.catalogError);
   const chooseMode = useSimulatorStore((state) => state.chooseMode);
+  const startEntry = useSimulatorStore((state) => state.startEntry);
 
-  if (menu.view.screen === 'closed') return null;
+  const view = menu.view;
+  if (view.screen === 'closed') return null;
+
+  const isRoot = view.screen === 'root';
+  const rows = rowsFor(menu, catalog);
 
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-screen/95 backdrop-blur-sm">
@@ -35,30 +44,39 @@ export function ScreenMenu() {
       */}
       <div className="flex h-[72%] w-[72%] flex-col">
         <p className="shrink-0 pb-1.5 text-center text-[10px] font-bold uppercase tracking-[0.18em] text-cream-200/50">
-          Chọn chế độ
+          {view.screen === 'picker'
+            ? view.category === 'stories'
+              ? 'Truyện'
+              : 'Bài học'
+            : 'Chọn chế độ'}
         </p>
 
         {/*
-          Three rows fit without scrolling now that the catalog screen is gone,
-          but the fade stays: it costs nothing and it is what stops a fourth
-          mode, whenever one arrives, from being chopped through its text.
+          The fade is not decoration. A scroll list ending at a hard edge chops
+          the next row through the middle of its text, which reads as a layout
+          bug rather than as "there is more below" — and here it landed right on
+          top of the footer. Fading the last few percent says the same thing
+          without the broken-looking seam. It matters again with seventeen
+          lessons in the list.
         */}
         <div
           style={{
             maskImage: 'linear-gradient(to bottom, #000 88%, transparent 100%)',
             WebkitMaskImage: 'linear-gradient(to bottom, #000 88%, transparent 100%)',
           }}
-          className="flex min-h-0 flex-1 flex-col justify-center gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          {MODE_ORDER.map((mode) => (
-            <Row
-              key={mode}
-              icon={MODE_LABELS[mode].icon}
-              title={MODE_LABELS[mode].title}
-              hint={MODE_LABELS[mode].hint}
-              onSelect={() => chooseMode(mode)}
-            />
-          ))}
+          {isRoot
+            ? MODE_ORDER.map((mode) => (
+                <Row
+                  key={mode}
+                  icon={MODE_LABELS[mode].icon}
+                  title={MODE_LABELS[mode].title}
+                  hint={MODE_LABELS[mode].hint}
+                  onSelect={() => chooseMode(mode)}
+                />
+              ))
+            : renderList({ rows, loading, error, onSelect: startEntry })}
         </div>
 
         {/* The way out, said once. A child who opens this needs to know the way
@@ -71,6 +89,33 @@ export function ScreenMenu() {
   );
 }
 
+function renderList({
+  rows,
+  loading,
+  error,
+  onSelect,
+}: {
+  rows: LessonSummary[];
+  loading: boolean;
+  error: string | null;
+  onSelect: (entry: LessonSummary) => void;
+}) {
+  if (loading) return <Notice text="Đang tải…" />;
+  if (error) return <Notice text={error} />;
+  if (rows.length === 0) return <Notice text="Chưa có nội dung nào" />;
+
+  return rows.map((entry) => (
+    <Row
+      key={entry.id}
+      icon={entry.category === 'stories' ? '📖' : '✏️'}
+      cover={entry.coverUrl}
+      title={entry.title}
+      hint={entry.description}
+      onSelect={() => onSelect(entry)}
+    />
+  ));
+}
+
 /**
  * One row.
  *
@@ -80,11 +125,14 @@ export function ScreenMenu() {
  */
 function Row({
   icon,
+  cover,
   title,
   hint,
   onSelect,
 }: {
   icon: string;
+  /** Cover art, when the catalog ships some. Falls back to the emoji. */
+  cover?: string | null;
   title: string;
   hint: string | null;
   onSelect: () => void;
@@ -96,7 +144,22 @@ function Row({
       className="w-full shrink-0 rounded-2xl bg-cream-200/10 px-2.5 py-2 text-center transition active:scale-[0.97] active:bg-cream-200/20"
     >
       <span className="flex items-center justify-center gap-1.5">
-        <span className="text-base leading-none">{icon}</span>
+        {cover ? (
+          // A cover that 404s would otherwise leave a broken-image glyph on the
+          // badge's screen, which looks like a firmware fault rather than a
+          // missing file. Hiding it falls back to the row's emoji.
+          <img
+            src={cover}
+            alt=""
+            loading="lazy"
+            onError={(event) => {
+              event.currentTarget.style.display = 'none';
+            }}
+            className="h-4 w-4 shrink-0 rounded-full object-cover"
+          />
+        ) : (
+          <span className="text-base leading-none">{icon}</span>
+        )}
         <span className="truncate text-sm font-bold text-cream-100">{title}</span>
       </span>
       {hint && (
@@ -106,4 +169,8 @@ function Row({
       )}
     </button>
   );
+}
+
+function Notice({ text }: { text: string }) {
+  return <p className="px-2 py-6 text-center text-xs font-medium text-cream-200/60">{text}</p>;
 }
