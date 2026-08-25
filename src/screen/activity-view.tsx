@@ -16,6 +16,8 @@ import { canPause, phaseLabel } from './activity-state';
 export function ActivityView() {
   const activity = useSimulatorStore((state) => state.activity);
   const togglePause = useSimulatorStore((state) => state.toggleActivityPause);
+  const skip = useSimulatorStore((state) => state.skipLessonNode);
+  const position = useSimulatorStore((state) => state.lessonPosition);
 
   if (!activity.kind) return null;
 
@@ -62,18 +64,39 @@ export function ActivityView() {
           </p>
         )}
 
-        {/* Pause stays on the glass because it is about *this* story. Leaving is
-          the back button's job — a device with rim controls should not put an
-          exit on screen and then teach the child two ways out of one place. */}
-        {canPause(activity) && (
-          <button
-            type="button"
-            onClick={togglePause}
-            className="mt-0.5 rounded-full bg-cream-200/15 px-4 py-1 text-[11px] font-bold text-cream-100 transition active:scale-95"
-          >
-            {activity.phase === 'paused' ? '▶ Tiếp' : '⏸ Dừng'}
-          </button>
-        )}
+        {/* Pause is about *this* story, so it stays on the glass. Leaving is the
+          back button's job — a device with rim controls should not put an exit
+          on screen and then teach the child two ways out of one place.
+
+          Skip sits beside it, on request. It is a tester's control that no real
+          badge has — the position counter next to it gives the same game away —
+          so it is deliberately the quieter of the two and appears only for
+          lessons, which are the only thing with nodes to step through. */}
+        <div className="mt-0.5 flex items-center gap-1.5">
+          {canPause(activity) && (
+            <button
+              type="button"
+              onClick={togglePause}
+              className="rounded-full bg-cream-200/15 px-4 py-1 text-[11px] font-bold text-cream-100 transition active:scale-95"
+            >
+              {activity.phase === 'paused' ? '▶ Tiếp' : '⏸ Dừng'}
+            </button>
+          )}
+
+          {activity.kind === 'lesson' && position && (
+            <button
+              type="button"
+              onClick={skip}
+              title="Node tiếp theo (chỉ dành cho kiểm thử)"
+              className="flex items-center gap-1 rounded-full bg-sunny-400/15 px-2.5 py-1 text-[11px] font-bold text-sunny-400 transition active:scale-95"
+            >
+              ⏭
+              {/* Tabular so the counter does not shuffle the button's width as
+                  the numbers change. */}
+              <span className="font-mono text-[10px] tabular-nums">{position}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Same listening ring the conversation mode uses, so "the mic is open"

@@ -126,6 +126,15 @@ interface SimulatorState {
   catalogError: string | null;
   /** A story or lesson currently running on the device. */
   activity: ActivityState;
+  /**
+   * Where a running lesson is, as one line — the app's `debugStatus`.
+   *
+   * Instrumentation, not device state: no badge reports its position in a
+   * lesson to anyone. It lives here only so the drawer can show it.
+   */
+  lessonDebug: string | null;
+  /** The same position, short enough for the glass: `2/3`. */
+  lessonPosition: string | null;
 
   updateConfig: (patch: Partial<DeviceConfig>) => void;
   connect: () => void;
@@ -173,6 +182,10 @@ interface SimulatorState {
   exitActivity: () => void;
   toggleActivityPause: () => void;
   setActivity: (patch: Partial<ActivityState>) => void;
+  /** Dev/tester only: jump to the next node, skipping the clip or the mic. */
+  skipLessonNode: () => void;
+  /** The metadata the running lesson was built from, or null. */
+  lessonMetadataUrl: () => string | null;
 }
 
 /**
@@ -235,6 +248,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   catalogLoading: false,
   catalogError: null,
   activity: IDLE_ACTIVITY,
+  lessonDebug: null,
+  lessonPosition: null,
 
   updateConfig: (patch) => {
     const config = { ...get().config, ...patch };
@@ -478,6 +493,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     setButtonNotice(set, get, `🔊 ${Math.round(volume * 100)}%`);
   },
 
+  skipLessonNode: () => {
+    void lesson?.skipNext();
+  },
+
+  lessonMetadataUrl: () => lesson?.metadataUrl ?? null,
+
   menuDispatch: (action) => {
     const state = get();
     const rowCount = rowsFor(state.menu, state.catalog).length;
@@ -521,7 +542,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
   exitActivity: () => {
     stopActivity(set, get);
-    set({ activity: IDLE_ACTIVITY, menu: INITIAL_MENU_STATE });
+    set({
+      activity: IDLE_ACTIVITY,
+      menu: INITIAL_MENU_STATE,
+      lessonDebug: null,
+      lessonPosition: null,
+    });
   },
 
   toggleActivityPause: () => {
@@ -541,7 +567,14 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
   setActivity: (patch) => {
     const activity = { ...get().activity, ...patch };
-    set({ activity });
+    // Read the position back off the engine on every change rather than having
+    // the engine push it: the engine already emits on every transition, so this
+    // cannot fall behind, and the engine stays unaware that a drawer exists.
+    set({
+      activity,
+      lessonDebug: lesson?.debugStatus ?? null,
+      lessonPosition: lesson?.debugPosition ?? null,
+    });
     // A grader's reason is a one-off. Leaving it on the glass would let it
     // outlive the answer it described.
     if (patch.notice) {
