@@ -9,6 +9,15 @@
 import { create } from 'zustand';
 import { loadConfig, saveConfig, type DeviceConfig } from '../config/device-config';
 import { audioSupport } from '../audio/audio-format';
+import { clampBattery, drainBattery, LOW_BATTERY } from '../hardware/hardware-state';
+import { reportButtonPress, sendTelemetry } from '../protocol/telemetry-client';
+import {
+  classifyPress,
+  pruneHistory,
+  stepVolume,
+  throttlePress,
+  type ButtonAction,
+} from '../hardware/button-press';
 import { MicCapture } from '../audio/mic-capture';
 import { OpusPlayer } from '../audio/opus-player';
 import type { IncomingMessage } from '../protocol/message-types';
@@ -21,6 +30,18 @@ import {
   toIdle,
   type FaceState,
 } from '../screen/face-state-machine';
+import {
+  INITIAL_MENU_STATE,
+  reduceMenu,
+  rowsFor,
+  type DeviceMode,
+  type MenuAction,
+  type MenuState,
+} from '../screen/menu-state';
+import { IDLE_ACTIVITY, type ActivityState } from '../screen/activity-state';
+import { fetchCatalog, type LessonSummary } from '../lessons/catalog';
+import { loadStory, StoryPlayer } from '../content/story';
+import { LessonRunner } from '../lessons/lesson-runner';
 
 export interface PacketLogEntry {
   id: number;
@@ -50,6 +71,34 @@ const BARGE_IN_DEBOUNCE_MS = 1500;
 /** Whether the mic is off, or open and streaming to the backend. */
 export type MicState = 'off' | 'listening';
 
+/** The badge's physical condition, as the parent app would eventually see it. */
+export interface HardwareState {
+  battery: number;
+  charging: boolean;
+  /** dBm. Closer to zero is stronger. */
+  wifiRssi: number;
+  /** Whether the battery moves on its own. Off by default so a demo holds still. */
+  autoDrain: boolean;
+  /** An injected fault, reported until cleared. */
+  faultCode: string | null;
+  /** Result of the last telemetry post, so the panel can say whether it landed. */
+  telemetry: 'off' | 'sending' | 'ok' | 'error';
+  telemetryError: string | null;
+  /**
+   * Why the last press was ignored, if it was.
+   *
+   * Shown on the badge rather than logged: a child mashing the button needs to
+   * see that something happened, or they press harder.
+   */
+  buttonNotice: string | null;
+}
+
+/** How often condition is reported while connected. */
+const TELEMETRY_INTERVAL_MS = 30_000;
+
+/** How often the battery is re-computed when draining. */
+const DRAIN_TICK_MS = 5_000;
+
 interface SimulatorState {
   config: DeviceConfig;
   status: ConnectionStatus;
@@ -68,6 +117,16 @@ interface SimulatorState {
   framesIn: number;
   framesOut: number;
 
+  hardware: HardwareState;
+
+  /** The mode picker on the glass. Test instrumentation — see `menu-state.ts`. */
+  menu: MenuState;
+  catalog: LessonSummary[];
+  catalogLoading: boolean;
+  catalogError: string | null;
+  /** A story or lesson currently running on the device. */
+  activity: ActivityState;
+
   updateConfig: (patch: Partial<DeviceConfig>) => void;
   connect: () => void;
   disconnect: () => void;
@@ -81,6 +140,39 @@ interface SimulatorState {
   /** What a tap on the glass does, which depends on whether the badge is awake. */
   tapScreen: () => void;
   setVolume: (volume: number) => void;
+
+  setHardware: (patch: Partial<HardwareState>) => void;
+  /**
+   * Presses the badge's physical button, having held it for `heldMs`.
+   *
+   * One button, so how long it was held is what decides the meaning.
+   */
+  pressButton: (heldMs: number) => void;
+  /** Reports condition now, rather than waiting for the next interval. */
+  reportCondition: () => void;
+
+  /**
+   * Back — up one level: out of an activity, then up the menu, then closed.
+   *
+   * With nothing open it opens the menu, so a press always does something.
+   */
+  pressBack: () => void;
+  /** Home — the bail-out: close everything and show the idle face. */
+  pressHome: () => void;
+  /** The volume rocker. Shows the new level briefly on the glass. */
+  pressVolume: (delta: number) => void;
+
+  /** Drives the mode picker. `rowCount` comes from the reducer's own `rowsFor`. */
+  menuDispatch: (action: MenuAction) => void;
+  loadCatalog: () => Promise<void>;
+  /** Picks a mode: free talk starts immediately, the others open a picker. */
+  chooseMode: (mode: DeviceMode) => void;
+  /** Starts the catalog entry the picker is showing. */
+  startEntry: (entry: LessonSummary) => void;
+  /** Leaves a running story or lesson and returns the screen to the face. */
+  exitActivity: () => void;
+  toggleActivityPause: () => void;
+  setActivity: (patch: Partial<ActivityState>) => void;
 }
 
 /**
@@ -93,7 +185,21 @@ interface SimulatorState {
 let client: WsClient | null = null;
 let player: OpusPlayer | null = null;
 let mic: MicCapture | null = null;
+/** Whichever activity owns the speaker. Only ever one — see `stopActivity`. */
+let story: StoryPlayer | null = null;
+let lesson: LessonRunner | null = null;
+/** Aborts an in-flight catalog or metadata fetch when the child moves on. */
+let activityFetch: AbortController | null = null;
+let noticeClearTimer: ReturnType<typeof setTimeout> | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
+let telemetryTimer: ReturnType<typeof setInterval> | null = null;
+let drainTimer: ReturnType<typeof setInterval> | null = null;
+let lastDrainAt = Date.now();
+/** Timestamps of presses the device accepted, for debounce and rate limiting. */
+let pressHistory: number[] = [];
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+/** Fixed at load: the badge has been "on" for as long as the page has. */
+const bootedAt = Date.now();
 let unmuteTimer: ReturnType<typeof setTimeout> | null = null;
 let lastBargeIn = 0;
 let nextPacketId = 0;
@@ -112,6 +218,23 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   audioError: null,
   framesIn: 0,
   framesOut: 0,
+
+  hardware: {
+    battery: 82,
+    charging: false,
+    wifiRssi: -55,
+    autoDrain: false,
+    faultCode: null,
+    telemetry: 'off',
+    telemetryError: null,
+    buttonNotice: null,
+  },
+
+  menu: INITIAL_MENU_STATE,
+  catalog: [],
+  catalogLoading: false,
+  catalogError: null,
+  activity: IDLE_ACTIVITY,
 
   updateConfig: (patch) => {
     const config = { ...get().config, ...patch };
@@ -134,6 +257,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       onLog: (direction, type, payload) => appendPacket(set, get, direction, type, payload),
     });
     void client.connect();
+    startHardwareTimers(set, get);
   },
 
   disconnect: () => {
@@ -144,6 +268,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     player = null;
     clearIdleTimer();
     clearUnmuteTimer();
+    stopHardwareTimers();
     set({
       status: 'disconnected',
       sessionId: null,
@@ -231,13 +356,297 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   setVolume: (volume) => {
+    // One speaker, three things that might own it. The volume control is on
+    // the device, so it has to reach whichever one is currently playing.
     player?.setVolume(volume);
+    story?.setVolume(volume);
+    lesson?.setVolume(volume);
     set({ volume });
+  },
+
+  setHardware: (patch) => {
+    const hardware = { ...get().hardware, ...patch };
+    if (patch.battery !== undefined) hardware.battery = clampBattery(patch.battery);
+    set({ hardware });
+    // Report straight away: a slider moved by hand is a deliberate act, and
+    // waiting up to thirty seconds to see it land makes the panel feel broken.
+    get().reportCondition();
+  },
+
+  pressButton: (heldMs) => {
+    const now = Date.now();
+    const awake = get().status === 'connected';
+
+    // Debounced in the device, the way firmware does, so mashing behaves the
+    // same whether or not a backend is reachable.
+    const verdict = throttlePress(pressHistory, now);
+    if (!verdict.allowed) {
+      setButtonNotice(set, get, verdict.message ?? 'Bé đợi Bống một chút nhé!');
+      return;
+    }
+    pressHistory = [...pruneHistory(pressHistory, now), now];
+    setButtonNotice(set, get, null);
+
+    // The backend keeps its own count. Asking it as well is how the two are
+    // ever seen to disagree; it cannot veto a press the device already took.
+    void reportButtonPress(get().config)
+      .then((result) => {
+        if (result && !result.allowed) {
+          setButtonNotice(set, get, result.message ?? 'Máy chủ chặn bớt nút bấm');
+        }
+      })
+      .catch(() => {
+        // No backend, or it is unhappy. The button still worked.
+      });
+
+    const action: ButtonAction = classifyPress(heldMs, awake);
+    if (action === 'wake_up') {
+      get().connect();
+      return;
+    }
+    client?.sendButton(action);
+    if (action === 'goodbye') get().disconnect();
+  },
+
+  reportCondition: () => {
+    const { config, hardware } = get();
+    const reading = {
+      battery_level: hardware.battery,
+      wifi_rssi: hardware.wifiRssi,
+      is_charging: hardware.charging,
+      firmware_version: config.firmwareVersion,
+      uptime_seconds: Math.floor((Date.now() - bootedAt) / 1000),
+      ...(hardware.faultCode
+        ? { error_code: hardware.faultCode, error_message: `Giả lập: ${hardware.faultCode}` }
+        : {}),
+    };
+
+    // The socket carries it too, since a real badge reports over whichever
+    // link it already has open rather than dialling a second one.
+    client?.sendBattery(hardware.battery, hardware.charging);
+    if (hardware.faultCode) client?.sendError(hardware.faultCode, reading.error_message ?? '');
+
+    if (!config.apiUrl) {
+      set({ hardware: { ...get().hardware, telemetry: 'off', telemetryError: null } });
+      return;
+    }
+
+    set({ hardware: { ...get().hardware, telemetry: 'sending' } });
+    void sendTelemetry(config, reading)
+      .then(() => set({ hardware: { ...get().hardware, telemetry: 'ok', telemetryError: null } }))
+      .catch((error) =>
+        set({
+          hardware: { ...get().hardware, telemetry: 'error', telemetryError: String(error) },
+        }),
+      );
+  },
+
+  pressBack: () => {
+    const { activity, menu } = get();
+
+    // Out of a story or lesson, and into the mode list rather than all the way
+    // to the face — a child leaving one story is usually after another.
+    if (activity.kind) {
+      get().exitActivity();
+      get().menuDispatch({ type: 'open' });
+      return;
+    }
+
+    // Nothing open, so there is nothing to go back from. Opening the menu is
+    // the only sensible thing a press can do, and it means the button always
+    // does *something* — which is what makes it discoverable at all.
+    if (menu.view.screen === 'closed') {
+      get().menuDispatch({ type: 'open' });
+      return;
+    }
+
+    get().menuDispatch({ type: 'back' });
+  },
+
+  pressHome: () => {
+    // Home is the idle face, the way it is the home screen on a phone. This is
+    // the bail-out: whatever is open, close it.
+    if (get().activity.kind) get().exitActivity();
+    get().menuDispatch({ type: 'close' });
+  },
+
+  pressVolume: (delta) => {
+    const volume = stepVolume(get().volume, delta);
+    get().setVolume(volume);
+    // Volume with no feedback is guesswork — on a device with no numbers
+    // anywhere else, the only way to know a press registered is to show it.
+    setButtonNotice(set, get, `🔊 ${Math.round(volume * 100)}%`);
+  },
+
+  menuDispatch: (action) => {
+    const state = get();
+    const rowCount = rowsFor(state.menu, state.catalog).length;
+    const menu = reduceMenu(state.menu, action, rowCount);
+    if (menu === state.menu) return;
+    set({ menu });
+    // Opening the menu is the moment the catalog is first wanted. Fetching it
+    // at boot would spend a request on every page load, including the ones
+    // that only ever exercise the protocol.
+    if (action.type === 'open' && state.catalog.length === 0) void get().loadCatalog();
+  },
+
+  loadCatalog: async () => {
+    if (get().catalogLoading) return;
+    set({ catalogLoading: true, catalogError: null });
+    try {
+      const catalog = await fetchCatalog();
+      set({ catalog, catalogLoading: false });
+    } catch (error) {
+      set({ catalogLoading: false, catalogError: describeError(error) });
+    }
+  },
+
+  chooseMode: (mode) => {
+    if (mode === 'freetalk') {
+      // Free talk is the socket the badge already speaks. There is nothing to
+      // build here and nothing to pick — close the menu and make sure the
+      // device is awake.
+      stopActivity(set, get);
+      set({ menu: INITIAL_MENU_STATE });
+      if (get().status === 'disconnected') get().connect();
+      return;
+    }
+    get().menuDispatch({ type: 'choose-mode', mode });
+  },
+
+  startEntry: (entry) => {
+    if (entry.category === 'stories') void startStory(set, get, entry);
+    else void startLesson(set, get, entry);
+  },
+
+  exitActivity: () => {
+    stopActivity(set, get);
+    set({ activity: IDLE_ACTIVITY, menu: INITIAL_MENU_STATE });
+  },
+
+  toggleActivityPause: () => {
+    const { activity } = get();
+    if (activity.kind === 'story' && story) {
+      if (story.paused) {
+        void story.resume();
+        set({ activity: { ...activity, phase: 'playing' } });
+      } else {
+        story.pause();
+        set({ activity: { ...activity, phase: 'paused' } });
+      }
+      return;
+    }
+    if (activity.kind === 'lesson') void lesson?.togglePause();
+  },
+
+  setActivity: (patch) => {
+    const activity = { ...get().activity, ...patch };
+    set({ activity });
+    // A grader's reason is a one-off. Leaving it on the glass would let it
+    // outlive the answer it described.
+    if (patch.notice) {
+      if (noticeClearTimer) clearTimeout(noticeClearTimer);
+      noticeClearTimer = setTimeout(
+        () => set({ activity: { ...get().activity, notice: null } }),
+        4_000,
+      );
+    }
   },
 }));
 
 type Setter = (partial: Partial<SimulatorState>) => void;
 type Getter = () => SimulatorState;
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Tears down whatever owns the speaker.
+ *
+ * The device has one speaker, so the modes are mutually exclusive. Skipping
+ * this would let a lesson play over a story, or over free talk, and the
+ * resulting mess reads as an audio bug rather than as two sessions running at
+ * once — which is exactly the kind of thing that eats an afternoon.
+ */
+function stopActivity(set: Setter, get: Getter): void {
+  activityFetch?.abort();
+  activityFetch = null;
+  story?.stop();
+  story = null;
+  lesson?.dispose();
+  lesson = null;
+  if (noticeClearTimer) clearTimeout(noticeClearTimer);
+  noticeClearTimer = null;
+  // The mic belongs to the lesson while one is running; hand it back.
+  if (get().micState === 'listening') get().stopListening();
+  set({ micLevel: 0 });
+}
+
+/**
+ * Starts a story: metadata, transcript, then play.
+ *
+ * The socket is dropped first. A story is the badge playing a file to itself —
+ * leaving the backend connected would have Bống talking over the narrator.
+ */
+async function startStory(set: Setter, get: Getter, entry: LessonSummary): Promise<void> {
+  stopActivity(set, get);
+  get().disconnect();
+
+  set({
+    menu: INITIAL_MENU_STATE,
+    activity: { ...IDLE_ACTIVITY, kind: 'story', title: entry.title, phase: 'loading' },
+  });
+
+  activityFetch = new AbortController();
+  const { signal } = activityFetch;
+
+  try {
+    const loaded = await loadStory(entry.metadataUrl, signal);
+    if (signal.aborted) return;
+
+    story = new StoryPlayer(loaded, {
+      onCue: (_index, text) => {
+        // Between cues the caption holds rather than blanking. A line that
+        // vanishes for the pause between sentences flickers.
+        if (text !== null) get().setActivity({ caption: text });
+      },
+      onEnded: () => get().setActivity({ phase: 'finished' }),
+      onError: (message) => get().setActivity({ phase: 'error', error: message }),
+    });
+    story.setVolume(get().volume);
+
+    set({
+      activity: { ...get().activity, title: loaded.title, phase: 'playing' },
+    });
+    await story.play();
+  } catch (error) {
+    if (signal.aborted) return;
+    get().setActivity({ phase: 'error', error: describeError(error) });
+  }
+}
+
+/** Starts a lesson. The engine lives in `lessons/`; this only owns the wiring. */
+async function startLesson(set: Setter, get: Getter, entry: LessonSummary): Promise<void> {
+  stopActivity(set, get);
+  get().disconnect();
+
+  set({
+    menu: INITIAL_MENU_STATE,
+    activity: { ...IDLE_ACTIVITY, kind: 'lesson', title: entry.title, phase: 'loading' },
+  });
+
+  lesson = new LessonRunner(entry, {
+    onActivity: (patch) => get().setActivity(patch),
+    getVolume: () => get().volume,
+  });
+
+  try {
+    await lesson.start();
+  } catch (error) {
+    get().setActivity({ phase: 'error', error: describeError(error) });
+  }
+}
 
 function ensurePlayer(set: Setter, get: Getter): OpusPlayer {
   player ??= new OpusPlayer(get().config.sampleRate, {
@@ -288,10 +697,16 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
   }
 
   // `tts.stop` is the one transition that needs a clock: the face holds its
-  // expression briefly, then settles. Restarting the timer on each stop means
-  // a fast follow-up sentence cancels the pending drop instead of stacking.
+  // expression briefly, then settles.
+  //
+  // Only speech frames touch the timer. Clearing it on *every* message was a
+  // bug: any frame arriving inside the one-second linger — a heartbeat, an
+  // `iot` command, a `display` update — cancelled the pending drop and left the
+  // face stuck mid-expression until the next reply. Rare at chat frame rates,
+  // routine once a lesson is pushing frames through the same path.
+  if (message.type !== 'tts') return;
   clearIdleTimer();
-  if (message.type === 'tts' && message.state === 'stop') {
+  if (message.state === 'stop') {
     idleTimer = setTimeout(() => set({ face: toIdle(get().face) }), IDLE_DELAY_MS);
   }
 }
@@ -316,3 +731,55 @@ function clearUnmuteTimer(): void {
   if (unmuteTimer) clearTimeout(unmuteTimer);
   unmuteTimer = null;
 }
+
+/**
+ * Runs the battery down and reports condition while the badge is on.
+ *
+ * Both tick on a wall clock rather than counting ticks, so a backgrounded tab —
+ * where browsers throttle timers hard — comes back with a battery that moved by
+ * the time that actually passed.
+ */
+function startHardwareTimers(set: Setter, get: Getter): void {
+  stopHardwareTimers();
+  lastDrainAt = Date.now();
+
+  drainTimer = setInterval(() => {
+    const { hardware } = get();
+    const now = Date.now();
+    const elapsed = now - lastDrainAt;
+    lastDrainAt = now;
+    if (!hardware.autoDrain) return;
+
+    const battery = drainBattery(hardware.battery, hardware.charging, elapsed);
+    if (battery === hardware.battery) return;
+    set({ hardware: { ...hardware, battery } });
+
+    // Flat battery is the end of the session, which is exactly the state the
+    // parent app's "device offline" path needs to be tested against.
+    if (battery === 0) get().disconnect();
+  }, DRAIN_TICK_MS);
+
+  telemetryTimer = setInterval(() => get().reportCondition(), TELEMETRY_INTERVAL_MS);
+  get().reportCondition();
+}
+
+/** Shows why a press was ignored, and clears it again so it does not linger. */
+function setButtonNotice(set: Setter, get: Getter, message: string | null): void {
+  if (noticeTimer) clearTimeout(noticeTimer);
+  noticeTimer = null;
+  set({ hardware: { ...get().hardware, buttonNotice: message } });
+  if (!message) return;
+  noticeTimer = setTimeout(
+    () => set({ hardware: { ...get().hardware, buttonNotice: null } }),
+    2500,
+  );
+}
+
+function stopHardwareTimers(): void {
+  if (drainTimer) clearInterval(drainTimer);
+  if (telemetryTimer) clearInterval(telemetryTimer);
+  drainTimer = null;
+  telemetryTimer = null;
+}
+
+export { LOW_BATTERY };

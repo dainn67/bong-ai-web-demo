@@ -122,6 +122,55 @@ Real hardware has no image decoder and the backend pre-converts stills to
 RGB565 for it. A browser has no such problem, so the simulator can show
 animation the badge cannot yet — which is the point of having one.
 
+## Hardware
+
+The badge reports its own condition, and **Phần cứng** in the drawer is where
+you decide what that condition is: battery and charging, WiFi strength, and an
+injected fault.
+
+The **button is on the badge**, on the rim at three o'clock, because a physical
+button is real hardware and does not belong in a drawer labelled as things real
+hardware does not have. There is one, as there is on the device, so meaning
+comes from how long it is held rather than from picking an action off a list:
+
+| | |
+|---|---|
+| Press while asleep | `wake_up` — a child holding a dark toy should not have to know how long to hold |
+| Short press | `press` |
+| Held past 800ms | `goodbye`, and the badge sleeps |
+
+It fills up as you hold it, so the goodbye is visible before it fires rather
+than a surprise afterwards. Presses are debounced 3s and capped at ten a
+minute — the same rules the backend applies, run locally too, because firmware
+debounces in the device and the badge should behave the same whether or not a
+backend is reachable. A press that does not count says so on the glass, since
+a child who sees nothing happen just presses harder. When an API address is
+set it also reports to `/devices/{id}/fallback/button-press`, which is how the
+device and the backend are ever seen to disagree about the count.
+
+Battery and signal are drawn on the badge's own screen, since that is where
+they would be on the real thing, and both go red at the same threshold the
+parent app uses.
+
+It reports over two links, because they are two systems:
+
+| | Goes to | Carries |
+|---|---|---|
+| The chat socket | xiaozhi | `battery`, `button`, `error` frames |
+| `POST /devices/{id}/telemetry` | FastAPI | the full reading, including `uptime_seconds` and `error_code` |
+
+Only the second reaches the parent app: `/devices/dashboard/list` reads what
+that endpoint writes. It is off until you fill in **API backend** in the
+connection panel, because the backend is usually not running next to you, and
+a panel full of red failures for an service you never intended to use is
+worse than one that says nothing.
+
+The fault injector matters more than it looks. `error_code` is a field the
+backend logs and the parent app can show, and nothing else in the stack can
+produce one — no device has ever sent it. Same for a flat battery: turn on
+**Tự hao pin** and the badge drains, disconnects at zero, and gives the
+parent app's offline path something real to react to.
+
 ## Touch
 
 The glass is the badge's whole physical interface, and what a touch means

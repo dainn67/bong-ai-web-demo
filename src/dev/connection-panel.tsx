@@ -33,6 +33,12 @@ export function ConnectionPanel() {
         onChange={(fallbackWsUrl) => updateConfig({ fallbackWsUrl })}
       />
       <Field
+        label="API backend (telemetry)"
+        value={config.apiUrl}
+        disabled={!isOffline}
+        onChange={(apiUrl) => updateConfig({ apiUrl })}
+      />
+      <Field
         label="Mã thiết bị"
         value={config.macAddress}
         disabled={!isOffline}
