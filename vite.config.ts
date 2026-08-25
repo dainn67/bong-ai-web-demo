@@ -19,9 +19,10 @@ export default defineConfig({
     // The clips being open is load-bearing: they are the bulk of the bytes and
     // they stream straight into decodeAudioData without passing through here.
     //
-    // This is a DEV server. A built bundle served from anywhere else hits the
-    // same wall — either the origin gets whitelisted upstream, or `dist/` can
-    // do the badge protocol but not the lesson APIs.
+    // These four routes are load-bearing in production too: `nginx.conf` in the
+    // Docker image mirrors them one for one. Change a target here and change it
+    // there, or the built bundle starts answering lesson fetches with
+    // `index.html` and every `response.json()` fails on the doctype.
     proxy: {
       '/api': { target: 'https://bong-api.bcserver.xyz', changeOrigin: true },
       '/cdn': {

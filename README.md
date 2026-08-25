@@ -16,6 +16,24 @@ npm run dev               # http://localhost:5180
 `AudioDecoder`, which Safari only shipped in 26.0 and Firefox for Android does
 not have at all. This is an internal tool, so that trade is deliberate.
 
+## Deploying
+
+```bash
+docker compose up -d --build     # nginx on 127.0.0.1:3002, behind the proxy manager
+```
+
+The built bundle needs a proxy in front of it, not just a static file server.
+Lesson mode fetches `/api`, `/cdn`, `/stt` and `/media` as same-origin paths
+because those upstreams either send no CORS headers or whitelist the dev ports
+only; `vite.config.ts` answers them in dev and `nginx.conf` answers them in the
+container. **The two lists have to stay in step.** Serve `dist/` from a plain
+static host and lesson mode dies on the catalog fetch with
+`Unexpected token '<', "<!doctype "... is not valid JSON` — that is the SPA
+fallback handing `index.html` to a `response.json()`.
+
+The badge protocol itself needs none of this: OTA and the WebSocket are absolute
+URLs to `bong-ai-esp`, which allows any origin.
+
 ## What it does
 
 The simulator is three things stacked together:
