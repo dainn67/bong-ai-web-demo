@@ -125,14 +125,17 @@ export class GraphEngine {
 
     this.handlers.onActivity({ phase: 'loading' });
 
-    // Everything the lesson needs, fetched before the first note. The child
-    // data is awaited because a `{data.*}` recall can appear in node one; the
-    // clips are too, so playback does not stutter into a cold cache.
+    // The child's saved values ARE awaited: a `{data.*}` recall can appear in
+    // the very first node, and resolving it against an empty store would send
+    // the lesson down the "nothing saved yet" branch for a child who has one.
     await data.preload(referencedDataCategories(graph));
     await data.preloadCategories();
-    await player.preload(allAudioUrls(graph), (done, total) => {
-      this.handlers.onActivity({ caption: `Đang tải… ${done}/${total}` });
-    });
+
+    // The clips are NOT. A real lesson is ~140 clips and ~25MB; blocking on all
+    // of it leaves a child watching a counter for ten seconds before the first
+    // word. Warm the cache in the background and start — each group fetches
+    // what it needs on demand, so node one is audible in well under a second.
+    void player.preload(allAudioUrls(graph));
 
     if (this.stale(this.gen)) return;
 

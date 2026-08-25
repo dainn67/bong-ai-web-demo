@@ -157,6 +157,19 @@ describe('narration flow', () => {
     expect(player.played[0]).toEqual(['voice.mp3', 'music.mp3']);
   });
 
+  // A real lesson is ~140 clips and ~25MB. Blocking playback on the whole
+  // warm-up left a child watching a counter for ten seconds before the first
+  // word, so the engine has to start while it is still downloading.
+  it('starts playing without waiting for the clip warm-up', async () => {
+    const player = fakePlayer();
+    // Never resolves: if the engine awaits this, the test hangs.
+    player.preload = vi.fn(() => new Promise<undefined>(() => {}));
+
+    const { urls, finished } = await run([narration('1', '2'), narration('2', null)], { player });
+    expect(urls).toEqual(['1.mp3', '2.mp3']);
+    expect(finished).toBe(true);
+  });
+
   it('finishes silently on an empty graph, without an error screen', async () => {
     const { finished, errored } = await run([]);
     expect(finished).toBe(true);

@@ -7,9 +7,11 @@
  * started. An element gives you `currentTime` and `volume` and nothing that
  * schedules ahead of the clock.
  *
- * The whole graph is preloaded up front. Fetching a clip when it is reached
- * costs a few hundred milliseconds of dead air between every line, which on a
- * 100-node lesson is minutes of silence.
+ * Clips are warmed in the background and fetched on demand if a group reaches
+ * one first. Both halves matter: without the warm-up every line pays a few
+ * hundred milliseconds of dead air, and without the on-demand path a lesson
+ * that starts before the warm-up finishes silently skips whatever has not
+ * arrived yet.
  */
 
 export interface ClipSpec {
@@ -45,6 +47,8 @@ export class GroupPlayer {
   private context: AudioContext | null = null;
   private readonly master: { node: GainNode | null } = { node: null };
   private readonly buffers = new Map<string, AudioBuffer | typeof MISSING>();
+  /** In-flight loads, so preload and an on-demand fetch never race the same url. */
+  private readonly loading = new Map<string, Promise<AudioBuffer | typeof MISSING>>();
   private active: AudioBufferSourceNode[] = [];
   private stopped = false;
   private volume = 1;
@@ -68,32 +72,59 @@ export class GroupPlayer {
   }
 
   /**
-   * Fetches and decodes every clip, concurrently.
+   * Warms the cache for every clip in the lesson.
+   *
+   * **Do not await this to start playback.** A real lesson is 140-odd clips and
+   * around 25MB; blocking on all of it leaves the child staring at a loading
+   * counter for ten seconds before the first word. Kick it off and play — each
+   * group loads what it needs on demand ({@link ensure}), so the first node is
+   * audible in under a second while the rest streams in behind it.
    *
    * Failures are recorded rather than thrown: a 404 on one clip should cost
-   * that line, not the lesson. Clips whose URL still holds an unresolved
-   * placeholder are attempted too — they will simply fail, and the log shows
-   * which node has no account behind it.
+   * that line, not the lesson.
    */
   async preload(urls: string[], onProgress?: (done: number, total: number) => void): Promise<void> {
     const unique = [...new Set(urls.filter(Boolean))];
-    const context = this.ensureContext();
     let done = 0;
-
     await Promise.all(
       unique.map(async (url) => {
-        if (this.buffers.has(url)) return;
-        try {
-          const response = await fetch(url);
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          this.buffers.set(url, await context.decodeAudioData(await response.arrayBuffer()));
-        } catch {
-          this.buffers.set(url, MISSING);
-        } finally {
-          onProgress?.(++done, unique.length);
-        }
+        await this.ensure(url);
+        onProgress?.(++done, unique.length);
       }),
     );
+  }
+
+  /**
+   * The buffer for a clip, fetching it if the warm-up has not reached it yet.
+   *
+   * Concurrent callers share one in-flight request — otherwise a group playing
+   * ahead of the preload would fetch the same file twice, and on a lesson with
+   * a hundred nodes that doubles the traffic.
+   */
+  private async ensure(url: string): Promise<AudioBuffer | typeof MISSING> {
+    const cached = this.buffers.get(url);
+    if (cached !== undefined) return cached;
+
+    const inFlight = this.loading.get(url);
+    if (inFlight) return inFlight;
+
+    const context = this.ensureContext();
+    const load = (async (): Promise<AudioBuffer | typeof MISSING> => {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await context.decodeAudioData(await response.arrayBuffer());
+      } catch {
+        return MISSING;
+      }
+    })().then((result) => {
+      this.buffers.set(url, result);
+      this.loading.delete(url);
+      return result;
+    });
+
+    this.loading.set(url, load);
+    return load;
   }
 
   /** Whether a clip is loaded and playable. */
@@ -117,11 +148,17 @@ export class GroupPlayer {
     // clips are scheduled against a clock that is not running.
     if (context.state === 'suspended') await context.resume();
 
+    // Resolve the group's clips before touching the clock. Scheduling against
+    // `currentTime` and then awaiting a fetch would put the first clip's start
+    // in the past by however long the network took.
+    const buffers = await Promise.all(specs.map((spec) => this.ensure(spec.url)));
+    if (this.stopped) return { winner: -1, aborted: true };
+
     const startedAt = context.currentTime;
     const finishes: Promise<number | null>[] = [];
 
     specs.forEach((spec, index) => {
-      const buffer = this.buffers.get(spec.url);
+      const buffer = buffers[index];
       if (!buffer || buffer === MISSING) {
         finishes.push(Promise.resolve(null));
         return;
@@ -237,6 +274,7 @@ export class GroupPlayer {
   async dispose(): Promise<void> {
     this.stop();
     this.buffers.clear();
+    this.loading.clear();
     await this.context?.close().catch(() => undefined);
     this.context = null;
     this.master.node = null;
