@@ -86,11 +86,20 @@ export function toExpression(value: unknown): Expression | null {
 /**
  * Server-driven screen content: a named face, or an image to show instead.
  *
- * Two spellings are in circulation. The backend schema builds
- * `{ type: 'display', action: 'expression' | 'show_image' }`; an older client
- * listens for `{ type: 'display_expression' }` and `{ type: 'display_image' }`.
- * Nothing has ever sent either over the live socket, so neither is proven —
- * accepting both is the cheap way to be right whichever wins.
+ * Five spellings are in circulation, in two families.
+ *
+ * The *proven* family is what `send_image_message` in xiaozhi-server actually
+ * emits — `image`, `gif` and `custom`, all three for the same picture, sent back
+ * to back so ESP32 firmware, this simulator and the mobile app each find one
+ * they understand. See the 25/08/2026 changelog entry in `backend-python`.
+ *
+ * The *speculative* family is `display` / `display_expression` / `display_image`,
+ * built from the backend schema and an older client. Nothing has ever been seen
+ * sending them over the live socket. They are kept because accepting them costs
+ * two lines and being wrong about which one wins costs an afternoon.
+ *
+ * `reduceFace` collapses the triple: setting an image that is already up returns
+ * the same state, so three frames make one render.
  */
 export interface DisplayIn {
   type: 'display';
@@ -112,6 +121,37 @@ export interface DisplayImageIn {
   url?: string | null;
 }
 
+/** `{"type": "image", "url": …}` — the first of the three image frames. */
+export interface ImageIn {
+  type: 'image';
+  url?: string | null;
+  session_id?: string;
+}
+
+/** The same picture again, spelled for firmware that only knows about GIFs. */
+export interface GifIn {
+  type: 'gif';
+  url?: string | null;
+  session_id?: string;
+}
+
+/**
+ * The same picture a third time, wrapped for control apps.
+ *
+ * `payload.action` is `show_image`; both `image_url` and `gif_url` carry the
+ * same URL. Other `custom` actions may exist — anything we do not recognise
+ * falls through and leaves the screen alone.
+ */
+export interface CustomIn {
+  type: 'custom';
+  payload?: {
+    action?: string;
+    image_url?: string | null;
+    gif_url?: string | null;
+  };
+  session_id?: string;
+}
+
 /** What a display frame resolves to once the spelling is normalised away. */
 export type DisplayCommand =
   | { kind: 'expression'; name: Expression }
@@ -119,8 +159,16 @@ export type DisplayCommand =
   /** An image frame carrying no URL is the server clearing the screen. */
   | { kind: 'clear' };
 
-/** Reads either spelling, or returns null for anything that is not a display frame. */
+/** Reads any spelling, or returns null for anything that is not a display frame. */
 export function toDisplayCommand(message: IncomingMessage): DisplayCommand | null {
+  if (message.type === 'image' || message.type === 'gif') {
+    return fromParts('show_image', undefined, message.url);
+  }
+  if (message.type === 'custom') {
+    const payload = message.payload;
+    if (payload?.action !== 'show_image') return null;
+    return fromParts('show_image', undefined, payload.image_url ?? payload.gif_url);
+  }
   if (message.type === 'display_expression' || message.type === 'display_image') {
     return fromParts(
       message.type === 'display_expression' ? 'expression' : 'show_image',
@@ -173,6 +221,9 @@ export type IncomingMessage =
   | DisplayIn
   | DisplayExpressionIn
   | DisplayImageIn
+  | ImageIn
+  | GifIn
+  | CustomIn
   | IotIn
   | McpIn
   | ServerIn

@@ -10,7 +10,6 @@ import { create } from 'zustand';
 import { loadConfig, saveConfig, type DeviceConfig } from '../config/device-config';
 import { audioSupport } from '../audio/audio-format';
 import { clampBattery, drainBattery, LOW_BATTERY } from '../hardware/hardware-state';
-import { reportButtonPress, sendTelemetry } from '../protocol/telemetry-client';
 import {
   classifyPress,
   pruneHistory,
@@ -32,16 +31,13 @@ import {
 } from '../screen/face-state-machine';
 import {
   INITIAL_MENU_STATE,
+  MODE_INTENTS,
+  MODE_ORDER,
   reduceMenu,
-  rowsFor,
   type DeviceMode,
   type MenuAction,
   type MenuState,
 } from '../screen/menu-state';
-import { IDLE_ACTIVITY, type ActivityState } from '../screen/activity-state';
-import { fetchCatalog, type LessonSummary } from '../lessons/catalog';
-import { loadStory, StoryPlayer } from '../content/story';
-import { LessonRunner } from '../lessons/lesson-runner';
 
 export interface PacketLogEntry {
   id: number;
@@ -81,9 +77,6 @@ export interface HardwareState {
   autoDrain: boolean;
   /** An injected fault, reported until cleared. */
   faultCode: string | null;
-  /** Result of the last telemetry post, so the panel can say whether it landed. */
-  telemetry: 'off' | 'sending' | 'ok' | 'error';
-  telemetryError: string | null;
   /**
    * Why the last press was ignored, if it was.
    *
@@ -121,20 +114,6 @@ interface SimulatorState {
 
   /** The mode picker on the glass. Test instrumentation — see `menu-state.ts`. */
   menu: MenuState;
-  catalog: LessonSummary[];
-  catalogLoading: boolean;
-  catalogError: string | null;
-  /** A story or lesson currently running on the device. */
-  activity: ActivityState;
-  /**
-   * Where a running lesson is, as one line — the app's `debugStatus`.
-   *
-   * Instrumentation, not device state: no badge reports its position in a
-   * lesson to anyone. It lives here only so the drawer can show it.
-   */
-  lessonDebug: string | null;
-  /** The same position, short enough for the glass: `2/3`. */
-  lessonPosition: string | null;
 
   updateConfig: (patch: Partial<DeviceConfig>) => void;
   connect: () => void;
@@ -161,31 +140,25 @@ interface SimulatorState {
   reportCondition: () => void;
 
   /**
-   * Back — up one level: out of an activity, then up the menu, then closed.
+   * Back — closes the menu, or opens it when nothing is open.
    *
-   * With nothing open it opens the menu, so a press always does something.
+   * A press always does something, which is what makes the button
+   * discoverable at all.
    */
   pressBack: () => void;
-  /** Home — the bail-out: close everything and show the idle face. */
+  /** Home — the bail-out: close the menu and show the idle face. */
   pressHome: () => void;
   /** The volume rocker. Shows the new level briefly on the glass. */
   pressVolume: (delta: number) => void;
 
-  /** Drives the mode picker. `rowCount` comes from the reducer's own `rowsFor`. */
+  /** Drives the mode picker. */
   menuDispatch: (action: MenuAction) => void;
-  loadCatalog: () => Promise<void>;
-  /** Picks a mode: free talk starts immediately, the others open a picker. */
+  /**
+   * Picks a mode by saying so.
+   *
+   * There is no start-lesson frame in the protocol — see `MODE_INTENTS`.
+   */
   chooseMode: (mode: DeviceMode) => void;
-  /** Starts the catalog entry the picker is showing. */
-  startEntry: (entry: LessonSummary) => void;
-  /** Leaves a running story or lesson and returns the screen to the face. */
-  exitActivity: () => void;
-  toggleActivityPause: () => void;
-  setActivity: (patch: Partial<ActivityState>) => void;
-  /** Dev/tester only: jump to the next node, skipping the clip or the mic. */
-  skipLessonNode: () => void;
-  /** The metadata the running lesson was built from, or null. */
-  lessonMetadataUrl: () => string | null;
 }
 
 /**
@@ -198,12 +171,6 @@ interface SimulatorState {
 let client: WsClient | null = null;
 let player: OpusPlayer | null = null;
 let mic: MicCapture | null = null;
-/** Whichever activity owns the speaker. Only ever one — see `stopActivity`. */
-let story: StoryPlayer | null = null;
-let lesson: LessonRunner | null = null;
-/** Aborts an in-flight catalog or metadata fetch when the child moves on. */
-let activityFetch: AbortController | null = null;
-let noticeClearTimer: ReturnType<typeof setTimeout> | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
 let telemetryTimer: ReturnType<typeof setInterval> | null = null;
 let drainTimer: ReturnType<typeof setInterval> | null = null;
@@ -211,8 +178,6 @@ let lastDrainAt = Date.now();
 /** Timestamps of presses the device accepted, for debounce and rate limiting. */
 let pressHistory: number[] = [];
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
-/** Fixed at load: the badge has been "on" for as long as the page has. */
-const bootedAt = Date.now();
 let unmuteTimer: ReturnType<typeof setTimeout> | null = null;
 let lastBargeIn = 0;
 let nextPacketId = 0;
@@ -238,18 +203,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     wifiRssi: -55,
     autoDrain: false,
     faultCode: null,
-    telemetry: 'off',
-    telemetryError: null,
     buttonNotice: null,
   },
 
   menu: INITIAL_MENU_STATE,
-  catalog: [],
-  catalogLoading: false,
-  catalogError: null,
-  activity: IDLE_ACTIVITY,
-  lessonDebug: null,
-  lessonPosition: null,
 
   updateConfig: (patch) => {
     const config = { ...get().config, ...patch };
@@ -371,11 +328,9 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   setVolume: (volume) => {
-    // One speaker, three things that might own it. The volume control is on
-    // the device, so it has to reach whichever one is currently playing.
+    // One speaker, and now only one thing that can own it: everything audible
+    // arrives as Opus on the socket, lesson clips included.
     player?.setVolume(volume);
-    story?.setVolume(volume);
-    lesson?.setVolume(volume);
     set({ volume });
   },
 
@@ -402,18 +357,6 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     pressHistory = [...pruneHistory(pressHistory, now), now];
     setButtonNotice(set, get, null);
 
-    // The backend keeps its own count. Asking it as well is how the two are
-    // ever seen to disagree; it cannot veto a press the device already took.
-    void reportButtonPress(get().config)
-      .then((result) => {
-        if (result && !result.allowed) {
-          setButtonNotice(set, get, result.message ?? 'Máy chủ chặn bớt nút bấm');
-        }
-      })
-      .catch(() => {
-        // No backend, or it is unhappy. The button still worked.
-      });
-
     const action: ButtonAction = classifyPress(heldMs, awake);
     if (action === 'wake_up') {
       get().connect();
@@ -424,48 +367,18 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   reportCondition: () => {
-    const { config, hardware } = get();
-    const reading = {
-      battery_level: hardware.battery,
-      wifi_rssi: hardware.wifiRssi,
-      is_charging: hardware.charging,
-      firmware_version: config.firmwareVersion,
-      uptime_seconds: Math.floor((Date.now() - bootedAt) / 1000),
-      ...(hardware.faultCode
-        ? { error_code: hardware.faultCode, error_message: `Giả lập: ${hardware.faultCode}` }
-        : {}),
-    };
-
-    // The socket carries it too, since a real badge reports over whichever
-    // link it already has open rather than dialling a second one.
+    const { hardware } = get();
+    // Over the socket, because that is the only link a badge has. The server
+    // forwards it to /internal/device-proxy/telemetry, which is where battery
+    // and RSSI land in the row the parent app reads.
     client?.sendBattery(hardware.battery, hardware.charging);
-    if (hardware.faultCode) client?.sendError(hardware.faultCode, reading.error_message ?? '');
-
-    if (!config.apiUrl) {
-      set({ hardware: { ...get().hardware, telemetry: 'off', telemetryError: null } });
-      return;
+    if (hardware.faultCode) {
+      client?.sendError(hardware.faultCode, `Giả lập: ${hardware.faultCode}`);
     }
-
-    set({ hardware: { ...get().hardware, telemetry: 'sending' } });
-    void sendTelemetry(config, reading)
-      .then(() => set({ hardware: { ...get().hardware, telemetry: 'ok', telemetryError: null } }))
-      .catch((error) =>
-        set({
-          hardware: { ...get().hardware, telemetry: 'error', telemetryError: String(error) },
-        }),
-      );
   },
 
   pressBack: () => {
-    const { activity, menu } = get();
-
-    // Out of a story or lesson, and into the mode list rather than all the way
-    // to the face — a child leaving one story is usually after another.
-    if (activity.kind) {
-      get().exitActivity();
-      get().menuDispatch({ type: 'open' });
-      return;
-    }
+    const { menu } = get();
 
     // Nothing open, so there is nothing to go back from. Opening the menu is
     // the only sensible thing a press can do, and it means the button always
@@ -481,7 +394,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   pressHome: () => {
     // Home is the idle face, the way it is the home screen on a phone. This is
     // the bail-out: whatever is open, close it.
-    if (get().activity.kind) get().exitActivity();
+    //
+    // It no longer stops anything. Leaving a lesson is telling the server you
+    // want to leave — say "con muốn dừng bài học", or hold ⏻ for goodbye, which
+    // drops the socket and ends the session the way a real badge does.
     get().menuDispatch({ type: 'close' });
   },
 
@@ -493,193 +409,41 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     setButtonNotice(set, get, `🔊 ${Math.round(volume * 100)}%`);
   },
 
-  skipLessonNode: () => {
-    void lesson?.skipNext();
-  },
-
-  lessonMetadataUrl: () => lesson?.metadataUrl ?? null,
-
   menuDispatch: (action) => {
-    const state = get();
-    const rowCount = rowsFor(state.menu, state.catalog).length;
-    const menu = reduceMenu(state.menu, action, rowCount);
-    if (menu === state.menu) return;
+    const menu = reduceMenu(get().menu, action, MODE_ORDER.length);
+    if (menu === get().menu) return;
     set({ menu });
-    // Opening the menu is the moment the catalog is first wanted. Fetching it
-    // at boot would spend a request on every page load, including the ones
-    // that only ever exercise the protocol.
-    if (action.type === 'open' && state.catalog.length === 0) void get().loadCatalog();
   },
 
-  loadCatalog: async () => {
-    if (get().catalogLoading) return;
-    set({ catalogLoading: true, catalogError: null });
-    try {
-      const catalog = await fetchCatalog();
-      set({ catalog, catalogLoading: false });
-    } catch (error) {
-      set({ catalogLoading: false, catalogError: describeError(error) });
-    }
-  },
-
+  /**
+   * Enters a mode by saying its name out loud.
+   *
+   * All three arms close the menu and make sure the socket is up, because that
+   * is all any of them can do — the badge has no other lever. Free talk is what
+   * the socket already is, so it stops there; the other two put a sentence on
+   * the wire and hand over.
+   *
+   * Deliberately fire-and-forget. Whether the server understood is answered by
+   * what comes back, not by anything decidable here, and pretending otherwise
+   * would mean inventing a "starting lesson…" state the device cannot know is
+   * true. If nothing happens, the packet inspector is where to look.
+   */
   chooseMode: (mode) => {
-    if (mode === 'freetalk') {
-      // Free talk is the socket the badge already speaks. There is nothing to
-      // build here and nothing to pick — close the menu and make sure the
-      // device is awake.
-      stopActivity(set, get);
-      set({ menu: INITIAL_MENU_STATE });
-      if (get().status === 'disconnected') get().connect();
+    set({ menu: INITIAL_MENU_STATE });
+    if (get().status === 'disconnected') {
+      get().connect();
+      // The socket is not open yet, so there is nothing to say into. Free talk
+      // needed no phrase anyway; for the others this connects and the tester
+      // picks again, which is one click and honest about what happened.
       return;
     }
-    get().menuDispatch({ type: 'choose-mode', mode });
-  },
-
-  startEntry: (entry) => {
-    if (entry.category === 'stories') void startStory(set, get, entry);
-    else void startLesson(set, get, entry);
-  },
-
-  exitActivity: () => {
-    stopActivity(set, get);
-    set({
-      activity: IDLE_ACTIVITY,
-      menu: INITIAL_MENU_STATE,
-      lessonDebug: null,
-      lessonPosition: null,
-    });
-  },
-
-  toggleActivityPause: () => {
-    const { activity } = get();
-    if (activity.kind === 'story' && story) {
-      if (story.paused) {
-        void story.resume();
-        set({ activity: { ...activity, phase: 'playing' } });
-      } else {
-        story.pause();
-        set({ activity: { ...activity, phase: 'paused' } });
-      }
-      return;
-    }
-    if (activity.kind === 'lesson') void lesson?.togglePause();
-  },
-
-  setActivity: (patch) => {
-    const activity = { ...get().activity, ...patch };
-    // Read the position back off the engine on every change rather than having
-    // the engine push it: the engine already emits on every transition, so this
-    // cannot fall behind, and the engine stays unaware that a drawer exists.
-    set({
-      activity,
-      lessonDebug: lesson?.debugStatus ?? null,
-      lessonPosition: lesson?.debugPosition ?? null,
-    });
-    // A grader's reason is a one-off. Leaving it on the glass would let it
-    // outlive the answer it described.
-    if (patch.notice) {
-      if (noticeClearTimer) clearTimeout(noticeClearTimer);
-      noticeClearTimer = setTimeout(
-        () => set({ activity: { ...get().activity, notice: null } }),
-        4_000,
-      );
-    }
+    const intent = MODE_INTENTS[mode];
+    if (intent) get().sendText(intent);
   },
 }));
 
 type Setter = (partial: Partial<SimulatorState>) => void;
 type Getter = () => SimulatorState;
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * Tears down whatever owns the speaker.
- *
- * The device has one speaker, so the modes are mutually exclusive. Skipping
- * this would let a lesson play over a story, or over free talk, and the
- * resulting mess reads as an audio bug rather than as two sessions running at
- * once — which is exactly the kind of thing that eats an afternoon.
- */
-function stopActivity(set: Setter, get: Getter): void {
-  activityFetch?.abort();
-  activityFetch = null;
-  story?.stop();
-  story = null;
-  lesson?.dispose();
-  lesson = null;
-  if (noticeClearTimer) clearTimeout(noticeClearTimer);
-  noticeClearTimer = null;
-  // The mic belongs to the lesson while one is running; hand it back.
-  if (get().micState === 'listening') get().stopListening();
-  set({ micLevel: 0 });
-}
-
-/**
- * Starts a story: metadata, transcript, then play.
- *
- * The socket is dropped first. A story is the badge playing a file to itself —
- * leaving the backend connected would have Bống talking over the narrator.
- */
-async function startStory(set: Setter, get: Getter, entry: LessonSummary): Promise<void> {
-  stopActivity(set, get);
-  get().disconnect();
-
-  set({
-    menu: INITIAL_MENU_STATE,
-    activity: { ...IDLE_ACTIVITY, kind: 'story', title: entry.title, phase: 'loading' },
-  });
-
-  activityFetch = new AbortController();
-  const { signal } = activityFetch;
-
-  try {
-    const loaded = await loadStory(entry.metadataUrl, signal);
-    if (signal.aborted) return;
-
-    story = new StoryPlayer(loaded, {
-      onCue: (_index, text) => {
-        // Between cues the caption holds rather than blanking. A line that
-        // vanishes for the pause between sentences flickers.
-        if (text !== null) get().setActivity({ caption: text });
-      },
-      onEnded: () => get().setActivity({ phase: 'finished' }),
-      onError: (message) => get().setActivity({ phase: 'error', error: message }),
-    });
-    story.setVolume(get().volume);
-
-    set({
-      activity: { ...get().activity, title: loaded.title, phase: 'playing' },
-    });
-    await story.play();
-  } catch (error) {
-    if (signal.aborted) return;
-    get().setActivity({ phase: 'error', error: describeError(error) });
-  }
-}
-
-/** Starts a lesson. The engine lives in `lessons/`; this only owns the wiring. */
-async function startLesson(set: Setter, get: Getter, entry: LessonSummary): Promise<void> {
-  stopActivity(set, get);
-  get().disconnect();
-
-  set({
-    menu: INITIAL_MENU_STATE,
-    activity: { ...IDLE_ACTIVITY, kind: 'lesson', title: entry.title, phase: 'loading' },
-  });
-
-  lesson = new LessonRunner(entry, {
-    onActivity: (patch) => get().setActivity(patch),
-    getVolume: () => get().volume,
-  });
-
-  try {
-    await lesson.start();
-  } catch (error) {
-    get().setActivity({ phase: 'error', error: describeError(error) });
-  }
-}
 
 function ensurePlayer(set: Setter, get: Getter): OpusPlayer {
   player ??= new OpusPlayer(get().config.sampleRate, {

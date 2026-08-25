@@ -8,11 +8,11 @@
  */
 
 import { useEffect, type ReactNode } from 'react';
-import { AuthPanel } from './auth-panel';
+import { BindPanel } from './bind-panel';
 import { ConnectionPanel } from './connection-panel';
 import { AudioPanel } from './audio-panel';
 import { HardwarePanel } from './hardware-panel';
-import { LessonPanel } from './lesson-panel';
+import { IntentPanel } from './intent-panel';
 import { PacketInspector } from './packet-inspector';
 
 interface DevDrawerProps {
@@ -59,10 +59,11 @@ export function DevDrawer({ open, onClose }: DevDrawerProps) {
           </button>
         </header>
 
-        {/* First, and only while a lesson runs: it is the thing being watched. */}
-        <LessonPanel />
+        {/* First: entering a mode is a sentence now, so this is the control
+            that used to be a menu on the glass. */}
+        <IntentPanel />
         <ConnectionPanel />
-        <AuthPanel />
+        <BindPanel />
         <HardwarePanel />
         <AudioPanel />
         <PacketInspector />

@@ -8,38 +8,20 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5180,
-    // Four upstreams, four different CORS answers — measured, not assumed:
+    // One route left, and it is not part of running the device.
     //
-    //   pub-*.r2.dev (lesson mp3s)  Access-Control-Allow-Origin: *  → NOT proxied
-    //   static-bongai (metadata)    no CORS headers at all          → proxied
-    //   files.bcserver (story mp3)  no CORS headers at all          → proxied
-    //   bong-api (auth + lessons)   allows :3000/:5173, not :5180   → proxied
-    //   mini-3000 (FunASR STT)      no CORS for :5180               → proxied
+    // There used to be four — the CDN, the STT service and the story host all
+    // needed proxying because the browser was fetching lesson content itself.
+    // It does not any more: everything audible or visible arrives over the
+    // WebSocket, and xiaozhi-server does the CDN fetching from a place where
+    // CORS is not a concept. See `docs/plan-server-driven-modes.md`.
     //
-    // The clips being open is load-bearing: they are the bulk of the bytes and
-    // they stream straight into decodeAudioData without passing through here.
-    //
-    // These four routes are load-bearing in production too: `nginx.conf` in the
-    // Docker image mirrors them one for one. Change a target here and change it
-    // there, or the built bundle starts answering lesson fetches with
-    // `index.html` and every `response.json()` fails on the doctype.
+    // What remains is `bind-by-phone`, which provisions the simulator against a
+    // parent account. `bong-api` allows :3000 and :5173 but not :5180, so it
+    // still has to come through here. `nginx.conf` in the Docker image mirrors
+    // this one route; keep the two in step.
     proxy: {
       '/api': { target: 'https://bong-api.bcserver.xyz', changeOrigin: true },
-      '/cdn': {
-        target: 'https://static-bongai.bcserver.xyz',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/cdn/, ''),
-      },
-      '/stt': {
-        target: 'https://mini-3000.bcserver.xyz',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/stt/, ''),
-      },
-      '/media': {
-        target: 'https://files.bcserver.xyz',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/media/, ''),
-      },
     },
   },
   build: {

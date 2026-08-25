@@ -118,6 +118,58 @@ describe('face state machine', () => {
     expect(legacy.imageUrl).toBe('https://cdn/story.gif');
   });
 
+  it('shows an image the server actually sends, in all three of its spellings', () => {
+    const url = 'https://cdn/praise.gif';
+    const image = reduceFace(INITIAL_FACE_STATE, { type: 'image', url, session_id: 's1' });
+    const gif = reduceFace(INITIAL_FACE_STATE, { type: 'gif', url, session_id: 's1' });
+    const custom = reduceFace(INITIAL_FACE_STATE, {
+      type: 'custom',
+      session_id: 's1',
+      payload: { action: 'show_image', image_url: url, gif_url: url },
+    });
+
+    // `send_image_message` emits all three for one picture. Whichever arrives
+    // first has to put it up, because there is no ordering guarantee worth
+    // relying on.
+    expect(image.imageUrl).toBe(url);
+    expect(gif.imageUrl).toBe(url);
+    expect(custom.imageUrl).toBe(url);
+  });
+
+  it('collapses the image/gif/custom triple into one state change', () => {
+    const url = 'https://cdn/praise.gif';
+    const first = reduceFace(INITIAL_FACE_STATE, { type: 'image', url });
+    const second = reduceFace(first, { type: 'gif', url });
+    const third = reduceFace(second, {
+      type: 'custom',
+      payload: { action: 'show_image', image_url: url, gif_url: url },
+    });
+
+    // Reference equality: three frames, one render. This is the whole dedupe —
+    // no timers, no window, just a reducer that does nothing when asked for
+    // what is already on screen.
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+  });
+
+  it('reads a custom frame’s gif_url when image_url is missing', () => {
+    const next = reduceFace(INITIAL_FACE_STATE, {
+      type: 'custom',
+      payload: { action: 'show_image', gif_url: 'https://cdn/only-gif.gif' },
+    });
+    expect(next.imageUrl).toBe('https://cdn/only-gif.gif');
+  });
+
+  it('leaves the screen alone for a custom action it does not know', () => {
+    const next = reduceFace(INITIAL_FACE_STATE, {
+      type: 'custom',
+      payload: { action: 'set_volume', image_url: 'https://cdn/nope.gif' },
+    });
+    // `custom` is a bag: other actions will appear, and none of them should be
+    // able to redraw the screen by accident.
+    expect(next).toBe(INITIAL_FACE_STATE);
+  });
+
   it('treats an image frame with no url as clearing the screen', () => {
     const showing = reduceFace(INITIAL_FACE_STATE, { type: 'display_image', url: 'https://cdn/a.gif' });
     const cleared = reduceFace(showing, { type: 'display_image', url: null });

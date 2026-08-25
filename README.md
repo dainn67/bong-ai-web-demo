@@ -22,17 +22,22 @@ not have at all. This is an internal tool, so that trade is deliberate.
 docker compose up -d --build     # nginx on 127.0.0.1:3002, behind the proxy manager
 ```
 
-The built bundle needs a proxy in front of it, not just a static file server.
-Lesson mode fetches `/api`, `/cdn`, `/stt` and `/media` as same-origin paths
-because those upstreams either send no CORS headers or whitelist the dev ports
-only; `vite.config.ts` answers them in dev and `nginx.conf` answers them in the
-container. **The two lists have to stay in step.** Serve `dist/` from a plain
-static host and lesson mode dies on the catalog fetch with
-`Unexpected token '<', "<!doctype "... is not valid JSON` — that is the SPA
-fallback handing `index.html` to a `response.json()`.
+The badge itself needs no proxy: OTA and the WebSocket are absolute URLs to
+`bong-ai-esp`, which sends `Access-Control-Allow-Origin: *`, and lesson content
+never touches the browser — the server fetches the clips and pushes them down
+the socket as Opus.
 
-The badge protocol itself needs none of this: OTA and the WebSocket are absolute
-URLs to `bong-ai-esp`, which allows any origin.
+One route needs proxying, and it is not part of running the device:
+`/api/v1/devices/bind-by-phone`, which provisions the simulator against a parent
+account once. `bong-api` does not whitelist this origin, so `vite.config.ts`
+answers it in dev and `nginx.conf` answers it in the container. **Keep the two
+in step.**
+
+There used to be four such routes and they were the source of the one
+production-only failure this project has had: `dist/` served without them
+answered `/cdn/…` with `index.html`, and the catalog fetch died on
+`Unexpected token '<', "<!doctype "... is not valid JSON`. Moving the lesson
+engine to the server removed the class, not just the instance.
 
 ## What it does
 
@@ -43,6 +48,12 @@ The simulator is three things stacked together:
 | Protocol | `src/protocol/` | OTA handshake, WebSocket, heartbeat, reconnect |
 | Audio | `src/audio/` | Mic → Opus → send; receive Opus → speaker |
 | Screen | `src/screen/` | Round display and its face state machine |
+
+That is the whole device. There is no lesson engine, no catalog, no
+speech-to-text call and no parent login, because the badge has none of those —
+it says what it wants and the server drives everything that follows. See
+[`docs/plan-server-driven-modes.md`](docs/plan-server-driven-modes.md) for what
+that replaced and why.
 
 `src/dev/` holds the instruments — connection panel, packet inspector, audio
 counters, and the box you type into. Nothing in there exists on real hardware,
@@ -82,6 +93,38 @@ The `mini-*` hosts are served on port 80 only, so they are `ws://` and not
 `bong-api.bcserver.xyz` does **not** route `/xiaozhi/`; it falls through to
 FastAPI, which has no such endpoint.
 
+## Modes
+
+There is no start-lesson frame in the protocol, and no endpoint the device can
+call. A mode is entered by **saying so**:
+
+```json
+{"type":"listen","state":"detect","text":"Bắt đầu bài học tiếng Anh"}
+```
+
+The server's LLM routes that to its lesson orchestrator, which drives the
+backend FSM and pushes the result back as speech, Opus clips and image frames.
+From the badge's side a lesson is indistinguishable from a conversation, which
+is exactly what it is meant to be.
+
+The three rows on the glass send one of these phrases each (`MODE_INTENTS` in
+`menu-state.ts`); **Ý định** in the drawer sends the same ones plus anything you
+type. The wording is matched by a language model, not a parser, so a phrase that
+works today can stop working when the prompt changes — that is why the free-text
+box is there.
+
+You can tell it routed by watching the packet inspector for an `stt` frame
+reading `% start_learning_session`. That is the tool call, not speech, and
+`reduceFace` deliberately keeps it off the badge's face.
+
+**Lessons need the device bound to a parent account.** `bind-by-phone` in the
+drawer does it: give it a phone number that is already registered and it upserts
+a `UserDevice`, attaches a child, and hands back the `device_id` the simulator
+then identifies as. Without it `/lesson-sessions/start` answers
+`DEVICE_NOT_BOUND`, which arrives as a spoken refusal several seconds after
+asking — miserable to debug, hence the panel saying up front whether this badge
+is bound.
+
 ## Audio
 
 Opus in both directions, mono, at whatever `sample_rate` the handshake settles
@@ -115,26 +158,36 @@ either way, so inlining breaks the built bundle only.
 
 ## Server-driven screen content
 
-The backend can take the screen over: a face by name, or an image — a GIF, a
-lesson picture — that fills the circle in place of any face.
+The backend takes the screen over: a face by name, or an image — a GIF, a lesson
+picture — that fills the circle in place of any face.
+
+**What the server actually sends.** `send_image_message` in xiaozhi-server emits
+three frames for one picture, back to back, so ESP32 firmware, this simulator
+and the mobile app each find a spelling they understand:
 
 ```json
-{"type":"display","action":"expression","name":"thinking"}
-{"type":"display","action":"show_image","url":"https://…/story.gif"}
-{"type":"display","action":"show_image","url":null}
+{"type":"image","url":"https://…/praise.gif","session_id":"…"}
+{"type":"gif","url":"https://…/praise.gif","session_id":"…"}
+{"type":"custom","payload":{"action":"show_image","image_url":"…","gif_url":"…"}}
 ```
 
-That last one, an image frame with no URL, clears the screen.
+All three are accepted, and `reduceFace` collapses them: setting an image that
+is already up returns the same state, so three frames make one render. No
+timers, no dedupe window — the reducer stays a pure function of the frame.
 
-Two caveats, because none of this has ever come over the live socket:
+**What the schema says.** `{"type":"display","action":"expression"|"show_image"}`
+plus the older `display_expression` / `display_image` spellings. Still accepted,
+still never seen over the live socket. When one of the families wins, delete the
+other.
 
-- **Two spellings exist.** The backend schema builds `{"type":"display",
-  "action":…}`; an older client listens for `{"type":"display_expression"}` and
-  `{"type":"display_image"}`. Both are accepted here. When the backend picks
-  one, delete the other.
+Two rules that are easy to get backwards:
+
 - **Named faces outrank the mood** we infer from a reply, until the next reply
-  arrives. Images outlive replies entirely, and go only when replaced or
-  cleared — a lesson picture should not vanish because the badge said something.
+  arrives.
+- **Images outlive replies entirely,** and go only when replaced or when a
+  `display_image` arrives with a null URL. Nothing in the proven family can
+  clear the screen — a lesson picture should not vanish because the badge said
+  something, so holding it is the right default.
 
 Real hardware has no image decoder and the backend pre-converts stills to
 RGB565 for it. A browser has no such problem, so the simulator can show
@@ -240,8 +293,10 @@ npm test
 node scripts/fake-server.mjs   # a backend that says what you tell it to
 ```
 
-The live server is intermittent and never sends `display` frames, so the fake
-one is how you exercise screen content and any other reply you need on demand.
+The live server is intermittent, so the fake one is how you exercise screen
+content and any other reply you need on demand — including the `image` / `gif` /
+`custom` triple, which is otherwise only reachable by getting a real lesson to
+reach a node that has artwork on it.
 Point the connection panel at `ws://localhost:5181/`, with a dead OTA URL so
 the client falls back to it.
 
@@ -262,3 +317,11 @@ thing the packet inspector does not log), `llm` frames arrive carrying
 Not verified: `getUserMedia` and the worklet, on a machine with no microphone.
 The encoder they feed is verified — the same configuration, driven from a file
 instead of a mic, produced frames the backend transcribed correctly.
+
+Also not verified, and more important: **a lesson running end to end through the
+server.** The device side is written and tested against the frames the backend
+changelog documents, but nobody has yet watched a real lesson play through it —
+see the parity checklist in `docs/plan-server-driven-modes.md`. Until that
+happens, a lesson that does not start could be the phrase, the binding, or an
+orchestrator that is not deployed on the host you are pointed at, and the packet
+inspector is the only way to tell which.

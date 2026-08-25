@@ -17,11 +17,11 @@ import { Panel } from './dev-drawer';
 
 export function HardwarePanel() {
   const hardware = useSimulatorStore((state) => state.hardware);
-  const apiUrl = useSimulatorStore((state) => state.config.apiUrl);
+  const connected = useSimulatorStore((state) => state.status === 'connected');
   const setHardware = useSimulatorStore((state) => state.setHardware);
 
   return (
-    <Panel title="Phần cứng" action={<TelemetryBadge state={hardware.telemetry} hasUrl={!!apiUrl} />}>
+    <Panel title="Phần cứng" action={<TelemetryBadge connected={connected} />}>
       <Slider
         label="Pin"
         value={`${hardware.battery}%`}
@@ -73,32 +73,36 @@ export function HardwarePanel() {
         </select>
       </label>
 
-      {hardware.telemetryError && (
-        <p className="text-xs text-berry-500">Gửi telemetry lỗi: {hardware.telemetryError}</p>
-      )}
       <p className="text-xs text-ink-300">
         Nút bấm nằm trên thân máy — bấm nhanh để nói, giữ lâu để tạm biệt
       </p>
-
-      {!apiUrl && (
-        <p className="text-xs text-ink-300">
-          Đặt “API backend” trong phần Kết nối để gửi lên máy chủ mà app phụ huynh đọc
-        </p>
-      )}
+      <p className="text-xs text-ink-300">
+        Pin và lỗi đi qua WebSocket (<code>battery</code>, <code>error</code>), rồi
+        máy chủ ghi vào hàng thiết bị mà app phụ huynh đọc. Thiết bị thật cũng
+        không có đường nào khác.
+      </p>
     </Panel>
   );
 }
 
-/** Whether the last report reached the backend the parent app reads. */
-function TelemetryBadge({ state, hasUrl }: { state: string; hasUrl: boolean }) {
-  const tone = {
-    ok: 'bg-mint-400/20 text-mint-500',
-    sending: 'bg-sunny-400/25 text-ink-700',
-    error: 'bg-berry-500/15 text-berry-500',
-    off: 'bg-cream-200 text-ink-500',
-  }[state];
-  const label = { ok: 'đã gửi', sending: 'đang gửi', error: 'lỗi', off: hasUrl ? '—' : 'tắt' }[state];
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${tone}`}>{label}</span>;
+/**
+ * Whether condition is being reported at all.
+ *
+ * There is nothing more to say than this. The old badge here tracked an HTTP
+ * POST and could report "đã gửi" or "lỗi"; the socket gives no acknowledgement,
+ * so claiming delivery would be inventing it. Connected means the frames are
+ * going out — where they land is the packet inspector's business.
+ */
+function TelemetryBadge({ connected }: { connected: boolean }) {
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+        connected ? 'bg-mint-400/20 text-mint-500' : 'bg-cream-200 text-ink-500'
+      }`}
+    >
+      {connected ? 'đang gửi' : 'tắt'}
+    </span>
+  );
 }
 
 interface SliderProps {

@@ -10,9 +10,13 @@
  * mode. This is instrumentation that happens to be drawn on the glass because
  * that is where it has to be exercised. It belongs to the same family as
  * `src/dev/`, not to the firmware being simulated.
+ *
+ * It used to be two screens deep: pick a mode, then pick a lesson from the
+ * catalog. The second screen is gone. The device does not browse a catalog —
+ * it says what it wants and the server decides, so choosing a mode now sends a
+ * sentence and the menu's whole job is over. What lesson runs is the server's
+ * call, which is the point of `plan-server-driven-modes.md`.
  */
-
-import type { LessonCategory, LessonSummary } from '../lessons/catalog';
 
 /** What the child can start from the menu. */
 export type DeviceMode = 'freetalk' | 'lesson' | 'story';
@@ -20,9 +24,7 @@ export type DeviceMode = 'freetalk' | 'lesson' | 'story';
 export type MenuView =
   | { screen: 'closed' }
   /** The three modes. */
-  | { screen: 'root' }
-  /** A scrollable list of catalog entries for one category. */
-  | { screen: 'picker'; category: LessonCategory };
+  | { screen: 'root' };
 
 export interface MenuState {
   view: MenuView;
@@ -48,17 +50,24 @@ export const MODE_LABELS: Record<DeviceMode, { title: string; hint: string; icon
   story: { title: 'Đọc truyện', hint: 'Nghe Bống kể chuyện', icon: '🎧' },
 };
 
-/** Which catalog category a mode picks from, or null when it needs no picking. */
-export function categoryFor(mode: DeviceMode): LessonCategory | null {
-  switch (mode) {
-    case 'lesson':
-      return 'learning';
-    case 'story':
-      return 'stories';
-    case 'freetalk':
-      return null;
-  }
-}
+/**
+ * What the badge says to enter each mode.
+ *
+ * This is the whole mode-entry mechanism. The phrase goes up as
+ * `listen`/`detect`, the server's LLM routes it to the lesson orchestrator, and
+ * from there the badge is just a speaker again. Free talk has no phrase because
+ * free talk is what the socket already does — there is nothing to enter.
+ *
+ * The wording matters more than it looks: it is matched by an LLM, not by a
+ * parser, so it should read like something a child would actually say. These
+ * two are lifted from the examples in the backend's own architecture doc
+ * (`xiaozhi-lesson-architecture.md` §0.1).
+ */
+export const MODE_INTENTS: Record<DeviceMode, string | null> = {
+  freetalk: null,
+  lesson: 'Bắt đầu bài học tiếng Anh',
+  story: 'Kể chuyện cho con nghe',
+};
 
 export function isOpen(state: MenuState): boolean {
   return state.view.screen !== 'closed';
@@ -81,37 +90,21 @@ export function reduceMenu(state: MenuState, action: MenuAction, rowCount = 0): 
       return state.view.screen === 'closed' ? state : INITIAL_MENU_STATE;
 
     case 'back':
-      switch (state.view.screen) {
-        case 'picker':
-          return { view: { screen: 'root' }, cursor: 0 };
-        case 'root':
-          return INITIAL_MENU_STATE;
-        case 'closed':
-          return state;
-      }
-      break;
+      // One screen deep, so back and close are the same thing.
+      return state.view.screen === 'closed' ? state : INITIAL_MENU_STATE;
 
     case 'move': {
       if (rowCount <= 0) return state;
       // Wraps, because a round screen shows about three rows and hitting a hard
-      // stop at the bottom of a fourteen-lesson list is worse than looping.
+      // stop at the bottom is worse than looping.
       const cursor = (((state.cursor + action.delta) % rowCount) + rowCount) % rowCount;
       return cursor === state.cursor ? state : { ...state, cursor };
     }
 
-    case 'choose-mode': {
-      const category = categoryFor(action.mode);
-      // Free talk needs nothing picked — the caller starts it and closes us.
-      if (!category) return INITIAL_MENU_STATE;
-      return { view: { screen: 'picker', category }, cursor: 0 };
-    }
+    case 'choose-mode':
+      // Picking a mode says a sentence and gets out of the way. Nothing to
+      // drill into — the server decides what happens next.
+      return INITIAL_MENU_STATE;
   }
   return state;
-}
-
-/** Rows shown for the current view, so the cursor and the UI can't disagree. */
-export function rowsFor(state: MenuState, catalog: LessonSummary[]): LessonSummary[] {
-  if (state.view.screen !== 'picker') return [];
-  const { category } = state.view;
-  return catalog.filter((entry) => entry.category === category);
 }

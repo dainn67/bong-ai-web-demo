@@ -1,5 +1,12 @@
 # Plan — App modes on the badge screen
 
+> **Superseded** by [`plan-server-driven-modes.md`](./plan-server-driven-modes.md).
+> The lesson orchestrator now lives on xiaozhi-server, so the browser-side engine
+> this plan describes is a second implementation of the same FSM rather than a
+> simulation of one. Kept for its measurements — the placeholder-coverage numbers
+> below are still the clearest record of why lesson audio needs a signed-in
+> account.
+
 Goal: a menu on the circle screen offering **Bài học** (lessons), **Trò chuyện**
 (free talk) and **Đọc truyện** (stories), each running to completion inside the
 240px display, behaving like the Flutter parent app.

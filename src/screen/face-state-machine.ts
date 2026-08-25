@@ -98,6 +98,9 @@ export function reduceFace(state: FaceState, message: IncomingMessage): FaceStat
       return { ...state, mode: 'emotion', emotion, said: message.text, expression: null };
     }
 
+    case 'image':
+    case 'gif':
+    case 'custom':
     case 'display':
     case 'display_expression':
     case 'display_image':
@@ -118,6 +121,19 @@ export function reduceFace(state: FaceState, message: IncomingMessage): FaceStat
   }
 }
 
+/**
+ * Applies a display frame, idempotently.
+ *
+ * The idempotence is what collapses xiaozhi-server's `image` / `gif` / `custom`
+ * triple: all three carry the same URL, so the second and third return the state
+ * object unchanged and React skips the render. No timers, no dedupe window, no
+ * remembering what arrived when — the reducer stays a pure function of the
+ * frame, which is the property that makes the whole display testable.
+ *
+ * Note this makes re-showing the *same* picture a no-op, which is right: there
+ * is nothing to redraw. An animated GIF restarting would need a real clear
+ * first, and the server has never asked for one.
+ */
 function reduceDisplay(state: FaceState, message: IncomingMessage): FaceState {
   const command = toDisplayCommand(message);
   // Unrecognised display frames leave the screen exactly as it was.
@@ -125,11 +141,13 @@ function reduceDisplay(state: FaceState, message: IncomingMessage): FaceState {
 
   switch (command.kind) {
     case 'expression':
-      return { ...state, expression: command.name, imageUrl: null };
+      return state.expression === command.name && state.imageUrl === null
+        ? state
+        : { ...state, expression: command.name, imageUrl: null };
     case 'image':
-      return { ...state, imageUrl: command.url };
+      return state.imageUrl === command.url ? state : { ...state, imageUrl: command.url };
     case 'clear':
-      return { ...state, imageUrl: null };
+      return state.imageUrl === null ? state : { ...state, imageUrl: null };
   }
 }
 

@@ -1,9 +1,10 @@
 /**
  * A backend that says exactly what you tell it to.
  *
- * The live server has never sent a `display` frame, so screen content is
- * otherwise untestable — and its replies are neither deterministic nor always
- * forthcoming, which makes it a poor thing to develop the screen against.
+ * Screen content is otherwise reachable only by driving a real lesson to a node
+ * that happens to carry artwork — and the live server's replies are neither
+ * deterministic nor always forthcoming, which makes it a poor thing to develop
+ * the screen against.
  *
  * Run it, then point the connection panel at `ws://localhost:5181/` with any
  * dead OTA URL, so the client takes its fallback path.
@@ -35,14 +36,26 @@ function textFrame(text) {
   return Buffer.concat([header, payload]);
 }
 
+const SESSION = 'fake-session-1';
+
 /** What the fake backend says, and when. Edit freely — that is the point. */
 const SCRIPT = [
-  [200, { type: 'hello', session_id: 'fake-session-1', audio_params: { format: 'opus', sample_rate: 16000, channels: 1 } }],
-  [1200, { type: 'stt', text: 'cho con xem trái đất' }],
-  [1600, { type: 'llm', text: 'Đây là Trái Đất nè!', emotion: 'happy' }],
-  // the shape the backend schema builds
-  [2200, { type: 'display', action: 'show_image', url: GIF, width: 240, height: 240 }],
-  // the older spelling, to prove both are accepted
+  [200, { type: 'hello', session_id: SESSION, audio_params: { format: 'opus', sample_rate: 16000, channels: 1 } }],
+
+  // A lesson starting, as the real server announces it: the tool call comes
+  // through as an `stt` frame with a `%` marker, which the face deliberately
+  // does not caption.
+  [1000, { type: 'stt', text: '% start_learning_session' }],
+  [1400, { type: 'llm', text: 'Mình bắt đầu bài học nhé!', emotion: 'happy' }],
+
+  // The real thing: `send_image_message` fires all three of these for one
+  // picture, back to back. The screen should update once.
+  [2200, { type: 'image', url: GIF, session_id: SESSION }],
+  [2210, { type: 'gif', url: GIF, session_id: SESSION }],
+  [2220, { type: 'custom', session_id: SESSION, payload: { action: 'show_image', image_url: GIF, gif_url: GIF } }],
+
+  // The speculative family, kept alive so it stays exercised while both are
+  // still accepted.
   [9000, { type: 'display_expression', name: 'thinking' }],
   [12000, { type: 'display', action: 'show_image', url: null }],
 ];

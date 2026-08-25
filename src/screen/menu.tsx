@@ -13,22 +13,13 @@
  */
 
 import { useSimulatorStore } from '../store/simulator-store';
-import { MODE_LABELS, MODE_ORDER, rowsFor } from './menu-state';
-import type { LessonSummary } from '../lessons/catalog';
+import { MODE_LABELS, MODE_ORDER } from './menu-state';
 
 export function ScreenMenu() {
   const menu = useSimulatorStore((state) => state.menu);
-  const catalog = useSimulatorStore((state) => state.catalog);
-  const loading = useSimulatorStore((state) => state.catalogLoading);
-  const error = useSimulatorStore((state) => state.catalogError);
   const chooseMode = useSimulatorStore((state) => state.chooseMode);
-  const startEntry = useSimulatorStore((state) => state.startEntry);
 
-  const view = menu.view;
-  if (view.screen === 'closed') return null;
-
-  const isRoot = view.screen === 'root';
-  const rows = rowsFor(menu, catalog);
+  if (menu.view.screen === 'closed') return null;
 
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-screen/95 backdrop-blur-sm">
@@ -44,38 +35,30 @@ export function ScreenMenu() {
       */}
       <div className="flex h-[72%] w-[72%] flex-col">
         <p className="shrink-0 pb-1.5 text-center text-[10px] font-bold uppercase tracking-[0.18em] text-cream-200/50">
-          {view.screen === 'picker'
-            ? view.category === 'stories'
-              ? 'Truyện'
-              : 'Bài học'
-            : 'Chọn chế độ'}
+          Chọn chế độ
         </p>
 
         {/*
-          The fade is not decoration. A scroll list ending at a hard edge chops
-          the next row through the middle of its text, which reads as a layout
-          bug rather than as "there is more below" — and here it landed right on
-          top of the footer. Fading the last few percent says the same thing
-          without the broken-looking seam.
+          Three rows fit without scrolling now that the catalog screen is gone,
+          but the fade stays: it costs nothing and it is what stops a fourth
+          mode, whenever one arrives, from being chopped through its text.
         */}
         <div
           style={{
             maskImage: 'linear-gradient(to bottom, #000 88%, transparent 100%)',
             WebkitMaskImage: 'linear-gradient(to bottom, #000 88%, transparent 100%)',
           }}
-          className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="flex min-h-0 flex-1 flex-col justify-center gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          {isRoot
-            ? MODE_ORDER.map((mode) => (
-                <Row
-                  key={mode}
-                  icon={MODE_LABELS[mode].icon}
-                  title={MODE_LABELS[mode].title}
-                  hint={MODE_LABELS[mode].hint}
-                  onSelect={() => chooseMode(mode)}
-                />
-              ))
-            : renderList({ rows, loading, error, onSelect: startEntry })}
+          {MODE_ORDER.map((mode) => (
+            <Row
+              key={mode}
+              icon={MODE_LABELS[mode].icon}
+              title={MODE_LABELS[mode].title}
+              hint={MODE_LABELS[mode].hint}
+              onSelect={() => chooseMode(mode)}
+            />
+          ))}
         </div>
 
         {/* The way out, said once. A child who opens this needs to know the way
@@ -86,32 +69,6 @@ export function ScreenMenu() {
       </div>
     </div>
   );
-}
-
-function renderList({
-  rows,
-  loading,
-  error,
-  onSelect,
-}: {
-  rows: LessonSummary[];
-  loading: boolean;
-  error: string | null;
-  onSelect: (entry: LessonSummary) => void;
-}) {
-  if (loading) return <Notice text="Đang tải…" />;
-  if (error) return <Notice text={error} />;
-  if (rows.length === 0) return <Notice text="Chưa có nội dung nào" />;
-
-  return rows.map((entry) => (
-    <Row
-      key={entry.id}
-      icon={entry.category === 'stories' ? '📖' : '✏️'}
-      title={entry.title}
-      hint={entry.description}
-      onSelect={() => onSelect(entry)}
-    />
-  ));
 }
 
 /**
@@ -149,8 +106,4 @@ function Row({
       )}
     </button>
   );
-}
-
-function Notice({ text }: { text: string }) {
-  return <p className="px-2 py-6 text-center text-xs font-medium text-cream-200/60">{text}</p>;
 }

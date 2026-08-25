@@ -25,7 +25,6 @@ import {
 import type { Emotion, Expression } from '../protocol/message-types';
 import type { FaceMode } from './face-state-machine';
 import { ScreenMenu } from './menu';
-import { ActivityView } from './activity-view';
 import { isOpen } from './menu-state';
 
 /**
@@ -76,12 +75,11 @@ export function RoundScreen() {
   const hardware = useSimulatorStore((state) => state.hardware);
   const tapScreen = useSimulatorStore((state) => state.tapScreen);
   const menu = useSimulatorStore((state) => state.menu);
-  const activity = useSimulatorStore((state) => state.activity);
 
   const isAwake = status === 'connected';
-  // While the menu or an activity owns the glass, the glass is not an input
-  // surface — the thing drawn on it is. See the note in `useDisplayTouch`.
-  const overlaid = isOpen(menu) || activity.kind !== null;
+  // While the menu owns the glass, the glass is not an input surface — the
+  // thing drawn on it is. See the note in `useDisplayTouch`.
+  const overlaid = isOpen(menu);
   const { displayRef, ripple, pointerHandlers } = useDisplayTouch(tapScreen, !overlaid);
   // Precedence, strongest first: artwork the backend sent, a face it named,
   // the talking face, then the mood we inferred from the reply.
@@ -161,10 +159,10 @@ export function RoundScreen() {
               </p>
             )}
 
-            {/* Both overlays live inside the display, so they are clipped by
-                the same circle the face is — nothing exists outside it. An
-                activity wins over the menu: starting one closes the other. */}
-            <ActivityView />
+            {/* The menu lives inside the display, so it is clipped by the same
+                circle the face is — nothing exists outside it. There is no
+                second overlay any more: a running lesson looks like a
+                conversation, because that is now all it is. */}
             <ScreenMenu />
 
             {/* Glass: a fixed highlight across the top, so it reads as covered. */}
