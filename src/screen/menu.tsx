@@ -7,9 +7,9 @@
  * the box, so both were rendered outside the glass and clipped away by
  * `overflow-hidden`. They looked like they were missing because they were.
  *
- * So: no controls in the corners, everything on the centre line, and the
- * content column inset far enough to stay inside the circle at the top and
- * bottom rows. Navigation is on the rim buttons, where a round device puts it.
+ * So: no controls in the corners, everything centred, and the content sized to
+ * the inscribed square — the largest rectangle a circle can hold. Navigation is
+ * on the rim buttons, where a round device puts it.
  */
 
 import { useSimulatorStore } from '../store/simulator-store';
@@ -31,43 +31,59 @@ export function ScreenMenu() {
   const rows = rowsFor(menu, catalog);
 
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center bg-screen/95 backdrop-blur-sm">
-      <p className="pb-2 text-center text-[10px] font-bold uppercase tracking-[0.18em] text-cream-200/50">
-        {view.screen === 'picker'
-          ? view.category === 'stories'
-            ? 'Truyện'
-            : 'Bài học'
-          : 'Chọn chế độ'}
-      </p>
-
+    <div className="absolute inset-0 flex items-center justify-center bg-screen/95 backdrop-blur-sm">
       {/*
-        Two constraints at once. The width is capped at 60% so the top and
-        bottom rows still fall inside the circle's chord, and the height at 44%
-        so the list stays in the middle band where the circle is widest. Wider
-        or taller and rows get sliced by the curve — which is what the first
-        attempt did, leaving a half-drawn row hanging over the footer.
+        The largest rectangle that fits in a circle is the inscribed square —
+        side = diameter / √2, about 71%. That is the budget, and the layout
+        should spend all of it: an earlier version used 60% × 44% out of caution
+        and left the menu floating as a small box in a large dark circle.
 
-        Three rows fit; anything longer scrolls.
+        72% overshoots the inscribed square by a whisker, which the rows'
+        rounded corners absorb — a `rounded-2xl` corner is pulled further inside
+        than the square corner it replaces.
       */}
-      <div className="flex max-h-[44%] w-[60%] flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {isRoot
-          ? MODE_ORDER.map((mode) => (
-              <Row
-                key={mode}
-                icon={MODE_LABELS[mode].icon}
-                title={MODE_LABELS[mode].title}
-                hint={MODE_LABELS[mode].hint}
-                onSelect={() => chooseMode(mode)}
-              />
-            ))
-          : renderList({ rows, loading, error, onSelect: startEntry })}
-      </div>
+      <div className="flex h-[72%] w-[72%] flex-col">
+        <p className="shrink-0 pb-1.5 text-center text-[10px] font-bold uppercase tracking-[0.18em] text-cream-200/50">
+          {view.screen === 'picker'
+            ? view.category === 'stories'
+              ? 'Truyện'
+              : 'Bài học'
+            : 'Chọn chế độ'}
+        </p>
 
-      {/* The way out, said once. A child who opens this needs to know the way
-          back is a button on the side, not something on the glass. */}
-      <p className="pt-2.5 text-center text-[9px] font-medium text-cream-200/30">
-        Bấm nút ⌂ để quay lại
-      </p>
+        {/*
+          The fade is not decoration. A scroll list ending at a hard edge chops
+          the next row through the middle of its text, which reads as a layout
+          bug rather than as "there is more below" — and here it landed right on
+          top of the footer. Fading the last few percent says the same thing
+          without the broken-looking seam.
+        */}
+        <div
+          style={{
+            maskImage: 'linear-gradient(to bottom, #000 88%, transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, #000 88%, transparent 100%)',
+          }}
+          className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {isRoot
+            ? MODE_ORDER.map((mode) => (
+                <Row
+                  key={mode}
+                  icon={MODE_LABELS[mode].icon}
+                  title={MODE_LABELS[mode].title}
+                  hint={MODE_LABELS[mode].hint}
+                  onSelect={() => chooseMode(mode)}
+                />
+              ))
+            : renderList({ rows, loading, error, onSelect: startEntry })}
+        </div>
+
+        {/* The way out, said once. A child who opens this needs to know the way
+            back is a button on the side, not something on the glass. */}
+        <p className="shrink-0 pt-1.5 text-center text-[9px] font-medium text-cream-200/30">
+          Bấm nút ⌂ để quay lại
+        </p>
+      </div>
     </div>
   );
 }
@@ -120,14 +136,14 @@ function Row({
     <button
       type="button"
       onClick={onSelect}
-      className="w-full shrink-0 rounded-2xl bg-cream-200/10 px-2 py-1.5 text-center transition active:scale-[0.97] active:bg-cream-200/20"
+      className="w-full shrink-0 rounded-2xl bg-cream-200/10 px-2.5 py-2 text-center transition active:scale-[0.97] active:bg-cream-200/20"
     >
       <span className="flex items-center justify-center gap-1.5">
-        <span className="text-sm leading-none">{icon}</span>
-        <span className="truncate text-[13px] font-bold text-cream-100">{title}</span>
+        <span className="text-base leading-none">{icon}</span>
+        <span className="truncate text-sm font-bold text-cream-100">{title}</span>
       </span>
       {hint && (
-        <span className="mt-0.5 block truncate text-[9px] leading-tight text-cream-200/45">
+        <span className="mt-0.5 block truncate text-[10px] leading-tight text-cream-200/45">
           {hint}
         </span>
       )}

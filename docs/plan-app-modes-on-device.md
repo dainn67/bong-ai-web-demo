@@ -362,6 +362,23 @@ button is tall enough to span real curvature; solving for the middle leaves the
 end nearest the pole hanging in space, which is what the first attempt looked
 like.
 
+**Buttons are one aligned cluster, not three curve-fitted positions.** Insetting
+each button by the chord at its own height was geometrically right and looked
+wrong — three buttons at three distances read as scattered rather than as one
+machined side. They now share a vertical line near the equator, where the curve
+moves only a few pixels across the whole cluster, flush with the box edge. That
+puts every button 4–14px inside the circle: measured against the body's actual
+bounding rect, not eyeballed.
+
+**The menu spends its whole budget.** The largest rectangle inside a circle is
+the inscribed square — side = diameter/√2, about 71%. An earlier version used
+60% × 44% out of caution and left the menu floating as a small box in a big dark
+circle. It is 72% × 72% now; the rows' rounded corners absorb the overshoot.
+
+**The scroll list fades at the bottom.** A hard edge chopped the next row through
+the middle of its text and landed it on the footer, which reads as a layout bug
+rather than as "there is more below".
+
 **Removed:** the status LED and the speaker grille. Both were positioned on the
 shell but landed on the glass, where they read as an unexplained orange dot and
 a row of page-indicator dots rather than as moulded plastic.

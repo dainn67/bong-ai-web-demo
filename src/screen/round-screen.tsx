@@ -233,25 +233,28 @@ function StatusBar({ battery, charging, rssi }: StatusBarProps) {
 
 /** The two felt ears that make it a creature rather than a puck. */
 /**
- * The badge's physical controls: three buttons down the right rim.
+ * The badge's physical controls: three buttons on the right side.
  *
  * One button was not enough. It had to carry talking, the mode menu and
  * goodbye, split by how long you held it, and a child cannot discover a
- * three-way hold. Worse, there was no way back out of a screen at all — the
- * on-screen arrow was being clipped away by the circle, so the only exit was a
- * hold that also happened to mean something else.
- *
- * Three controls, each meaning one thing:
+ * three-way hold. Worse, there was no way back out of a screen at all.
  *
  * | Control | Press | Hold |
  * |---|---|---|
  * | ⏻ Nguồn | wake, or talk when awake | tạm biệt — sleep |
  * | ⌂ Home | back one level | all the way out to the face |
- * | Âm lượng | + louder · − quieter | — |
+ * | ± Âm lượng | + louder · − quieter | — |
  *
  * Back is the *short* press and home the hold, not the other way around. Back
  * is what you reach for constantly and home is the occasional bail-out, so the
  * cheap gesture belongs to the frequent one.
+ *
+ * They sit as one cluster on a shared vertical line, close to the equator.
+ * Insetting each button by the curve at its own height was geometrically
+ * correct and looked wrong — three buttons at three different distances read as
+ * scattered rather than as parts of one machined side. Keeping the cluster tight
+ * around the widest point means the curve barely moves across it (about five
+ * pixels), so one shared offset is both aligned and flush.
  */
 function RimButtons() {
   const pressButton = useSimulatorStore((state) => state.pressButton);
@@ -260,56 +263,32 @@ function RimButtons() {
   const pressVolume = useSimulatorStore((state) => state.pressVolume);
 
   return (
-    <>
+    <div
+      // Flush with the box edge, which puts every button 4–14px inside the
+      // *circle* — the body curves in from the box corners, so the cluster's end
+      // buttons need that margin to stay visibly moulded into the shell rather
+      // than perched on the silhouette. Measured, not guessed.
+      className="absolute top-1/2 right-0 flex w-[14px] -translate-y-1/2 flex-col items-stretch gap-[5px]"
+    >
       <RimButton
-        top={30}
         title="Nguồn — bấm để nói · giữ để tạm biệt"
         icon="⏻"
         holdMs={LONG_PRESS_MS}
         onPress={pressButton}
       />
       <RimButton
-        top={50}
         title="Home — bấm để quay lại · giữ để về màn hình chính"
         icon="⌂"
         tall
         holdMs={LONG_PRESS_MS}
         onPress={(heldMs) => (heldMs >= LONG_PRESS_MS ? pressHome() : pressBack())}
       />
-      <VolumeRocker top={70} onChange={pressVolume} />
-    </>
+      <VolumeRocker onChange={pressVolume} />
+    </div>
   );
 }
 
-/**
- * How far the rim sits from the box edge, as a percentage of the box width.
- *
- * The body is a circle inscribed in a square, so a fixed offset only touches
- * the edge at the equator — above and below that the circle has curved away,
- * and a button placed by a constant inset floats off the device. For a vertical
- * distance `d` from centre (as a fraction of the radius) the chord's half-width
- * is `√(1 − d²)`, so the inset is `50·(1 − √(1 − d²))`.
- *
- * Measured at the button's **far end**, not its centre. A button is tall enough
- * to span real curvature: solve for the middle and the end nearest the pole
- * hangs off into space, which is exactly what the first attempt looked like.
- * Solving for the end instead tucks the middle slightly under the rim, and a
- * button sunk a little into the body reads as moulded rather than stuck on.
- */
-function rimInset(topPercent: number, halfHeightPercent: number): number {
-  const far = topPercent < 50 ? topPercent - halfHeightPercent : topPercent + halfHeightPercent;
-  const d = (50 - far) / 50;
-  const inset = 50 * (1 - Math.sqrt(Math.max(0, 1 - d * d)));
-  // Straddle the edge rather than resting behind it: pull out by half a width.
-  return inset - 2.2;
-}
-
-/** Button heights as a percentage of the body box, for {@link rimInset}. */
-const HALF_HEIGHT = { short: 5, tall: 7 };
-
 interface RimButtonProps {
-  /** Vertical centre, as a percentage of the body box. */
-  top: number;
   title: string;
   icon: string;
   /** Fills up to this hold, so a two-meaning button shows which one is coming. */
@@ -319,13 +298,13 @@ interface RimButtonProps {
 }
 
 /**
- * One moulded button on the rim.
+ * One moulded button.
  *
  * Holds are timed here rather than in the store because the fill has to track
  * the finger, and the store should not re-render the whole badge forty times a
  * second to animate a sliver of colour.
  */
-function RimButton({ top, title, icon, holdMs, tall, onPress }: RimButtonProps) {
+function RimButton({ title, icon, holdMs, tall, onPress }: RimButtonProps) {
   const downAt = useRef<number | null>(null);
   const [holding, setHolding] = useState(false);
   const [held, setHeld] = useState(0);
@@ -370,13 +349,8 @@ function RimButton({ top, title, icon, holdMs, tall, onPress }: RimButtonProps) 
       onPointerUp={end}
       onPointerCancel={cancel}
       title={title}
-      style={{
-        top: `${top}%`,
-        right: `${rimInset(top, tall ? HALF_HEIGHT.tall : HALF_HEIGHT.short)}%`,
-        transform: 'translateY(-50%)',
-      }}
-      className={`absolute flex w-[15px] items-center justify-center overflow-hidden rounded-r-md bg-gradient-to-r from-cream-300 to-cream-200 text-[8px] leading-none text-ink-500 shadow-[2px_2px_6px_-2px_rgba(61,44,36,0.5)] transition active:translate-x-[1px] ${
-        tall ? 'h-12' : 'h-9'
+      className={`relative flex items-center justify-center overflow-hidden rounded-r-md bg-gradient-to-r from-cream-300 to-cream-200 text-[8px] leading-none text-ink-500 shadow-[2px_2px_6px_-2px_rgba(61,44,36,0.5)] transition active:translate-x-[1px] ${
+        tall ? 'h-9' : 'h-7'
       }`}
     >
       <span
@@ -398,18 +372,11 @@ function RimButton({ top, title, icon, holdMs, tall, onPress }: RimButtonProps) 
  * kind of hidden second meaning that made the single-button version unusable.
  * Two ends of one piece are self-evident.
  */
-function VolumeRocker({ top, onChange }: { top: number; onChange: (delta: number) => void }) {
+function VolumeRocker({ onChange }: { onChange: (delta: number) => void }) {
   const half =
     'flex h-1/2 w-full items-center justify-center text-[8px] leading-none text-ink-500 transition active:bg-coral-400/40';
   return (
-    <div
-      style={{
-        top: `${top}%`,
-        right: `${rimInset(top, HALF_HEIGHT.tall)}%`,
-        transform: 'translateY(-50%)',
-      }}
-      className="absolute flex h-12 w-[15px] flex-col overflow-hidden rounded-r-md bg-gradient-to-r from-cream-300 to-cream-200 shadow-[2px_2px_6px_-2px_rgba(61,44,36,0.5)]"
-    >
+    <div className="flex h-11 flex-col overflow-hidden rounded-r-md bg-gradient-to-r from-cream-300 to-cream-200 shadow-[2px_2px_6px_-2px_rgba(61,44,36,0.5)]">
       <button
         type="button"
         title="Tăng âm lượng"
