@@ -12,15 +12,34 @@ export const LONG_PRESS_MS = 800;
 export type ButtonAction = 'wake_up' | 'press' | 'goodbye';
 
 /**
- * What one press means.
+ * What one press of the **power** button means.
  *
  * Asleep, anything wakes it — a child holding a dark toy should not have to
- * know how long to hold. Awake, holding it is how you say goodbye, which is
- * the convention every device with one button uses.
+ * know how long to hold. Awake, holding it is how you say goodbye, which is the
+ * convention every device with a power button uses.
+ *
+ * Navigation is deliberately not here. It used to be — the menu lived on a
+ * middle hold tier of this one button — and that was a symptom of having only
+ * one button to spend. With a home and a back button on the rim, each control
+ * means one thing, and the tier that existed purely because we were short of
+ * buttons is gone.
  */
 export function classifyPress(heldMs: number, awake: boolean): ButtonAction {
   if (!awake) return 'wake_up';
   return heldMs >= LONG_PRESS_MS ? 'goodbye' : 'press';
+}
+
+/**
+ * How far one press moves the volume.
+ *
+ * Five steps across the range. Fewer and the jumps are coarse; more and a child
+ * is pressing all afternoon to get from quiet to loud.
+ */
+export const VOLUME_STEP = 0.2;
+
+/** Clamps a stepped volume back into range. */
+export function stepVolume(volume: number, delta: number): number {
+  return Math.min(1, Math.max(0, Math.round((volume + delta) * 100) / 100));
 }
 
 /** Mirrors the backend: debounce 3s, and no more than ten presses a minute. */

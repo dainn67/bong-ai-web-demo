@@ -8,6 +8,38 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5180,
+    // Four upstreams, four different CORS answers — measured, not assumed:
+    //
+    //   pub-*.r2.dev (lesson mp3s)  Access-Control-Allow-Origin: *  → NOT proxied
+    //   static-bongai (metadata)    no CORS headers at all          → proxied
+    //   files.bcserver (story mp3)  no CORS headers at all          → proxied
+    //   bong-api (auth + lessons)   allows :3000/:5173, not :5180   → proxied
+    //   mini-3000 (FunASR STT)      no CORS for :5180               → proxied
+    //
+    // The clips being open is load-bearing: they are the bulk of the bytes and
+    // they stream straight into decodeAudioData without passing through here.
+    //
+    // This is a DEV server. A built bundle served from anywhere else hits the
+    // same wall — either the origin gets whitelisted upstream, or `dist/` can
+    // do the badge protocol but not the lesson APIs.
+    proxy: {
+      '/api': { target: 'https://bong-api.bcserver.xyz', changeOrigin: true },
+      '/cdn': {
+        target: 'https://static-bongai.bcserver.xyz',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/cdn/, ''),
+      },
+      '/stt': {
+        target: 'https://mini-3000.bcserver.xyz',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/stt/, ''),
+      },
+      '/media': {
+        target: 'https://files.bcserver.xyz',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/media/, ''),
+      },
+    },
   },
   build: {
     // The mic worklet is small enough that Vite would inline it as a `data:`
