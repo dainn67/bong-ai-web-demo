@@ -264,12 +264,16 @@ export class LinearEngine {
    * skips.
    */
   get debugStatus(): string {
-    const parts = this.deps.lesson.parts;
-    const position = `${Math.min(this.index + 1, parts.length)}/${parts.length}`;
-    const part = parts[this.index];
-    return `phần ${position} · id=${part?.id ?? '-'} · ${
+    const part = this.deps.lesson.parts[this.index];
+    return `phần ${this.debugPosition} · id=${part?.id ?? '-'} · ${
       part?.interactive ? 'câu hỏi' : 'kể'
     } · ${this.phase}`;
+  }
+
+  /** Just the position — see the note on the graph engine's. */
+  get debugPosition(): string {
+    const parts = this.deps.lesson.parts;
+    return `${Math.min(this.index + 1, parts.length)}/${parts.length}`;
   }
 
   /** The phase last reported — see the note on the graph engine's `emit`. */

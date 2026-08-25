@@ -505,7 +505,21 @@ export class GraphEngine {
 
     const nodes = this.deps.graph.nodes;
     const index = nodes.findIndex((candidate) => candidate.order === node.order);
-    const nextOrder = index >= 0 && index + 1 < nodes.length ? nodes[index + 1].order : node.next;
+    // Step past every node sharing this order, not just to `index + 1`.
+    //
+    // This is one place the port deliberately diverges from the app. `order` is
+    // not unique — same-order nodes are a concurrent group — so `index + 1` can
+    // be another member of the group we are already in, and the skip replays it
+    // instead of advancing. Real content hits this immediately: L_003, L_006
+    // and Unit-01-Day-01 all open on a two-node group, so the app's version of
+    // this button does nothing at all on them.
+    const nextOrder =
+      index >= 0
+        ? (nodes.slice(index + 1).find((candidate) => candidate.order !== node.order)?.order ??
+          null)
+        : // A branch order is not in the top-level list; its own `next` is the
+          // only thing that can carry us forward.
+          node.next;
     await this.advanceToOrder(nextOrder, gen);
   }
 
@@ -521,11 +535,25 @@ export class GraphEngine {
    * list to point at.
    */
   get debugStatus(): string {
+    const node = this.currentNode;
+    return `node ${this.debugPosition} · order=${node?.order ?? '-'} · type=${
+      node?.type ?? '-'
+    } · ${this.phase}`;
+  }
+
+  /**
+   * Just the position, short enough for the badge's own screen.
+   *
+   * The full status line is a drawer thing — it does not fit on a 288px circle
+   * and nobody reads a node type while watching a lesson. `2/3` is the part
+   * worth having next to a skip button, because it is what tells you the skip
+   * landed somewhere.
+   */
+  get debugPosition(): string {
     const nodes = this.deps.graph.nodes;
     const node = this.currentNode;
     const index = node ? nodes.findIndex((candidate) => candidate.order === node.order) : -1;
-    const position = index >= 0 ? `${index + 1}/${nodes.length}` : `?/${nodes.length}`;
-    return `node ${position} · order=${node?.order ?? '-'} · type=${node?.type ?? '-'} · ${this.phase}`;
+    return index >= 0 ? `${index + 1}/${nodes.length}` : `?/${nodes.length}`;
   }
 
   /** The phase last reported, so {@link debugStatus} can name it. */

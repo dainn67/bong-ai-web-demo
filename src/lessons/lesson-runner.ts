@@ -130,6 +130,11 @@ export class LessonRunner {
     return this.engine?.debugStatus ?? null;
   }
 
+  /** The same position, short enough for the badge's screen. */
+  get debugPosition(): string | null {
+    return this.engine?.debugPosition ?? null;
+  }
+
   /** The raw metadata, so a tester can open what the engine is reading. */
   get metadataUrl(): string {
     return this.summary.metadataUrl;

@@ -531,6 +531,53 @@ describe('skipNext and debugStatus', () => {
     expect(player.played.flat()).toEqual(['3.mp3']);
   });
 
+  // `order` is not unique: same-order nodes are one concurrent group. Stepping
+  // to `index + 1` can land on another member of the group we are already in,
+  // which replays it instead of advancing. Real content opens this way —
+  // L_003, L_006 and Unit-01-Day-01 all start on a two-node group — so the
+  // app's own version of this button does nothing at all on them.
+  it('steps past every node sharing the current order', async () => {
+    const { engine, player } = await parkedOnQuestion([
+      { order: '1', type: 'dẫn truyện', audio: 'voice.mp3', next: '2' },
+      { order: '1', type: 'dẫn truyện', audio: 'music.mp3' },
+      {
+        order: '2',
+        type: 'câu hỏi 2',
+        audio: 'q.mp3',
+        branches: [{ branchType: 'phản hồi đúng', order: '2.a' }],
+      },
+      { order: '3', type: 'dẫn truyện', audio: '3.mp3', next: null },
+    ]);
+    player.played.length = 0;
+    await engine.skipNext();
+    expect(player.played.flat()).toEqual(['3.mp3']);
+  });
+
+  it('skips forward out of a concurrent group, not back into it', async () => {
+    const player = fakePlayer();
+    const graph = parseGraph(
+      {
+        page: 't',
+        nodes: [
+          { order: '1', type: 'dẫn truyện', audio: 'a.mp3', next: '9' },
+          { order: '1', type: 'dẫn truyện', audio: 'b.mp3' },
+          { order: '1', type: 'dẫn truyện', audio: 'c.mp3' },
+          { order: '2', type: 'dẫn truyện', audio: 'd.mp3', next: null },
+        ],
+      },
+      {},
+    );
+    const engine = new GraphEngine(
+      { graph, player, mic: pendingMic(), data: fakeData(), lessonId: 'L', trackProgress: false },
+      { onActivity: () => {} },
+    );
+    void engine.start();
+    await new Promise((r) => setTimeout(r, 0));
+    player.played.length = 0;
+    await engine.skipNext();
+    expect(player.played.flat()).toEqual(['d.mp3']);
+  });
+
   it('cancels the open mic and stops the clip before jumping', async () => {
     const { engine, player } = await parkedOnQuestion();
     player.stop.mockClear();

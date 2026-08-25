@@ -133,6 +133,8 @@ interface SimulatorState {
    * lesson to anyone. It lives here only so the drawer can show it.
    */
   lessonDebug: string | null;
+  /** The same position, short enough for the glass: `2/3`. */
+  lessonPosition: string | null;
 
   updateConfig: (patch: Partial<DeviceConfig>) => void;
   connect: () => void;
@@ -247,6 +249,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   catalogError: null,
   activity: IDLE_ACTIVITY,
   lessonDebug: null,
+  lessonPosition: null,
 
   updateConfig: (patch) => {
     const config = { ...get().config, ...patch };
@@ -539,7 +542,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
   exitActivity: () => {
     stopActivity(set, get);
-    set({ activity: IDLE_ACTIVITY, menu: INITIAL_MENU_STATE, lessonDebug: null });
+    set({
+      activity: IDLE_ACTIVITY,
+      menu: INITIAL_MENU_STATE,
+      lessonDebug: null,
+      lessonPosition: null,
+    });
   },
 
   toggleActivityPause: () => {
@@ -562,7 +570,11 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     // Read the position back off the engine on every change rather than having
     // the engine push it: the engine already emits on every transition, so this
     // cannot fall behind, and the engine stays unaware that a drawer exists.
-    set({ activity, lessonDebug: lesson?.debugStatus ?? null });
+    set({
+      activity,
+      lessonDebug: lesson?.debugStatus ?? null,
+      lessonPosition: lesson?.debugPosition ?? null,
+    });
     // A grader's reason is a one-off. Leaving it on the glass would let it
     // outlive the answer it described.
     if (patch.notice) {

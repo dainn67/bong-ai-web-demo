@@ -394,6 +394,12 @@ has no skip button and no position readout, so putting one on the glass would
 simulate something that cannot exist. The drawer sits beside the badge, not over
 it, so the lesson stays watchable.
 
+The skip button and its position counter sit on the glass beside pause, on
+request. It is still a control no real badge has — the counter gives that away —
+so it is the quieter of the two and appears only for lessons. The full status
+line stays in the drawer: it does not fit a 288px circle, and nobody reads a
+node type while watching a lesson.
+
 **The load-bearing detail is that skip walks the node list by *index*, not by
 `next`.** A question node has no `next` of its own — each answer branch carries
 one — so following `next` would end the lesson at every question. Pinned by a
@@ -406,6 +412,13 @@ Two honest limits, both shared with the app:
 - While an **answer branch** plays, `currentNode` is the branch node. A branch
   order (`2.a`) is not in the top-level list, so the position reads `?` and the
   order names the branch. A branch genuinely has no position in that list.
+- Skipping steps past **every node sharing the current order**, not just to
+  `index + 1`. This is a deliberate divergence: `order` is not unique — same-
+  order nodes are one concurrent group — so `index + 1` can be another member of
+  the group we are already in, and the skip replays it. Real content hits this
+  on the first node: L_003, L_006 and Unit-01-Day-01 all open on a multi-node
+  group, so the app's own version of this button does nothing at all on them.
+  Found by driving the real UI, not by reading.
 - The **linear** engine reports a part index (`phần 2/9`), not a cue index. The
   app counts cues there because its v1 flow slices one long mp3 and renders the
   SRT beside it; this engine plays each part's own clip and ships no transcript,
