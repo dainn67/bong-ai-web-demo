@@ -123,17 +123,17 @@ export class LinearEngine {
     const { lesson, player } = this.deps;
     if (lesson.parts.length === 0) {
       this.handlers.onLog?.('lesson v1 rỗng — kết thúc');
-      this.handlers.onActivity({ phase: 'finished' });
+      this.emit({ phase: 'finished' });
       return;
     }
 
-    this.handlers.onActivity({ phase: 'loading' });
+    this.emit({ phase: 'loading' });
     const urls = [
       ...lesson.parts.map((part) => part.url),
       ...Object.values(lesson.extras).flatMap((list) => list.map((part) => part.url)),
     ];
     await player.preload(urls, (done, total) => {
-      this.handlers.onActivity({ caption: `Đang tải… ${done}/${total}` });
+      this.emit({ caption: `Đang tải… ${done}/${total}` });
     });
     if (this.stale(this.gen)) return;
 
@@ -150,7 +150,7 @@ export class LinearEngine {
       return;
     }
 
-    this.handlers.onActivity({
+    this.emit({
       phase: 'playing',
       caption: part.description,
       hint: null,
@@ -185,23 +185,23 @@ export class LinearEngine {
 
   private async listenAndGrade(part: LinearPart, gen: number): Promise<void> {
     if (!(await this.deps.mic.hasPermission())) {
-      this.handlers.onActivity({
+      this.emit({
         phase: 'error',
         error: 'Bống cần quyền micro để nghe bé trả lời.',
       });
       return;
     }
 
-    this.handlers.onActivity({ phase: 'listening', hint: part.answer });
+    this.emit({ phase: 'listening', hint: part.answer });
     const answer = await this.deps.mic.listen();
     if (this.stale(gen)) return;
-    this.handlers.onActivity({ hint: null });
+    this.emit({ hint: null });
 
     let result: AnswerResult;
     if (!answer.speechDetected || !answer.text) {
       result = 'silent';
     } else {
-      this.handlers.onActivity({ phase: 'evaluating' });
+      this.emit({ phase: 'evaluating' });
       try {
         const judgement = await checkAnswer({
           text: answer.text,
@@ -209,12 +209,12 @@ export class LinearEngine {
           partId: part.id,
         });
         if (this.stale(gen)) return;
-        if (judgement.reason) this.handlers.onActivity({ notice: judgement.reason });
+        if (judgement.reason) this.emit({ notice: judgement.reason });
         result = judgement.result;
       } catch (error) {
         if (this.stale(gen)) return;
         this.handlers.onLog?.(`chấm điểm lỗi: ${String(error)}`);
-        this.handlers.onActivity({ notice: 'Chưa chấm được câu trả lời, Bống thử lại nhé.' });
+        this.emit({ notice: 'Chưa chấm được câu trả lời, Bống thử lại nhé.' });
         result = 'wrong';
       }
     }
@@ -254,6 +254,32 @@ export class LinearEngine {
     await this.runPart(gen);
   }
 
+  /**
+   * One line saying where in the lesson we are.
+   *
+   * The app reports a *cue* index here, because its v1 flow slices one long mp3
+   * and renders the SRT beside it. This engine plays each part's own clip and
+   * ships no transcript, so a part index is the position that exists — and it
+   * is the more useful one for a tester anyway, since a part is what `Next`
+   * skips.
+   */
+  get debugStatus(): string {
+    const parts = this.deps.lesson.parts;
+    const position = `${Math.min(this.index + 1, parts.length)}/${parts.length}`;
+    const part = parts[this.index];
+    return `phần ${position} · id=${part?.id ?? '-'} · ${
+      part?.interactive ? 'câu hỏi' : 'kể'
+    } · ${this.phase}`;
+  }
+
+  /** The phase last reported — see the note on the graph engine's `emit`. */
+  private phase: ActivityState['phase'] = 'loading';
+
+  private emit(patch: Partial<ActivityState>): void {
+    if (patch.phase) this.phase = patch.phase;
+    this.handlers.onActivity(patch);
+  }
+
   async skipNext(): Promise<void> {
     if (this.disposed) return;
     const gen = ++this.gen;
@@ -269,15 +295,15 @@ export class LinearEngine {
     this.paused = !this.paused;
     if (this.paused) {
       await this.deps.player.pause();
-      this.handlers.onActivity({ phase: 'paused' });
+      this.emit({ phase: 'paused' });
     } else {
       await this.deps.player.resume();
-      this.handlers.onActivity({ phase: 'playing' });
+      this.emit({ phase: 'playing' });
     }
   }
 
   private async complete(): Promise<void> {
-    this.handlers.onActivity({ phase: 'finished', caption: null, hint: null });
+    this.emit({ phase: 'finished', caption: null, hint: null });
     if (this.deps.trackProgress === false) return;
     await saveProgress({
       lessonId: this.deps.lessonId,

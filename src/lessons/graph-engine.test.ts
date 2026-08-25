@@ -471,6 +471,149 @@ describe('read nodes', () => {
   });
 });
 
+describe('skipNext and debugStatus', () => {
+  /** A mic whose turn never ends, so the engine parks on the question. */
+  const pendingMic = () =>
+    ({
+      hasPermission: vi.fn(async () => true),
+      listen: vi.fn(() => new Promise(() => {})),
+      cancel: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => undefined),
+    }) as unknown as LessonMic;
+
+  /** Builds an engine and leaves it waiting on the question at order 2. */
+  async function parkedOnQuestion(nodes?: unknown[]) {
+    const player = fakePlayer();
+    const patches: Partial<ActivityState>[] = [];
+    const graph = parseGraph(
+      {
+        page: 't',
+        nodes: nodes ?? [
+          { order: '1', type: 'dẫn truyện', audio: '1.mp3', next: '2' },
+          {
+            order: '2',
+            type: 'câu hỏi 2',
+            audio: 'q.mp3',
+            branches: [{ branchType: 'phản hồi đúng', order: '2.a', audio: 'ok.mp3' }],
+          },
+          { order: '3', type: 'dẫn truyện', audio: '3.mp3', next: null },
+        ],
+      },
+      {},
+    );
+    const engine = new GraphEngine(
+      {
+        graph,
+        player,
+        mic: pendingMic(),
+        data: fakeData(),
+        lessonId: 'L',
+        trackProgress: false,
+      },
+      { onActivity: (p) => patches.push(p) },
+    );
+    // start() never resolves while the mic is pending — that is the point.
+    void engine.start();
+    await new Promise((r) => setTimeout(r, 0));
+    return { engine, player, patches };
+  }
+
+  // The whole point of the app's implementation, and easy to "simplify" wrong:
+  // a question node has no `next` of its own — each answer branch carries one —
+  // so following `next` here would end the lesson at every question.
+  it('walks the node list by index, not by next', async () => {
+    const { engine, player } = await parkedOnQuestion();
+    expect(engine.currentNode?.order).toBe('2');
+    expect(engine.currentNode?.next).toBeNull();
+
+    player.played.length = 0;
+    await engine.skipNext();
+    expect(player.played.flat()).toEqual(['3.mp3']);
+  });
+
+  it('cancels the open mic and stops the clip before jumping', async () => {
+    const { engine, player } = await parkedOnQuestion();
+    player.stop.mockClear();
+    await engine.skipNext();
+    expect(player.stop).toHaveBeenCalled();
+  });
+
+  it('finishes when skipping past the last node', async () => {
+    const { engine, patches } = await parkedOnQuestion([
+      { order: '1', type: 'dẫn truyện', audio: '1.mp3', next: '2' },
+      { order: '2', type: 'câu hỏi 2', audio: 'q.mp3', branches: [] },
+    ]);
+    await engine.skipNext();
+    expect(patches.some((p) => p.phase === 'finished')).toBe(true);
+  });
+
+  describe('debugStatus', () => {
+    it('reports position, order, type and phase', async () => {
+      const { engine } = await parkedOnQuestion();
+      expect(engine.debugStatus).toBe('node 2/3 · order=2 · type=questionGraded · listening');
+    });
+
+    // The phase in the line has to be the one the screen was last told about,
+    // which is why every emission runs through the same helper.
+    it('tracks the phase through a skip', async () => {
+      const { engine } = await parkedOnQuestion();
+      await engine.skipNext();
+      expect(engine.debugStatus).toContain('order=3');
+      expect(engine.debugStatus).toContain('finished');
+    });
+
+    // A branch order is not in the top-level list, so there is no index to
+    // report. Same in the app. Worth pinning rather than discovering later.
+    it('shows an unknown position while a branch is playing', async () => {
+      const player = fakePlayer();
+      const graph = parseGraph(
+        {
+          page: 't',
+          nodes: [
+            {
+              order: '1',
+              type: 'câu hỏi 2',
+              audio: 'q.mp3',
+              branches: [{ branchType: 'phản hồi đúng', order: '1.a', audio: 'ok.mp3' }],
+            },
+          ],
+        },
+        {},
+      );
+      const engine = new GraphEngine(
+        {
+          graph,
+          player,
+          mic: fakeMic([{ text: 'dog', speechDetected: true }]),
+          data: fakeData(),
+          lessonId: 'L',
+          trackProgress: false,
+        },
+        { onActivity: () => {} },
+      );
+      await engine.start();
+      expect(engine.debugStatus).toContain('node ?/1');
+      expect(engine.debugStatus).toContain('order=1.a');
+    });
+
+    it('survives being read before anything has played', () => {
+      const graph = parseGraph({ page: 't', nodes: [] }, {});
+      const engine = new GraphEngine(
+        {
+          graph,
+          player: fakePlayer(),
+          mic: fakeMic([]),
+          data: fakeData(),
+          lessonId: 'L',
+          trackProgress: false,
+        },
+        { onActivity: () => {} },
+      );
+      expect(engine.debugStatus).toBe('node ?/0 · order=- · type=- · loading');
+    });
+  });
+});
+
 describe('scalarFor', () => {
   const node = parseNode(
     { order: '1', type: 'câu hỏi 3', brain: { instruction: 'x', values_from: 'mau_sac' } },

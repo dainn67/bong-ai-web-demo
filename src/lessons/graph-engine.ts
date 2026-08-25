@@ -119,11 +119,11 @@ export class GraphEngine {
       // No content. Finish quietly rather than showing an error — an empty
       // lesson is a content problem, and there is nothing the child can do.
       this.log('graph rỗng — kết thúc');
-      this.handlers.onActivity({ phase: 'finished' });
+      this.emit({ phase: 'finished' });
       return;
     }
 
-    this.handlers.onActivity({ phase: 'loading' });
+    this.emit({ phase: 'loading' });
 
     // The child's saved values ARE awaited: a `{data.*}` recall can appear in
     // the very first node, and resolving it against an empty store would send
@@ -178,7 +178,7 @@ export class GraphEngine {
 
     this.currentNode = question ?? readNode ?? group[0];
     this.paused = false;
-    this.handlers.onActivity({
+    this.emit({
       phase: 'playing',
       caption: this.captionFor(this.currentNode),
       hint: null,
@@ -242,14 +242,14 @@ export class GraphEngine {
   private async listenAndGrade(node: LessonNode, gen: number): Promise<void> {
     if (!(await this.deps.mic.hasPermission())) {
       // The one real error state. Everything else has a way forward.
-      this.handlers.onActivity({
+      this.emit({
         phase: 'error',
         error: 'Bống cần quyền micro để nghe bé trả lời.',
       });
       return;
     }
 
-    this.handlers.onActivity({
+    this.emit({
       phase: 'listening',
       // The hint appears only now, not while the question was still playing —
       // showing it earlier would read the answer out from under the child.
@@ -258,7 +258,7 @@ export class GraphEngine {
 
     const answer = await this.deps.mic.listen();
     if (this.stale(gen)) return;
-    this.handlers.onActivity({ hint: null });
+    this.emit({ hint: null });
 
     // No branches at all: nothing could consume a grade, so skip the round trip
     // entirely. The child still got their turn to speak.
@@ -285,7 +285,7 @@ export class GraphEngine {
       return;
     }
 
-    this.handlers.onActivity({ phase: 'evaluating' });
+    this.emit({ phase: 'evaluating' });
     try {
       const judgement = await checkAnswer({
         text: answer.text,
@@ -293,12 +293,12 @@ export class GraphEngine {
         partId: node.order,
       });
       if (this.stale(gen)) return;
-      if (judgement.reason) this.handlers.onActivity({ notice: judgement.reason });
+      if (judgement.reason) this.emit({ notice: judgement.reason });
       await this.onResult(node, judgement.result, gen);
     } catch (error) {
       if (this.stale(gen)) return;
       this.log(`chấm điểm lỗi: ${String(error)}`);
-      this.handlers.onActivity({ notice: 'Chưa chấm được câu trả lời, Bống thử lại nhé.' });
+      this.emit({ notice: 'Chưa chấm được câu trả lời, Bống thử lại nhé.' });
       // An unreachable grader reads as wrong. Stalling would be worse.
       await this.onResult(node, 'wrong', gen);
     }
@@ -320,7 +320,7 @@ export class GraphEngine {
       return;
     }
 
-    this.handlers.onActivity({ phase: 'evaluating' });
+    this.emit({ phase: 'evaluating' });
     let routing: Awaited<ReturnType<typeof classifyAnswer>> | null = null;
     try {
       routing = await classifyAnswer({ brain, childText: text });
@@ -509,14 +509,48 @@ export class GraphEngine {
     await this.advanceToOrder(nextOrder, gen);
   }
 
+  /**
+   * One line saying where in the lesson we are.
+   *
+   * Mirrors the app's `debugStatus`: `node 3/10 · order=7 · type=… · phase=…`.
+   *
+   * The position is an index into the **top-level** node list. A branch order
+   * (`2.a`) is not in that list, so while an answer branch plays the position
+   * reads `?` and the order names the branch. That is the app's behaviour too,
+   * and it is the honest answer — a branch genuinely has no position in the
+   * list to point at.
+   */
+  get debugStatus(): string {
+    const nodes = this.deps.graph.nodes;
+    const node = this.currentNode;
+    const index = node ? nodes.findIndex((candidate) => candidate.order === node.order) : -1;
+    const position = index >= 0 ? `${index + 1}/${nodes.length}` : `?/${nodes.length}`;
+    return `node ${position} · order=${node?.order ?? '-'} · type=${node?.type ?? '-'} · ${this.phase}`;
+  }
+
+  /** The phase last reported, so {@link debugStatus} can name it. */
+  private phase: ActivityState['phase'] = 'loading';
+
+  /**
+   * Reports a change to the UI, remembering the phase on the way past.
+   *
+   * Every emission goes through here rather than calling the handler directly,
+   * so the phase `debugStatus` prints is by construction the one the screen was
+   * last told about — a second field updated alongside would eventually drift.
+   */
+  private emit(patch: Partial<ActivityState>): void {
+    if (patch.phase) this.phase = patch.phase;
+    this.handlers.onActivity(patch);
+  }
+
   async togglePause(): Promise<void> {
     this.paused = !this.paused;
     if (this.paused) {
       await this.deps.player.pause();
-      this.handlers.onActivity({ phase: 'paused' });
+      this.emit({ phase: 'paused' });
     } else {
       await this.deps.player.resume();
-      this.handlers.onActivity({ phase: 'playing' });
+      this.emit({ phase: 'playing' });
     }
   }
 
@@ -543,7 +577,7 @@ export class GraphEngine {
 
   private async complete(): Promise<void> {
     this.log('hoàn thành bài học');
-    this.handlers.onActivity({ phase: 'finished', caption: null, hint: null });
+    this.emit({ phase: 'finished', caption: null, hint: null });
     if (this.deps.trackProgress === false) return;
     await saveProgress({
       lessonId: this.deps.lessonId,

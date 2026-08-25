@@ -382,3 +382,35 @@ rather than as "there is more below".
 **Removed:** the status LED and the speaker grille. Both were positioned on the
 shell but landed on the glass, where they read as an unexplained orange dot and
 a row of page-indicator dots rather than as moulded plastic.
+
+
+---
+
+## Node skip + status readout (ported from the app)
+
+The app's `debugSkipNext` / `debugStatus`, gated there behind `isLocalDebugMode`
+and drawn over the lesson. Here they live in the **dev drawer** — real firmware
+has no skip button and no position readout, so putting one on the glass would
+simulate something that cannot exist. The drawer sits beside the badge, not over
+it, so the lesson stays watchable.
+
+**The load-bearing detail is that skip walks the node list by *index*, not by
+`next`.** A question node has no `next` of its own — each answer branch carries
+one — so following `next` would end the lesson at every question. Pinned by a
+test, and mutation-checked: replacing the index walk with `node.next` fails it.
+
+`debugStatus` reads `node 2/3 · order=2 · type=questionGraded · listening`.
+
+Two honest limits, both shared with the app:
+
+- While an **answer branch** plays, `currentNode` is the branch node. A branch
+  order (`2.a`) is not in the top-level list, so the position reads `?` and the
+  order names the branch. A branch genuinely has no position in that list.
+- The **linear** engine reports a part index (`phần 2/9`), not a cue index. The
+  app counts cues there because its v1 flow slices one long mp3 and renders the
+  SRT beside it; this engine plays each part's own clip and ships no transcript,
+  so a part is the unit that exists — and it is what `Next` skips anyway.
+
+Every engine emission now routes through one `emit()` helper that records the
+phase on the way past, so the phase the status prints is by construction the one
+the screen was last told about. A second field updated alongside would drift.

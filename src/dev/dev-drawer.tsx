@@ -12,6 +12,7 @@ import { AuthPanel } from './auth-panel';
 import { ConnectionPanel } from './connection-panel';
 import { AudioPanel } from './audio-panel';
 import { HardwarePanel } from './hardware-panel';
+import { LessonPanel } from './lesson-panel';
 import { PacketInspector } from './packet-inspector';
 
 interface DevDrawerProps {
@@ -58,6 +59,8 @@ export function DevDrawer({ open, onClose }: DevDrawerProps) {
           </button>
         </header>
 
+        {/* First, and only while a lesson runs: it is the thing being watched. */}
+        <LessonPanel />
         <ConnectionPanel />
         <AuthPanel />
         <HardwarePanel />

@@ -125,6 +125,16 @@ export class LessonRunner {
     await this.engine?.skipNext();
   }
 
+  /** Where the lesson is, for the dev drawer. Null before an engine exists. */
+  get debugStatus(): string | null {
+    return this.engine?.debugStatus ?? null;
+  }
+
+  /** The raw metadata, so a tester can open what the engine is reading. */
+  get metadataUrl(): string {
+    return this.summary.metadataUrl;
+  }
+
   setVolume(volume: number): void {
     this.player.setVolume(volume);
   }
