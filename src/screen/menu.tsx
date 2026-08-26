@@ -47,7 +47,9 @@ export function ScreenMenu() {
           {view.screen === 'picker'
             ? view.category === 'stories'
               ? 'Truyện'
-              : 'Bài học'
+              : view.category === 'topics'
+                ? 'Chủ đề'
+                : 'Bài học'
             : 'Chọn chế độ'}
         </p>
 
@@ -106,7 +108,7 @@ function renderList({
   return rows.map((entry) => (
     <Row
       key={entry.id}
-      icon={entry.category === 'stories' ? '📖' : '✏️'}
+      icon={entry.category === 'stories' ? '📖' : entry.category === 'topics' ? '🌟' : '✏️'}
       title={entry.title}
       hint={entry.description}
       onSelect={() => onSelect(entry)}

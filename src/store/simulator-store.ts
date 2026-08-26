@@ -20,7 +20,7 @@ import {
 } from '../hardware/button-press';
 import { MicCapture } from '../audio/mic-capture';
 import { OpusPlayer } from '../audio/opus-player';
-import type { IncomingMessage } from '../protocol/message-types';
+import { toDisplayCommand, type IncomingMessage } from '../protocol/message-types';
 import type { ConnectionStatus } from '../protocol/ws-client';
 import { WsClient } from '../protocol/ws-client';
 import {
@@ -39,8 +39,8 @@ import {
   type MenuState,
 } from '../screen/menu-state';
 import { IDLE_ACTIVITY, type ActivityState } from '../screen/activity-state';
-import { fetchCatalog, type LessonSummary } from '../lessons/catalog';
-import { loadStory, StoryPlayer } from '../content/story';
+import { parseCatalog, type LessonSummary } from '../lessons/catalog';
+import { StoryPlayer } from '../content/story';
 import { LessonRunner } from '../lessons/lesson-runner';
 
 export interface PacketLogEntry {
@@ -63,7 +63,7 @@ const MAX_LOG_ENTRIES = 200;
 const ECHO_HANGOVER_MS = 600;
 
 /** Mic loudness that counts as the child talking over the reply. */
-const BARGE_IN_LEVEL = 0.35;
+const BARGE_IN_LEVEL = 0.65;
 
 /** Ignore repeat barge-ins inside this window, so one sentence cuts in once. */
 const BARGE_IN_DEBOUNCE_MS = 1500;
@@ -135,6 +135,9 @@ interface SimulatorState {
   lessonDebug: string | null;
   /** The same position, short enough for the glass: `2/3`. */
   lessonPosition: string | null;
+  childName: string | null;
+  loginModalOpen: boolean;
+  setLoginModalOpen: (open: boolean) => void;
 
   updateConfig: (patch: Partial<DeviceConfig>) => void;
   connect: () => void;
@@ -250,6 +253,9 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   activity: IDLE_ACTIVITY,
   lessonDebug: null,
   lessonPosition: null,
+  childName: null,
+  loginModalOpen: false,
+  setLoginModalOpen: (open) => set({ loginModalOpen: open }),
 
   updateConfig: (patch) => {
     const config = { ...get().config, ...patch };
@@ -449,11 +455,17 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     set({ hardware: { ...get().hardware, telemetry: 'sending' } });
     void sendTelemetry(config, reading)
       .then(() => set({ hardware: { ...get().hardware, telemetry: 'ok', telemetryError: null } }))
-      .catch((error) =>
+      .catch((error) => {
+        const errStr = String(error?.message || error);
         set({
-          hardware: { ...get().hardware, telemetry: 'error', telemetryError: String(error) },
-        }),
-      );
+          hardware: { ...get().hardware, telemetry: 'error', telemetryError: errStr },
+        });
+        if (errStr.includes('DEVICE_NOT_FOUND') || errStr.includes('404')) {
+          if (!get().loginModalOpen) {
+            set({ loginModalOpen: true });
+          }
+        }
+      });
   },
 
   pressBack: () => {
@@ -505,20 +517,16 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     const menu = reduceMenu(state.menu, action, rowCount);
     if (menu === state.menu) return;
     set({ menu });
-    // Opening the menu is the moment the catalog is first wanted. Fetching it
-    // at boot would spend a request on every page load, including the ones
-    // that only ever exercise the protocol.
-    if (action.type === 'open' && state.catalog.length === 0) void get().loadCatalog();
+    // If opening the menu and socket is disconnected, connect to receive content_catalog
+    if (action.type === 'open' && state.catalog.length === 0 && get().status === 'disconnected') {
+      get().connect();
+    }
   },
 
   loadCatalog: async () => {
-    if (get().catalogLoading) return;
-    set({ catalogLoading: true, catalogError: null });
-    try {
-      const catalog = await fetchCatalog();
-      set({ catalog, catalogLoading: false });
-    } catch (error) {
-      set({ catalogLoading: false, catalogError: describeError(error) });
+    // Catalog is delivered exclusively via WebSocket content_catalog frame upon connect.
+    if (get().catalog.length === 0 && get().status === 'disconnected') {
+      get().connect();
     }
   },
 
@@ -537,11 +545,16 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
   startEntry: (entry) => {
     if (entry.category === 'stories') void startStory(set, get, entry);
+    else if (entry.category === 'topics') void startTopic(set, get, entry);
     else void startLesson(set, get, entry);
   },
 
   exitActivity: () => {
+    const { activity } = get();
     stopActivity(set, get);
+    if (activity.kind === 'story') client?.stopStory();
+    else if (activity.kind === 'lesson') client?.stopLesson();
+    client?.abort('exit_activity');
     set({
       activity: IDLE_ACTIVITY,
       menu: INITIAL_MENU_STATE,
@@ -552,17 +565,18 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
   toggleActivityPause: () => {
     const { activity } = get();
-    if (activity.kind === 'story' && story) {
-      if (story.paused) {
-        void story.resume();
-        set({ activity: { ...activity, phase: 'playing' } });
-      } else {
-        story.pause();
-        set({ activity: { ...activity, phase: 'paused' } });
-      }
-      return;
+    if (!activity.kind) return;
+    if (activity.phase === 'paused') {
+      void ensurePlayer(set, get).resume();
+      if (activity.kind === 'story') client?.resumeStory();
+      else client?.resumeLesson();
+      set({ activity: { ...activity, phase: 'playing' } });
+    } else if (activity.phase === 'playing' || activity.phase === 'listening') {
+      if (activity.kind === 'story') client?.pauseStory();
+      else client?.pauseLesson();
+      player?.stop();
+      set({ activity: { ...activity, phase: 'paused' } });
     }
-    if (activity.kind === 'lesson') void lesson?.togglePause();
   },
 
   setActivity: (patch) => {
@@ -590,10 +604,6 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 type Setter = (partial: Partial<SimulatorState>) => void;
 type Getter = () => SimulatorState;
 
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /**
  * Tears down whatever owns the speaker.
  *
@@ -616,69 +626,46 @@ function stopActivity(set: Setter, get: Getter): void {
   set({ micLevel: 0 });
 }
 
-/**
- * Starts a story: metadata, transcript, then play.
- *
- * The socket is dropped first. A story is the badge playing a file to itself —
- * leaving the backend connected would have Bống talking over the narrator.
- */
+/** Starts a story via server WebSocket stream. */
 async function startStory(set: Setter, get: Getter, entry: LessonSummary): Promise<void> {
   stopActivity(set, get);
-  get().disconnect();
-
   set({
     menu: INITIAL_MENU_STATE,
-    activity: { ...IDLE_ACTIVITY, kind: 'story', title: entry.title, phase: 'loading' },
+    activity: { ...IDLE_ACTIVITY, kind: 'story', title: entry.title, phase: 'playing' },
   });
 
-  activityFetch = new AbortController();
-  const { signal } = activityFetch;
-
-  try {
-    const loaded = await loadStory(entry.metadataUrl, signal);
-    if (signal.aborted) return;
-
-    story = new StoryPlayer(loaded, {
-      onCue: (_index, text) => {
-        // Between cues the caption holds rather than blanking. A line that
-        // vanishes for the pause between sentences flickers.
-        if (text !== null) get().setActivity({ caption: text });
-      },
-      onEnded: () => get().setActivity({ phase: 'finished' }),
-      onError: (message) => get().setActivity({ phase: 'error', error: message }),
-    });
-    story.setVolume(get().volume);
-
-    set({
-      activity: { ...get().activity, title: loaded.title, phase: 'playing' },
-    });
-    await story.play();
-  } catch (error) {
-    if (signal.aborted) return;
-    get().setActivity({ phase: 'error', error: describeError(error) });
+  if (get().status === 'disconnected') {
+    await get().connect();
   }
+  client?.startStory(entry.id);
 }
 
-/** Starts a lesson. The engine lives in `lessons/`; this only owns the wiring. */
+/** Starts a lesson via server WebSocket stream. */
 async function startLesson(set: Setter, get: Getter, entry: LessonSummary): Promise<void> {
   stopActivity(set, get);
-  get().disconnect();
-
   set({
     menu: INITIAL_MENU_STATE,
-    activity: { ...IDLE_ACTIVITY, kind: 'lesson', title: entry.title, phase: 'loading' },
+    activity: { ...IDLE_ACTIVITY, kind: 'lesson', title: entry.title, phase: 'playing' },
   });
 
-  lesson = new LessonRunner(entry, {
-    onActivity: (patch) => get().setActivity(patch),
-    getVolume: () => get().volume,
-  });
-
-  try {
-    await lesson.start();
-  } catch (error) {
-    get().setActivity({ phase: 'error', error: describeError(error) });
+  if (get().status === 'disconnected') {
+    await get().connect();
   }
+  client?.startLesson(entry.id);
+}
+
+/** Starts a topic conversation via server WebSocket stream. */
+async function startTopic(set: Setter, get: Getter, entry: LessonSummary): Promise<void> {
+  stopActivity(set, get);
+  set({
+    menu: INITIAL_MENU_STATE,
+    activity: { ...IDLE_ACTIVITY, kind: 'lesson', title: entry.title, phase: 'playing' },
+  });
+
+  if (get().status === 'disconnected') {
+    await get().connect();
+  }
+  client?.startTopic(entry.id);
 }
 
 function ensurePlayer(set: Setter, get: Getter): OpusPlayer {
@@ -723,6 +710,58 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
   const face = reduceFace(get().face, message);
   set({ face, sessionId: client?.currentSessionId ?? null });
 
+  if (message.type === 'content_catalog') {
+    const catalog = parseCatalog(message);
+    set({
+      catalog,
+      catalogLoading: false,
+      catalogError: null,
+      childName: message.child_name || get().childName,
+    });
+    return;
+  }
+
+  if (message.type === 'activity_state') {
+    const actState = message.state;
+    if (actState === 'paused') {
+      player?.stop();
+      set({ activity: { ...get().activity, phase: 'paused' } });
+    } else if (actState === 'playing') {
+      set({ activity: { ...get().activity, phase: 'playing' } });
+    } else if (actState === 'idle') {
+      stopActivity(set, get);
+      set({ activity: IDLE_ACTIVITY, menu: INITIAL_MENU_STATE });
+    }
+    return;
+  }
+
+  // Update activity state based on server events during streaming
+  const { activity } = get();
+  if (activity.kind) {
+    if (message.type === 'tts' && message.text) {
+      set({
+        activity: { ...activity, caption: message.text, phase: 'playing' },
+      });
+    } else if (message.type === 'stt' && message.text) {
+      set({
+        activity: { ...activity, notice: `Bé: "${message.text}"` },
+      });
+    } else if (message.type === 'listen') {
+      if (message.state === 'start') {
+        set({ activity: { ...activity, phase: 'listening' } });
+      } else if (message.state === 'stop') {
+        set({ activity: { ...activity, phase: 'evaluating' } });
+      }
+    }
+
+    const displayCmd = toDisplayCommand(message);
+    if (displayCmd?.kind === 'image') {
+      set({ activity: { ...get().activity, imageUrl: displayCmd.url } });
+    } else if (displayCmd?.kind === 'clear') {
+      set({ activity: { ...get().activity, imageUrl: null } });
+    }
+  }
+
   if (message.type === 'tts' && message.state === 'sentence_start') {
     // The decoder's synthesised timestamps restart with every sentence, or a
     // long reply drifts out of sync and goes silent partway through.
@@ -731,12 +770,6 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
 
   // `tts.stop` is the one transition that needs a clock: the face holds its
   // expression briefly, then settles.
-  //
-  // Only speech frames touch the timer. Clearing it on *every* message was a
-  // bug: any frame arriving inside the one-second linger — a heartbeat, an
-  // `iot` command, a `display` update — cancelled the pending drop and left the
-  // face stuck mid-expression until the next reply. Rare at chat frame rates,
-  // routine once a lesson is pushing frames through the same path.
   if (message.type !== 'tts') return;
   clearIdleTimer();
   if (message.state === 'stop') {

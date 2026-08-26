@@ -90,6 +90,7 @@ describe('categoryFor', () => {
   it('maps modes to catalog buckets', () => {
     expect(categoryFor('lesson')).toBe('learning');
     expect(categoryFor('story')).toBe('stories');
+    expect(categoryFor('topic')).toBe('topics');
     expect(categoryFor('freetalk')).toBeNull();
   });
 });
@@ -98,6 +99,15 @@ describe('rowsFor', () => {
   it('filters the catalog to the open picker', () => {
     const picker = reduceMenu(root, { type: 'choose-mode', mode: 'story' });
     expect(rowsFor(picker, CATALOG).map((r) => r.id)).toEqual(['S_001', 'S_002']);
+  });
+
+  it('filters topics properly', () => {
+    const topicCatalog: LessonSummary[] = [
+      ...CATALOG,
+      entry('animals-5', 'topics'),
+    ];
+    const picker = reduceMenu(root, { type: 'choose-mode', mode: 'topic' });
+    expect(rowsFor(picker, topicCatalog).map((r) => r.id)).toEqual(['animals-5']);
   });
 
   it('is empty outside a picker', () => {

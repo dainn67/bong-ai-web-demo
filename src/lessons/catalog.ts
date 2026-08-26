@@ -9,9 +9,7 @@
 /** Where the proxy puts the static CDN. See the `/cdn` route in vite.config. */
 export const CDN_BASE = '/cdn';
 
-const CATALOG_URL = `${CDN_BASE}/lessions/lessions.json`;
-
-export type LessonCategory = 'stories' | 'learning';
+export type LessonCategory = 'stories' | 'learning' | 'topics';
 
 export interface LessonSummary {
   id: string;
@@ -22,51 +20,81 @@ export interface LessonSummary {
   metadataUrl: string;
   /** Cover art, or null when the entry ships none. */
   coverUrl: string | null;
+  slug?: string;
+  targetWords?: string;
+  welcomeMessage?: string;
 }
 
 interface CatalogEntry {
   id?: unknown;
+  slug?: unknown;
   title?: unknown;
   description?: unknown;
+  target_words?: unknown;
+  welcome_message?: unknown;
   cover_url?: unknown;
   data_url?: unknown;
 }
 
-/**
- * Fetches and flattens the catalog.
- *
- * Entries missing an id or a `data_url` are dropped rather than throwing: one
- * malformed row in a hand-edited file should cost that row, not the menu.
- */
-export async function fetchCatalog(signal?: AbortSignal): Promise<LessonSummary[]> {
-  const response = await fetch(CATALOG_URL, { signal });
-  if (!response.ok) throw new Error(`Không tải được danh mục (HTTP ${response.status})`);
-  const json: unknown = await response.json();
-  return parseCatalog(json);
-}
-
-/** Pure half of {@link fetchCatalog}, so the shape handling is testable. */
+/** Parses the WebSocket `content_catalog` frame payload into flattened LessonSummary items. */
 export function parseCatalog(json: unknown): LessonSummary[] {
   if (!isRecord(json)) return [];
   const out: LessonSummary[] = [];
 
-  for (const category of ['stories', 'learning'] as const) {
-    const rows = json[category];
-    if (!Array.isArray(rows)) continue;
-    for (const row of rows) {
-      const summary = toSummary(row, category);
+  // Support both WebSocket `content_catalog` schema (`lessons`, `stories`, `topics`)
+  // and static CDN `lessions.json` schema (`learning`, `stories`).
+  const lessonsRows = json.lessons || json.learning;
+  if (Array.isArray(lessonsRows)) {
+    for (const row of lessonsRows) {
+      const summary = toSummary(row, 'learning');
       if (summary) out.push(summary);
     }
   }
+
+  const storiesRows = json.stories;
+  if (Array.isArray(storiesRows)) {
+    for (const row of storiesRows) {
+      const summary = toSummary(row, 'stories');
+      if (summary) out.push(summary);
+    }
+  }
+
+  const topicsRows = json.topics;
+  if (Array.isArray(topicsRows)) {
+    for (const row of topicsRows) {
+      const summary = toSummary(row, 'topics');
+      if (summary) out.push(summary);
+    }
+  }
+
   return out;
 }
 
 function toSummary(row: unknown, category: LessonCategory): LessonSummary | null {
   if (!isRecord(row)) return null;
   const entry = row as CatalogEntry;
-  const id = asString(entry.id);
+  const id = asString(entry.id) || asString(entry.slug);
+  if (!id) return null;
+
+  if (category === 'topics') {
+    const title = asString(entry.title) || id;
+    const desc = asString(entry.description) || asString(entry.target_words) || '';
+    const cover = asString(entry.cover_url);
+    return {
+      id,
+      title,
+      description: desc,
+      category: 'topics',
+      metadataUrl: '',
+      coverUrl: cover ? (cover.startsWith('http') ? cover : cdnUrl(cover)) : null,
+      slug: asString(entry.slug) || id,
+      targetWords: asString(entry.target_words) || '',
+      welcomeMessage: asString(entry.welcome_message) || '',
+    };
+  }
+
   const dataUrl = asString(entry.data_url);
-  if (!id || !dataUrl) return null;
+  if (!dataUrl) return null;
 
   return {
     id,

@@ -30,6 +30,8 @@ export interface ActivityState {
   phase: ActivityPhase;
   /** The line being spoken right now — the caption on the glass. */
   caption: string | null;
+  /** Image illustration for the current node/scene, or null. */
+  imageUrl?: string | null;
   /**
    * The expected answer, shown only while the mic is open.
    *
@@ -47,6 +49,7 @@ export const IDLE_ACTIVITY: ActivityState = {
   title: '',
   phase: 'loading',
   caption: null,
+  imageUrl: null,
   hint: null,
   notice: null,
   error: null,

@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { RoundScreen } from './screen/round-screen';
 import { BongBubble } from './screen/speech-bubble';
 import { TalkBar } from './dev/talk-bar';
 import { DevDrawer } from './dev/dev-drawer';
+import { LoginModal } from './dev/login-modal';
 import { useSimulatorStore } from './store/simulator-store';
+import { fetchProfile, hasStoredSession, type Account } from './api/auth-client';
 
 /**
  * The badge, centre stage.
@@ -14,10 +16,11 @@ import { useSimulatorStore } from './store/simulator-store';
  */
 export default function App() {
   const [devOpen, setDevOpen] = useState(false);
+  const setLoginOpen = useSimulatorStore((state) => state.setLoginModalOpen);
 
   return (
     <main className="flex min-h-screen flex-col">
-      <Header onOpenDev={() => setDevOpen(true)} />
+      <Header onOpenDev={() => setDevOpen(true)} onOpenLogin={() => setLoginOpen(true)} />
 
       <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-12">
         <RoundScreen />
@@ -26,11 +29,25 @@ export default function App() {
       </div>
 
       <DevDrawer open={devOpen} onClose={() => setDevOpen(false)} />
+      <LoginModal />
     </main>
   );
 }
 
-function Header({ onOpenDev }: { onOpenDev: () => void }) {
+function Header({ onOpenDev, onOpenLogin }: { onOpenDev: () => void; onOpenLogin: () => void }) {
+  const [account, setAccount] = useState<Account | null>(null);
+  const loginModalOpen = useSimulatorStore((state) => state.loginModalOpen);
+
+  useEffect(() => {
+    if (hasStoredSession()) {
+      void fetchProfile()
+        .then(setAccount)
+        .catch(() => setAccount(null));
+    } else {
+      setAccount(null);
+    }
+  }, [loginModalOpen]);
+
   return (
     <header className="flex items-center justify-between px-6 py-5">
       <div className="flex items-center gap-2.5">
@@ -44,6 +61,19 @@ function Header({ onOpenDev }: { onOpenDev: () => void }) {
       </div>
 
       <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onOpenLogin}
+          className={`flex items-center gap-1.5 rounded-blob px-3.5 py-1.5 text-xs font-bold transition shadow-sm ${
+            account
+              ? 'bg-mint-400/15 text-mint-500 hover:bg-mint-400/25'
+              : 'bg-coral-500 text-white shadow-[0_4px_12px_-4px_rgba(255,107,74,0.7)] hover:bg-coral-600 active:scale-95'
+          }`}
+        >
+          <span>{account ? '👨‍👩‍👧' : '🔑'}</span>
+          <span>{account ? (account.child?.name ? `Bé ${account.child.name}` : account.name || 'Phụ huynh') : 'Đăng nhập'}</span>
+        </button>
+
         <StatusPill />
         <button
           type="button"

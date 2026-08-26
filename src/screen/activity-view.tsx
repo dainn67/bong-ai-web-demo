@@ -38,6 +38,15 @@ export function ActivityView() {
           </p>
         ) : (
           <>
+            {activity.imageUrl && (
+              <div className="my-1 flex max-h-24 w-full items-center justify-center overflow-hidden rounded-xl border border-cream-200/20 bg-ink-900/40">
+                <img
+                  src={activity.imageUrl}
+                  alt=""
+                  className="max-h-24 max-w-full object-contain"
+                />
+              </div>
+            )}
             {activity.caption && (
               <p className="line-clamp-4 text-[13px] font-semibold leading-snug text-cream-100">
                 {activity.caption}

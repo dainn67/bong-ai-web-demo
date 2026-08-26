@@ -112,6 +112,25 @@ export interface DisplayImageIn {
   url?: string | null;
 }
 
+export interface ImageIn {
+  type: 'image';
+  url?: string | null;
+}
+
+export interface GifIn {
+  type: 'gif';
+  url?: string | null;
+}
+
+export interface CustomIn {
+  type: 'custom';
+  payload?: {
+    action?: string;
+    image_url?: string;
+    [key: string]: unknown;
+  };
+}
+
 /** What a display frame resolves to once the spelling is normalised away. */
 export type DisplayCommand =
   | { kind: 'expression'; name: Expression }
@@ -127,6 +146,17 @@ export function toDisplayCommand(message: IncomingMessage): DisplayCommand | nul
       (message as DisplayExpressionIn).name,
       (message as DisplayImageIn).url,
     );
+  }
+  if (message.type === 'image') {
+    const url = (message as ImageIn).url;
+    return url ? { kind: 'image', url } : { kind: 'clear' };
+  }
+  if (message.type === 'custom') {
+    const p = (message as CustomIn).payload;
+    if (p && (p.action === 'show_image' || p.image_url)) {
+      const url = p.image_url;
+      return url ? { kind: 'image', url } : { kind: 'clear' };
+    }
   }
   if (message.type === 'display') return fromParts(message.action, message.name, message.url);
   return null;
@@ -165,18 +195,59 @@ export interface PongIn {
   type: 'pong';
 }
 
+export interface CatalogItemIn {
+  id: string;
+  title: string;
+  description?: string;
+  cover_url?: string;
+  data_url?: string;
+  slug?: string;
+  target_words?: string;
+  welcome_message?: string;
+  category?: string;
+  type?: string;
+}
+
+/** Content catalog delivered by backend over WebSocket on connection. */
+export interface ContentCatalogIn {
+  type: 'content_catalog';
+  version?: number;
+  child_name?: string;
+  lessons?: CatalogItemIn[];
+  stories?: CatalogItemIn[];
+  topics?: CatalogItemIn[];
+}
+
+export interface ListenIn {
+  type: 'listen';
+  state?: 'start' | 'stop' | 'detect';
+  text?: string;
+}
+
+export interface ActivityStateIn {
+  type: 'activity_state';
+  state?: 'playing' | 'paused' | 'idle';
+  session_id?: string;
+}
+
 export type IncomingMessage =
   | HelloIn
   | SttIn
   | LlmIn
   | TtsIn
+  | ListenIn
+  | ActivityStateIn
   | DisplayIn
   | DisplayExpressionIn
   | DisplayImageIn
+  | ImageIn
+  | GifIn
+  | CustomIn
   | IotIn
   | McpIn
   | ServerIn
-  | PongIn;
+  | PongIn
+  | ContentCatalogIn;
 
 /**
  * Parses a JSON text frame into a typed message.

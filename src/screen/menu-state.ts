@@ -15,11 +15,11 @@
 import type { LessonCategory, LessonSummary } from '../lessons/catalog';
 
 /** What the child can start from the menu. */
-export type DeviceMode = 'freetalk' | 'lesson' | 'story';
+export type DeviceMode = 'freetalk' | 'lesson' | 'story' | 'topic';
 
 export type MenuView =
   | { screen: 'closed' }
-  /** The three modes. */
+  /** The four modes. */
   | { screen: 'root' }
   /** A scrollable list of catalog entries for one category. */
   | { screen: 'picker'; category: LessonCategory };
@@ -40,12 +40,13 @@ export type MenuAction =
   | { type: 'choose-mode'; mode: DeviceMode };
 
 /** The modes in the order they appear, so the UI and the reducer agree. */
-export const MODE_ORDER: readonly DeviceMode[] = ['freetalk', 'lesson', 'story'] as const;
+export const MODE_ORDER: readonly DeviceMode[] = ['freetalk', 'lesson', 'story', 'topic'] as const;
 
 export const MODE_LABELS: Record<DeviceMode, { title: string; hint: string; icon: string }> = {
   freetalk: { title: 'Trò chuyện', hint: 'Nói chuyện thoải mái với Bống', icon: '💬' },
   lesson: { title: 'Bài học', hint: 'Học tiếng Anh cùng Bống', icon: '📚' },
   story: { title: 'Đọc truyện', hint: 'Nghe Bống kể chuyện', icon: '🎧' },
+  topic: { title: 'Chủ đề', hint: 'Khám phá theo chủ đề', icon: '🌟' },
 };
 
 /** Which catalog category a mode picks from, or null when it needs no picking. */
@@ -55,6 +56,8 @@ export function categoryFor(mode: DeviceMode): LessonCategory | null {
       return 'learning';
     case 'story':
       return 'stories';
+    case 'topic':
+      return 'topics';
     case 'freetalk':
       return null;
   }

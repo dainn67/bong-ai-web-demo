@@ -4,6 +4,9 @@ import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
+const cdnProxyTarget = process.env.VITE_CDN_PROXY_TARGET || 'http://localhost:8000';
+const isLocalBackend = cdnProxyTarget.includes('localhost') || cdnProxyTarget.includes('127.0.0.1');
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
@@ -11,7 +14,7 @@ export default defineConfig({
     // Four upstreams, four different CORS answers — measured, not assumed:
     //
     //   pub-*.r2.dev (lesson mp3s)  Access-Control-Allow-Origin: *  → NOT proxied
-    //   static-bongai (metadata)    no CORS headers at all          → proxied
+    //   local backend / CDN         local DB on local / CDN on prod → proxied
     //   files.bcserver (story mp3)  no CORS headers at all          → proxied
     //   bong-api (auth + lessons)   allows :3000/:5173, not :5180   → proxied
     //   mini-3000 (FunASR STT)      no CORS for :5180               → proxied
@@ -24,11 +27,11 @@ export default defineConfig({
     // there, or the built bundle starts answering lesson fetches with
     // `index.html` and every `response.json()` fails on the doctype.
     proxy: {
-      '/api': { target: 'https://bong-api.bcserver.xyz', changeOrigin: true },
+      '/api': { target: process.env.VITE_API_URL || 'http://localhost:8000', changeOrigin: true },
       '/cdn': {
-        target: 'https://static-bongai.bcserver.xyz',
+        target: cdnProxyTarget,
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/cdn/, ''),
+        rewrite: isLocalBackend ? undefined : (path) => path.replace(/^\/cdn/, ''),
       },
       '/stt': {
         target: 'https://mini-3000.bcserver.xyz',
@@ -36,9 +39,8 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/stt/, ''),
       },
       '/media': {
-        target: 'https://files.bcserver.xyz',
+        target: 'http://localhost:8003',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/media/, ''),
       },
     },
   },

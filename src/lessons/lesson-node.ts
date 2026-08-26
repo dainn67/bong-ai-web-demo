@@ -72,6 +72,7 @@ export interface LessonNode {
   /** Expected answer for câu hỏi 1/2 — a UI hint only, never sent anywhere. */
   answer: string | null;
   text: string | null;
+  imageUrl: string | null;
 
   brain: LessonBrain | null;
   save: LessonSave | null;
@@ -201,6 +202,7 @@ export function parseNode(raw: unknown, context: ParseContext): LessonNode | nul
     next: asString(raw.next),
     answer: asString(raw.answer),
     text: asString(raw.text ?? raw.transcript ?? raw.script ?? raw.content),
+    imageUrl: asString(raw.image ?? raw.image_url ?? raw.imageUrl),
 
     brain: parseBrain(raw.brain),
     save: parseSave(raw.save),

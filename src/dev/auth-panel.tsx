@@ -21,6 +21,7 @@ import {
   logout,
   type Account,
 } from '../api/auth-client';
+import { loadConfig } from '../config/device-config';
 
 export function AuthPanel() {
   const [account, setAccount] = useState<Account | null>(null);
@@ -46,7 +47,8 @@ export function AuthPanel() {
     setBusy(true);
     setError(null);
     try {
-      setAccount(await login(phone.trim(), password));
+      const config = loadConfig();
+      setAccount(await login(phone.trim(), password, config.macAddress));
       setPassword('');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));

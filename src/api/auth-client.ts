@@ -38,10 +38,14 @@ interface LoginResponse {
   user?: unknown;
 }
 
-export async function login(phone: string, password: string): Promise<Account> {
+export async function login(phone: string, password: string, deviceId?: string): Promise<Account> {
+  const body: Record<string, unknown> = { phone, password };
+  if (deviceId) {
+    body.device_id = deviceId;
+  }
   const json = await request<LoginResponse>('/auth/login', {
     method: 'POST',
-    body: { phone, password },
+    body,
     anonymous: true,
   });
 

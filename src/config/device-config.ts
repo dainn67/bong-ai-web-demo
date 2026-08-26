@@ -72,7 +72,13 @@ export function loadConfig(): DeviceConfig {
     if (!raw) return DEFAULT_CONFIG;
     // Spread over the defaults so a config saved by an older build, missing
     // keys added since, still loads instead of crashing the app on boot.
-    return { ...DEFAULT_CONFIG, ...(JSON.parse(raw) as Partial<DeviceConfig>) };
+    const parsed = JSON.parse(raw) as Partial<DeviceConfig>;
+    const cfg = { ...DEFAULT_CONFIG, ...parsed };
+    // Auto-migrate legacy 8085 port to 8185
+    if (cfg.fallbackWsUrl && cfg.fallbackWsUrl.includes(':8085')) {
+      cfg.fallbackWsUrl = cfg.fallbackWsUrl.replace(':8085', ':8185');
+    }
+    return cfg;
   } catch {
     return DEFAULT_CONFIG;
   }

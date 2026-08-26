@@ -159,6 +159,51 @@ export class WsClient {
     this.sendRaw({ type: 'error', code, message });
   }
 
+  /** Start a lesson session via server streaming. */
+  startLesson(lessonId: string): void {
+    this.sendRaw({ type: 'start_lesson', lesson_id: lessonId });
+  }
+
+  /** Pause active lesson session. */
+  pauseLesson(offsetMs?: number): void {
+    this.sendRaw(offsetMs != null ? { type: 'pause_lesson', offset_ms: offsetMs } : { type: 'pause_lesson' });
+  }
+
+  /** Resume active lesson session. */
+  resumeLesson(): void {
+    this.sendRaw({ type: 'resume_lesson' });
+  }
+
+  /** Stop active lesson session. */
+  stopLesson(): void {
+    this.sendRaw({ type: 'stop_lesson' });
+  }
+
+  /** Start a story session via server streaming. */
+  startStory(storyId: string): void {
+    this.sendRaw({ type: 'start_story', story_id: storyId });
+  }
+
+  /** Pause active story session. */
+  pauseStory(offsetMs?: number): void {
+    this.sendRaw(offsetMs != null ? { type: 'pause_story', offset_ms: offsetMs } : { type: 'pause_story' });
+  }
+
+  /** Resume active story session. */
+  resumeStory(): void {
+    this.sendRaw({ type: 'resume_story' });
+  }
+
+  /** Stop active story session. */
+  stopStory(): void {
+    this.sendRaw({ type: 'stop_story' });
+  }
+
+  /** Start a topic conversation via server streaming. */
+  startTopic(topicId: string): void {
+    this.sendRaw({ type: 'start_topic', topic_id: topicId });
+  }
+
   /**
    * Ships a frame outside the typed conversation union.
    *

@@ -178,9 +178,11 @@ export class GraphEngine {
 
     this.currentNode = question ?? readNode ?? group[0];
     this.paused = false;
+    const nodeWithImage = group.find((n) => n.imageUrl);
     this.emit({
       phase: 'playing',
       caption: this.captionFor(this.currentNode),
+      imageUrl: nodeWithImage?.imageUrl ?? null,
       hint: null,
     });
 

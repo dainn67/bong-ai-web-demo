@@ -42,7 +42,16 @@ export async function sendTelemetry(
   );
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    let detail = `HTTP ${response.status}`;
+    try {
+      const errJson = await response.json();
+      if (errJson && errJson.code) {
+        detail = errJson.code;
+      } else if (errJson && errJson.message) {
+        detail = errJson.message;
+      }
+    } catch {}
+    throw new Error(detail);
   }
 }
 
