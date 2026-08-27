@@ -39,8 +39,9 @@ import {
   type MenuState,
 } from '../screen/menu-state';
 import { IDLE_ACTIVITY, type ActivityState } from '../screen/activity-state';
+import type { TouchClassificationResult } from '../screen/touch-layout';
 import { parseCatalog, type LessonSummary } from '../lessons/catalog';
-import { StoryPlayer } from '../content/story';
+import { StoryPlayer, loadStory } from '../content/story';
 import { LessonRunner } from '../lessons/lesson-runner';
 
 export interface PacketLogEntry {
@@ -151,6 +152,15 @@ interface SimulatorState {
   toggleListening: () => void;
   /** What a tap on the glass does, which depends on whether the badge is awake. */
   tapScreen: () => void;
+  /** Hands a classified touch/swipe to whichever lesson question is waiting. */
+  dispatchTouch: (result: TouchClassificationResult) => void;
+  /**
+   * The last classified touch, for the dev drawer.
+   *
+   * Instrumentation only — no device reports this to anyone. `at` is what makes
+   * two identical results in a row distinguishable to a subscriber.
+   */
+  lastTouch: { result: TouchClassificationResult; at: number } | null;
   setVolume: (volume: number) => void;
 
   setHardware: (patch: Partial<HardwareState>) => void;
@@ -253,6 +263,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   activity: IDLE_ACTIVITY,
   lessonDebug: null,
   lessonPosition: null,
+  lastTouch: null,
   childName: null,
   loginModalOpen: false,
   setLoginModalOpen: (open) => set({ loginModalOpen: open }),
@@ -374,6 +385,15 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     else if (status === 'connected') toggleListening();
     // Mid-connection a tap is ignored rather than queued: the wake is already
     // under way, and a second one would tear down the socket that is opening.
+    //
+    // Nothing here needs to guard against a running activity — while one owns
+    // the glass `RoundScreen` does not arm this at all, and the touch that
+    // matters then is a question's, which `ActivityView` handles.
+  },
+
+  dispatchTouch: (result) => {
+    set({ lastTouch: { result, at: Date.now() } });
+    lesson?.dispatchTouch(result);
   },
 
   setVolume: (volume) => {
@@ -560,12 +580,22 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       menu: INITIAL_MENU_STATE,
       lessonDebug: null,
       lessonPosition: null,
+      lastTouch: null,
     });
   },
 
   toggleActivityPause: () => {
     const { activity } = get();
     if (!activity.kind) return;
+
+    // A local lesson is driven from `LessonRunner`, not from the socket, so its
+    // engine has to be told directly. Without this the button moved the label
+    // and nothing else: the clips kept playing.
+    if (lesson) {
+      void lesson.togglePause();
+      return;
+    }
+
     if (activity.phase === 'paused') {
       void ensurePlayer(set, get).resume();
       if (activity.kind === 'story') client?.resumeStory();
@@ -623,16 +653,40 @@ function stopActivity(set: Setter, get: Getter): void {
   noticeClearTimer = null;
   // The mic belongs to the lesson while one is running; hand it back.
   if (get().micState === 'listening') get().stopListening();
-  set({ micLevel: 0 });
+  set({ micLevel: 0, face: { ...get().face, said: '', heard: '' } });
 }
 
-/** Starts a story via server WebSocket stream. */
+/** Starts a story. Plays via StoryPlayer if metadata is available, and informs server. */
 async function startStory(set: Setter, get: Getter, entry: LessonSummary): Promise<void> {
   stopActivity(set, get);
   set({
     menu: INITIAL_MENU_STATE,
-    activity: { ...IDLE_ACTIVITY, kind: 'story', title: entry.title, phase: 'playing' },
+    activity: { ...IDLE_ACTIVITY, kind: 'story', title: entry.title, imageUrl: entry.coverUrl ?? null, phase: 'playing' },
   });
+
+  if (entry.metadataUrl) {
+    try {
+      const controller = new AbortController();
+      activityFetch = controller;
+      const loaded = await loadStory(entry.metadataUrl, controller.signal);
+      activityFetch = null;
+      story = new StoryPlayer(loaded, {
+        onCue: (_index, text) => {
+          set({ activity: { ...get().activity, caption: text } });
+        },
+        onEnded: () => {
+          set({ activity: { ...get().activity, phase: 'finished' } });
+        },
+        onError: (err) => {
+          set({ activity: { ...get().activity, phase: 'error', error: err } });
+        },
+      });
+      await story.play();
+      return;
+    } catch {
+      // If fetching fails or it's a websocket-only story, fall back to websocket stream
+    }
+  }
 
   if (get().status === 'disconnected') {
     await get().connect();

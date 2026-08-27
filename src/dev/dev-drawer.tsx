@@ -14,6 +14,11 @@ import { AudioPanel } from './audio-panel';
 import { HardwarePanel } from './hardware-panel';
 import { LessonPanel } from './lesson-panel';
 import { PacketInspector } from './packet-inspector';
+import { TouchTestPanel } from './touch-test-panel';
+
+/** Bật/tắt nhanh mục Thử nghiệm Cảm ứng trong tab Kỹ thuật (đổi thành false để ẩn) */
+export const SHOW_TOUCH_TEST_PANEL = true;
+// export const SHOW_TOUCH_TEST_PANEL = false;
 
 interface DevDrawerProps {
   open: boolean;
@@ -61,6 +66,7 @@ export function DevDrawer({ open, onClose }: DevDrawerProps) {
 
         {/* First, and only while a lesson runs: it is the thing being watched. */}
         <LessonPanel />
+        {SHOW_TOUCH_TEST_PANEL && <TouchTestPanel />}
         <ConnectionPanel />
         <AuthPanel />
         <HardwarePanel />

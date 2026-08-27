@@ -11,6 +11,8 @@
  * mean the face could no longer be explained by the packets that produced it.
  */
 
+import type { TouchLayoutType } from './touch-layout';
+
 export type ActivityKind = 'story' | 'lesson';
 
 export type ActivityPhase =
@@ -18,6 +20,8 @@ export type ActivityPhase =
   | 'playing'
   /** Mic open, waiting for the child's answer (lessons only). */
   | 'listening'
+  /** Touch window open, waiting for child tap/swipe (lessons only). */
+  | 'touching'
   /** Waiting on the grader or the classifier (lessons only). */
   | 'evaluating'
   | 'paused'
@@ -32,6 +36,17 @@ export interface ActivityState {
   caption: string | null;
   /** Image illustration for the current node/scene, or null. */
   imageUrl?: string | null;
+  /**
+   * Bumped on every display, so the same file shown twice starts over.
+   *
+   * A GIF is one `<img>` to React; without something changing in the key it
+   * reuses the element, and the second showing continues mid-animation.
+   */
+  imageSeq?: number;
+  /** Which kind of answer the glass is open for, if any. Drives the wait ring. */
+  waitingFor?: 'speech' | 'touch' | null;
+  /** The zone grid a `câu hỏi chạm` is being answered against. */
+  touchLayout?: TouchLayoutType | null;
   /**
    * The expected answer, shown only while the mic is open.
    *
@@ -50,6 +65,9 @@ export const IDLE_ACTIVITY: ActivityState = {
   phase: 'loading',
   caption: null,
   imageUrl: null,
+  imageSeq: 0,
+  waitingFor: null,
+  touchLayout: null,
   hint: null,
   notice: null,
   error: null,
@@ -72,6 +90,8 @@ export function phaseLabel(state: ActivityState): string | null {
       return 'Đang tải…';
     case 'listening':
       return 'Bống đang nghe bé…';
+    case 'touching':
+      return 'Bé chạm hoặc vuốt nhé…';
     case 'evaluating':
       return 'Bống đang nghĩ…';
     case 'paused':

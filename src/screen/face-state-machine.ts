@@ -42,6 +42,8 @@ export interface FaceState {
    * point of the screen when they are up, not decoration around a face.
    */
   imageUrl: string | null;
+  /** Incremented on each display_image so displaying the same GIF twice restarts it. */
+  imageSeq: number;
   /**
    * A face the backend named outright, overriding the mood we inferred.
    *
@@ -58,6 +60,7 @@ export const INITIAL_FACE_STATE: FaceState = {
   heard: '',
   said: '',
   imageUrl: null,
+  imageSeq: 0,
   expression: null,
 };
 
@@ -86,7 +89,7 @@ export function reduceFace(state: FaceState, message: IncomingMessage): FaceStat
       // is machinery, not something anyone said, and captioning it as speech
       // put a function name on a toy's face.
       if (isToolCall(message.text)) return state;
-      return { ...state, heard: message.text };
+      return { ...state, heard: message.text, said: '' };
     }
 
     case 'llm': {
@@ -127,7 +130,7 @@ function reduceDisplay(state: FaceState, message: IncomingMessage): FaceState {
     case 'expression':
       return { ...state, expression: command.name, imageUrl: null };
     case 'image':
-      return { ...state, imageUrl: command.url };
+      return { ...state, imageUrl: command.url, imageSeq: state.imageSeq + 1 };
     case 'clear':
       return { ...state, imageUrl: null };
   }

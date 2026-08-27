@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 360" width="360" height="360">
+  <defs>
+    <clipPath id="circleClip"><circle cx="180" cy="180" r="180" /></clipPath>
+  </defs>
+  <g clip-path="url(#circleClip)">
+    <!-- Zone 1 (Top - Mặt Trời): y <= 180 -->
+    <path d="M 0,0 L 360,0 L 360,180 L 0,180 Z" fill="#fef08a" stroke="#ffffff" stroke-width="2" />
+    <text x="180" y="80" text-anchor="middle" font-size="44" dominant-baseline="central">☀️</text>
+    <text x="180" y="130" text-anchor="middle" font-size="14" font-weight="bold" fill="#854d0e" font-family="sans-serif">1. BAN NGÀY (Mặt Trời)</text>
+
+    <!-- Zone 2 (Bottom - Mặt Trăng): y > 180 -->
+    <path d="M 0,180 L 360,180 L 360,360 L 0,360 Z" fill="#1e1b4b" stroke="#ffffff" stroke-width="2" />
+    <text x="180" y="240" text-anchor="middle" font-size="44" dominant-baseline="central">🌙</text>
+    <text x="180" y="290" text-anchor="middle" font-size="14" font-weight="bold" fill="#c7d2fe" font-family="sans-serif">2. BAN ĐÊM (Mặt Trăng)</text>
+
+    <!-- Divider Line (Không có vùng chết) -->
+    <line x1="0" y1="180" x2="360" y2="180" stroke="#ffffff" stroke-width="3" />
+  </g>
+  <circle cx="180" cy="180" r="179" fill="none" stroke="#334155" stroke-width="2" />
+</svg>

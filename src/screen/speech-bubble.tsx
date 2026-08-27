@@ -15,14 +15,26 @@ import { useSimulatorStore } from '../store/simulator-store';
 /** What the badge is saying. Sits under the device, tail pointing up at it. */
 export function BongBubble() {
   const said = useSimulatorStore((state) => state.face.said);
-  const speaking = useSimulatorStore((state) => state.face.mode === 'speaking');
+  const activity = useSimulatorStore((state) => state.activity);
+  const speaking = useSimulatorStore((state) => state.face.mode === 'speaking' || activity.phase === 'playing');
   const connected = useSimulatorStore((state) => state.status === 'connected');
+
+  let text = '';
+  if (activity.kind) {
+    if (activity.caption) {
+      text = `🧸 Bống: ${activity.caption}`;
+    } else if (activity.kind === 'story') {
+      text = `📖 Bống đang kể truyện: ${activity.title}`;
+    } else if (activity.kind === 'lesson') {
+      text = `📚 Bống đang dạy bài: ${activity.title}`;
+    }
+  } else if (connected && said) {
+    text = `Bống: ${said}`;
+  }
 
   return (
     <Bubble
-      // The label is added here, not stored: the state knows who spoke by
-      // which field it is, and only the drawing needs a name for it.
-      text={connected && said ? `Bống: ${said}` : ''}
+      text={text}
       tail="up"
       className={`bg-white text-ink-900 shadow-[0_8px_24px_-8px_rgba(61,44,36,0.25)] ${
         speaking ? 'ring-2 ring-mint-400/40' : ''
