@@ -23,44 +23,58 @@ export function ActivityView() {
 
   const status = phaseLabel(activity);
   const listening = activity.phase === 'listening';
+  const hasImage = Boolean(activity.imageUrl);
 
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-screen/95 text-center">
+    <div
+      className={`absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-center overflow-hidden rounded-full ${
+        hasImage ? 'bg-transparent' : 'bg-screen/95'
+      }`}
+    >
+      {/* Full screen background image when present */}
+      {hasImage && (
+        <>
+          <img
+            src={activity.imageUrl!}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover pointer-events-none"
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-ink-950/70 via-ink-950/20 to-ink-950/85 pointer-events-none" />
+        </>
+      )}
+
       {/* Same budget as the menu: the inscribed square, spent in full. */}
-      <div className="flex w-[72%] flex-col items-center gap-1.5">
-        <p className="w-full truncate text-[10px] font-bold uppercase tracking-[0.18em] text-cream-200/50">
+      <div className="relative z-10 flex w-[76%] flex-col items-center gap-1.5">
+        <p className="w-full truncate text-[10px] font-bold uppercase tracking-[0.18em] text-cream-200/80 drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">
           {activity.title}
         </p>
 
         {activity.phase === 'error' ? (
-          <p className="text-[11px] font-semibold leading-snug text-berry-500">
+          <p className="text-[11px] font-semibold leading-snug text-berry-500 bg-ink-950/60 backdrop-blur-xs px-2.5 py-1 rounded-lg">
             {activity.error}
           </p>
         ) : (
           <>
-            {activity.imageUrl && (
-              <div className="my-1 flex max-h-24 w-full items-center justify-center overflow-hidden rounded-xl border border-cream-200/20 bg-ink-900/40">
-                <img
-                  src={activity.imageUrl}
-                  alt=""
-                  className="max-h-24 max-w-full object-contain"
-                />
-              </div>
-            )}
             {activity.caption && (
-              <p className="line-clamp-4 text-[13px] font-semibold leading-snug text-cream-100">
+              <p
+                className={`line-clamp-4 text-[13px] font-semibold leading-snug text-cream-100 ${
+                  hasImage
+                    ? 'bg-ink-950/50 backdrop-blur-xs px-2.5 py-1 rounded-xl drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]'
+                    : ''
+                }`}
+              >
                 {activity.caption}
               </p>
             )}
             {/* The expected answer, only while the mic is open. Showing it during
               the question would read the answer out for the child. */}
             {listening && activity.hint && (
-              <p className="rounded-full bg-mint-400/15 px-2.5 py-0.5 text-[10px] font-bold text-mint-400">
+              <p className="rounded-full bg-mint-400/20 border border-mint-400/30 px-2.5 py-0.5 text-[10px] font-bold text-mint-300 drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">
                 {activity.hint}
               </p>
             )}
             {status && (
-              <p className="text-[10px] font-medium text-cream-200/50">
+              <p className="text-[10px] font-medium text-cream-200/70 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
                 {status}
               </p>
             )}
@@ -68,7 +82,7 @@ export function ActivityView() {
         )}
 
         {activity.notice && (
-          <p className="rounded-2xl bg-sunny-400/15 px-2.5 py-1 text-[10px] font-semibold leading-tight text-sunny-400">
+          <p className="rounded-2xl bg-sunny-400/20 border border-sunny-400/30 px-2.5 py-1 text-[10px] font-semibold leading-tight text-sunny-300 drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">
             {activity.notice}
           </p>
         )}
@@ -86,7 +100,7 @@ export function ActivityView() {
             <button
               type="button"
               onClick={togglePause}
-              className="rounded-full bg-cream-200/15 px-4 py-1 text-[11px] font-bold text-cream-100 transition active:scale-95"
+              className="rounded-full bg-cream-200/20 hover:bg-cream-200/30 backdrop-blur-xs px-4 py-1 text-[11px] font-bold text-cream-100 transition active:scale-95 shadow-sm"
             >
               {activity.phase === 'paused' ? '▶ Tiếp' : '⏸ Dừng'}
             </button>
@@ -97,7 +111,7 @@ export function ActivityView() {
               type="button"
               onClick={skip}
               title="Node tiếp theo (chỉ dành cho kiểm thử)"
-              className="flex items-center gap-1 rounded-full bg-sunny-400/15 px-2.5 py-1 text-[11px] font-bold text-sunny-400 transition active:scale-95"
+              className="flex items-center gap-1 rounded-full bg-sunny-400/20 hover:bg-sunny-400/30 backdrop-blur-xs border border-sunny-400/30 px-2.5 py-1 text-[11px] font-bold text-sunny-300 transition active:scale-95 shadow-sm"
             >
               ⏭
               {/* Tabular so the counter does not shuffle the button's width as

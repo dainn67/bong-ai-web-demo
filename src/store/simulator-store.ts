@@ -757,9 +757,10 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
     const displayCmd = toDisplayCommand(message);
     if (displayCmd?.kind === 'image') {
       set({ activity: { ...get().activity, imageUrl: displayCmd.url } });
-    } else if (displayCmd?.kind === 'clear') {
+    } else if (displayCmd?.kind === 'clear' || displayCmd?.kind === 'expression') {
       set({ activity: { ...get().activity, imageUrl: null } });
     }
+
   }
 
   if (message.type === 'tts' && message.state === 'sentence_start') {
