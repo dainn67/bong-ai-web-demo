@@ -204,6 +204,18 @@ export class WsClient {
     this.sendRaw({ type: 'start_topic', topic_id: topicId });
   }
 
+  /** Send touch/swipe interaction result during a lesson question. */
+  sendTouch(layout: string, zone: string, point?: { x: number; y: number }, durationMs?: number): void {
+    this.sendRaw({
+      type: 'lesson_touch',
+      session_id: this.sessionId ?? undefined,
+      layout,
+      zone,
+      point,
+      duration_ms: durationMs,
+    });
+  }
+
   /**
    * Ships a frame outside the typed conversation union.
    *

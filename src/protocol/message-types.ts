@@ -230,12 +230,21 @@ export interface ActivityStateIn {
   session_id?: string;
 }
 
+export interface LessonQuestionIn {
+  type: 'lesson_question';
+  question_type: 'touch' | 'speech';
+  touch_layout?: string;
+  timeout_ms?: number;
+  image_url?: string;
+}
+
 export type IncomingMessage =
   | HelloIn
   | SttIn
   | LlmIn
   | TtsIn
   | ListenIn
+  | LessonQuestionIn
   | ActivityStateIn
   | DisplayIn
   | DisplayExpressionIn
@@ -321,4 +330,14 @@ export interface PingOut {
   type: 'ping';
 }
 
-export type OutgoingMessage = HelloOut | ListenOut | AbortOut | PingOut;
+/** Touch interaction result sent from device to server. */
+export interface LessonTouchOut {
+  type: 'lesson_touch';
+  session_id?: string;
+  layout: string;
+  zone: string;
+  point?: { x: number; y: number };
+  duration_ms?: number;
+}
+
+export type OutgoingMessage = HelloOut | ListenOut | AbortOut | PingOut | LessonTouchOut;

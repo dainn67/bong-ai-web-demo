@@ -393,6 +393,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
   dispatchTouch: (result) => {
     set({ lastTouch: { result, at: Date.now() } });
+    const { activity } = get();
+    if (activity.touchLayout) {
+      client?.sendTouch(activity.touchLayout, result);
+    }
     lesson?.dispatchTouch(result);
   },
 
