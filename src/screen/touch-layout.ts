@@ -86,6 +86,21 @@ export interface TouchGestureSample extends Point2D {
 }
 
 /**
+ * What a press amounted to beyond its classification.
+ *
+ * Optional on the wire (§3.1 of the touch protocol), but worth carrying: a
+ * server that only ever sees `zone3` cannot tell a confident jab at the picture
+ * from a finger that landed a pixel inside the boundary, and that difference is
+ * the whole story when a child keeps "getting it wrong".
+ */
+export interface TouchDetail {
+  /** Where the finger landed, in device pixels, at press-down. */
+  point: Point2D;
+  /** How long it was held or dragged. */
+  durationMs: number;
+}
+
+/**
  * The fan layouts, by how many sectors they cut and how wide their dead centre is.
  *
  * A table rather than a `switch` with a default, so that an unrecognised layout

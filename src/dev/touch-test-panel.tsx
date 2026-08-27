@@ -259,6 +259,15 @@ export function TouchTestPanel() {
               Kết quả gần nhất:{' '}
               <b className="font-mono text-emerald-300">{lastTouch?.result ?? '—'}</b>
             </p>
+            {/* The coordinate is the only way to check a boundary by hand: a
+                press that reads zone3 tells you nothing about whether it landed
+                one pixel inside the line or well within the sector. */}
+            {lastTouch?.point && (
+              <p className="font-mono text-[10px] text-cream-400">
+                ({lastTouch.point.x.toFixed(0)}, {lastTouch.point.y.toFixed(0)}) ·{' '}
+                {lastTouch.durationMs ?? 0}ms
+              </p>
+            )}
           </div>
         )}
       </div>

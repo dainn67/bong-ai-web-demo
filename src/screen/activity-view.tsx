@@ -6,77 +6,28 @@
  * for a screen this small.
  *
  * It is also the touch surface for a `câu hỏi chạm`. Its only job there is
- * geometry: work out which zone or direction the finger meant and hand that to
- * the engine. What the answer *means* — which branch runs, what appears next —
- * belongs to the script, so nothing in here decides it.
+ * geometry: work out which zone or direction the finger meant, and report it.
+ * What the answer *means* — which branch runs, what appears next — is decided
+ * by the script or by the server, never here. A view with opinions about that
+ * would fight whoever is actually running the lesson over the same screen.
+ *
+ * While a picture is up it gets the whole circle. Text and controls appear only
+ * on the black screen, because artwork for a touch question *is* the question
+ * and a caption laid over it hides the choices; the position readout and the
+ * tester controls are in the drawer, which sits beside the badge instead.
  *
  * Centred on both axes and inset from the edge, for the same reason the menu
  * is: this is a circle, and anything pushed into a corner of the box it is
  * inscribed in gets clipped away by the curve.
  */
 
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import { useSimulatorStore } from '../store/simulator-store';
 import { canPause, phaseLabel } from './activity-state';
 import { classifyGesture, type TouchGestureSample } from './touch-layout';
 import { toDevicePoint } from './touch-input';
 
-interface LayoutBranchInfo {
-  image: string;
-  notice: string;
-}
-
-const LAYOUT_BRANCH_MAP: Record<string, Record<string, LayoutBranchInfo>> = {
-  tap4: {
-    zone1: { image: '/demo-cat.svg', notice: '🐱 Nhánh [zone1] - Bạn Mèo' },
-    zone2: { image: '/demo-dog.svg', notice: '🐶 Nhánh [zone2] - Bạn Chó' },
-    zone3: { image: '/demo-elephant.svg', notice: '🐘 Nhánh [zone3] - Bạn Voi' },
-    zone4: { image: '/demo-monkey.svg', notice: '🐒 Nhánh [zone4] - Bạn Khỉ' },
-    cham_khac: { image: '/demo-deadzone-tap4.svg', notice: '⚠️ [cham_khac] Trúng vùng chết ở tâm!' },
-  },
-  tap2_tren_duoi: {
-    zone1: { image: '/demo-sun.svg', notice: '☀️ Nhánh [zone1] - Mặt Trời (Ban Ngày)' },
-    zone2: { image: '/demo-moon.svg', notice: '🌙 Nhánh [zone2] - Mặt Trăng (Ban Đêm)' },
-  },
-  tap2_trai_phai: {
-    zone1: { image: '/demo-apple.svg', notice: '🍎 Nhánh [zone1] - Quả Táo Đỏ' },
-    zone2: { image: '/demo-banana.svg', notice: '🍌 Nhánh [zone2] - Quả Chuối Vàng' },
-  },
-  tap3: {
-    zone1: { image: '/demo-plane.svg', notice: '✈️ Nhánh [zone1] - Máy Bay' },
-    zone2: { image: '/demo-ship.svg', notice: '🚢 Nhánh [zone2] - Tàu Thủy' },
-    zone3: { image: '/demo-car.svg', notice: '🚗 Nhánh [zone3] - Ô Tô' },
-    cham_khac: { image: '/demo-deadzone-tap3.svg', notice: '⚠️ [cham_khac] Trúng vùng chết ở tâm!' },
-  },
-  tap5: {
-    zone1: { image: '/demo-star.svg', notice: '⭐ Nhánh [zone1] - Ngôi Sao' },
-    zone2: { image: '/demo-heart.svg', notice: '❤️ Nhánh [zone2] - Trái Tim' },
-    zone3: { image: '/demo-cloud.svg', notice: '☁️ Nhánh [zone3] - Đám Mây' },
-    zone4: { image: '/demo-rainbow.svg', notice: '🌈 Nhánh [zone4] - Cầu Vồng' },
-    zone5: { image: '/demo-lightning.svg', notice: '⚡ Nhánh [zone5] - Tia Chớp' },
-    cham_khac: { image: '/demo-deadzone-tap5.svg', notice: '⚠️ [cham_khac] Trúng vùng chết ở tâm!' },
-  },
-  tap6: {
-    zone1: { image: '/demo-num1.svg', notice: '1️⃣ Nhánh [zone1] - Số 1' },
-    zone2: { image: '/demo-num2.svg', notice: '2️⃣ Nhánh [zone2] - Số 2' },
-    zone3: { image: '/demo-num3.svg', notice: '3️⃣ Nhánh [zone3] - Số 3' },
-    zone4: { image: '/demo-num4.svg', notice: '4️⃣ Nhánh [zone4] - Số 4' },
-    zone5: { image: '/demo-num5.svg', notice: '5️⃣ Nhánh [zone5] - Số 5' },
-    zone6: { image: '/demo-num6.svg', notice: '6️⃣ Nhánh [zone6] - Số 6' },
-    cham_khac: { image: '/demo-deadzone-tap6.svg', notice: '⚠️ [cham_khac] Trúng vùng chết ở tâm!' },
-  },
-  swipe: {
-    vuot_len: { image: '/demo-swipe-up.svg', notice: '🚀 Nhánh [vuot_len] - Bay vút lên!' },
-    vuot_xuong: { image: '/demo-swipe-down.svg', notice: '🕳️ Nhánh [vuot_xuong] - Chui xuống hang!' },
-    vuot_trai: { image: '/demo-swipe-left.svg', notice: '⬅️ Nhánh [vuot_trai] - Lùi lại!' },
-    vuot_phai: { image: '/demo-swipe-right.svg', notice: '➡️ Nhánh [vuot_phai] - Tiến lên!' },
-    cham_khac: { image: '/demo-deadzone-swipe.svg', notice: '⚠️ [cham_khac] Cần vuốt dứt khoát ≥ 60px theo 4 hướng!' },
-  },
-};
-
-/** Same box either way — only where it sits in the circle differs. */
-const TEXT_BOX = 'pointer-events-none z-10 flex w-[76%] flex-col items-center gap-1.5';
-const ON_BLACK = `${TEXT_BOX} relative`;
+const TEXT_BOX = 'pointer-events-none relative z-10 flex w-[76%] flex-col items-center gap-1.5';
 
 export function ActivityView() {
   const activity = useSimulatorStore((state) => state.activity);
@@ -86,20 +37,6 @@ export function ActivityView() {
   const dispatchTouch = useSimulatorStore((state) => state.dispatchTouch);
 
   const downPoint = useRef<TouchGestureSample | null>(null);
-  const [toastNotice, setToastNotice] = useState<string | null>(null);
-
-  // Auto-dismiss toast notice after 1.25 seconds
-  useEffect(() => {
-    if (activity.notice) {
-      setToastNotice(activity.notice);
-      const timer = setTimeout(() => {
-        setToastNotice(null);
-      }, 1250);
-      return () => clearTimeout(timer);
-    } else {
-      setToastNotice(null);
-    }
-  }, [activity.notice]);
 
   if (!activity.kind) return null;
 
@@ -129,39 +66,13 @@ export function ActivityView() {
     if (!waitingForTouch || !start || !activity.touchLayout) return;
 
     // Tap layouts read the press-down point; only a swipe needs the release.
-    const result = classifyGesture(start, sampleAt(event), activity.touchLayout);
-
-    const layoutKey = activity.touchLayout;
-    const branchInfo = LAYOUT_BRANCH_MAP[layoutKey]?.[result];
-    const prevImage = activity.imageUrl;
-
-    if (branchInfo) {
-      useSimulatorStore.setState((s) => ({
-        activity: {
-          ...s.activity,
-          imageUrl: branchInfo.image,
-          notice: branchInfo.notice,
-          phase: 'playing',
-          waitingFor: null,
-        },
-      }));
-
-      // Tự động quay lại màn hình câu hỏi sau 2 giây để bé thử tiếp các nhánh khác
-      if (prevImage) {
-        setTimeout(() => {
-          useSimulatorStore.setState((s) => ({
-            activity: {
-              ...s.activity,
-              imageUrl: prevImage,
-              phase: 'touching',
-              waitingFor: 'touch',
-            },
-          }));
-        }, 2000);
-      }
-    }
-
-    dispatchTouch(result);
+    const end = sampleAt(event);
+    dispatchTouch(classifyGesture(start, end, activity.touchLayout), {
+      // The press-down coordinate, which is the one the protocol asks for: it
+      // is what the child aimed at, before any drag moved their finger.
+      point: { x: start.x, y: start.y },
+      durationMs: Math.max(0, Math.round(end.at - start.at)),
+    });
   };
 
   const onPointerCancel = () => {
@@ -177,7 +88,12 @@ export function ActivityView() {
         hasImage ? 'bg-transparent' : 'bg-screen/95'
       } ${waitingForTouch ? 'cursor-crosshair' : ''}`}
     >
-      {hasImage && (
+      {hasImage ? (
+        // Nothing over the artwork. A lesson's picture is the question — a
+        // caption across it hides the very thing the child is choosing between,
+        // and on a 360px circle any text box big enough to read covers a zone.
+        // The status line and the controls live in the drawer, beside the badge
+        // rather than on top of it.
         <img
           // Keyed on the sequence too, so showing the same GIF twice restarts it.
           key={`${activity.imageUrl}-${activity.imageSeq ?? 0}`}
@@ -185,12 +101,9 @@ export function ActivityView() {
           alt=""
           className="pointer-events-none absolute inset-0 h-full w-full object-cover"
         />
-      )}
-
-      {/* When there is NO image: show the full title, caption and controls centered */}
-      {!hasImage && (
-        <div className={ON_BLACK}>
-          <p className="w-full truncate text-[10px] font-bold uppercase tracking-[0.18em] text-cream-200/80 drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">
+      ) : (
+        <div className={TEXT_BOX}>
+          <p className="w-full truncate text-[10px] font-bold uppercase tracking-[0.18em] text-cream-200/80">
             {activity.title}
           </p>
 
@@ -201,30 +114,21 @@ export function ActivityView() {
           ) : (
             <>
               {activity.caption && (
-                <p className="line-clamp-3 text-[13px] font-semibold leading-snug text-cream-100 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]">
+                <p className="line-clamp-3 text-[13px] font-semibold leading-snug text-cream-100">
                   {activity.caption}
                 </p>
               )}
               {listening && activity.hint && (
-                <p className="rounded-full border border-mint-400/30 bg-mint-400/20 px-2.5 py-0.5 text-[10px] font-bold text-mint-300 drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">
+                <p className="rounded-full border border-mint-400/30 bg-mint-400/20 px-2.5 py-0.5 text-[10px] font-bold text-mint-300">
                   {activity.hint}
                 </p>
               )}
-              {status && (
-                <p className="text-[10px] font-medium text-cream-200/70 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
-                  {status}
-                </p>
-              )}
+              {status && <p className="text-[10px] font-medium text-cream-200/70">{status}</p>}
             </>
           )}
 
-          {activity.notice && (
-            <p className="rounded-2xl border border-sunny-400/30 bg-ink-950/80 px-2.5 py-1 text-[10px] font-semibold leading-tight text-sunny-300 drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">
-              {activity.notice}
-            </p>
-          )}
-
-          {/* Controls on black screen */}
+          {/* Hidden while a question is open: a button here would swallow a
+              press meant for the zone behind it. */}
           {!waitingForTouch && (
             <div className="pointer-events-auto mt-0.5 flex items-center gap-1.5">
               {canPause(activity) && (
@@ -253,14 +157,14 @@ export function ActivityView() {
         </div>
       )}
 
-      {/* Floating Toast Notice (tự động biến mất sau 1.25s) */}
-      {hasImage && toastNotice && (
-        <div className="pointer-events-none absolute bottom-5 z-40 max-w-[88%] transition-all duration-300">
-          <div className="rounded-full bg-ink-950/95 border-2 border-sunny-400 px-4 py-1.5 text-center shadow-[0_6px_20px_rgba(0,0,0,0.9)] backdrop-blur-md">
-            <p className="text-[12px] font-bold leading-tight text-sunny-300">
-              {toastNotice}
-            </p>
-          </div>
+      {/* The one thing that does go over artwork, because it is the answer to
+          "did that register?" and it is gone again in a few seconds. The store
+          clears `notice` on its own, so there is no timer to keep here. */}
+      {activity.notice && (
+        <div className="pointer-events-none absolute bottom-4 z-20 max-w-[88%]">
+          <p className="rounded-full border border-sunny-400/60 bg-ink-950/95 px-3.5 py-1.5 text-center text-[11px] font-bold leading-tight text-sunny-300 shadow-[0_6px_20px_rgba(0,0,0,0.8)] backdrop-blur-md">
+            {activity.notice}
+          </p>
         </div>
       )}
     </div>

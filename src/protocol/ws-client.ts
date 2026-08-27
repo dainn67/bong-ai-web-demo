@@ -9,6 +9,11 @@
 import type { DeviceConfig } from '../config/device-config';
 import { buildSocketUrl, fetchChatEndpoint } from './ota-client';
 import { parseIncoming, type IncomingMessage, type OutgoingMessage } from './message-types';
+import type {
+  TouchClassificationResult,
+  TouchDetail,
+  TouchLayoutType,
+} from '../screen/touch-layout';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 
@@ -204,15 +209,25 @@ export class WsClient {
     this.sendRaw({ type: 'start_topic', topic_id: topicId });
   }
 
-  /** Send touch/swipe interaction result during a lesson question. */
-  sendTouch(layout: string, zone: string, point?: { x: number; y: number }, durationMs?: number): void {
-    this.sendRaw({
+  /**
+   * The child's answer to a touch question — §3.1 of the touch protocol.
+   *
+   * Goes through the typed channel, not `sendRaw`: a touch is the child taking
+   * their turn, the same class of thing as `listen`, so it belongs in
+   * `OutgoingMessage` alongside the frames that carry speech.
+   */
+  sendTouch(
+    layout: TouchLayoutType,
+    zone: TouchClassificationResult,
+    detail?: TouchDetail,
+  ): void {
+    this.send({
       type: 'lesson_touch',
       session_id: this.sessionId ?? undefined,
       layout,
       zone,
-      point,
-      duration_ms: durationMs,
+      point: detail?.point,
+      duration_ms: detail?.durationMs,
     });
   }
 
