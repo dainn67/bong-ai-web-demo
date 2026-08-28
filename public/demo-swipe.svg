@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 360" width="360" height="360">
+  <defs>
+    <clipPath id="circleClip"><circle cx="180" cy="180" r="180" /></clipPath>
+  </defs>
+  <g clip-path="url(#circleClip)" fill="#0f172a">
+    <circle cx="180" cy="180" r="180" fill="#0f172a" />
+    <circle cx="180" cy="180" r="150" fill="#1e293b" stroke="#334155" stroke-width="2" />
+
+    <!-- Up (vuot_len) -->
+    <text x="180" y="70" text-anchor="middle" font-size="32" dominant-baseline="central">⬆️</text>
+    <text x="180" y="105" text-anchor="middle" font-size="12" font-weight="bold" fill="#38bdf8" font-family="sans-serif">VUỐT LÊN</text>
+
+    <!-- Down (vuot_xuong) -->
+    <text x="180" y="290" text-anchor="middle" font-size="32" dominant-baseline="central">⬇️</text>
+    <text x="180" y="255" text-anchor="middle" font-size="12" font-weight="bold" fill="#fb923c" font-family="sans-serif">VUỐT XUỐNG</text>
+
+    <!-- Left (vuot_trai) -->
+    <text x="65" y="180" text-anchor="middle" font-size="32" dominant-baseline="central">⬅️</text>
+    <text x="65" y="215" text-anchor="middle" font-size="11" font-weight="bold" fill="#a78bfa" font-family="sans-serif">VUỐT TRÁI</text>
+
+    <!-- Right (vuot_phai) -->
+    <text x="295" y="180" text-anchor="middle" font-size="32" dominant-baseline="central">➡️</text>
+    <text x="295" y="215" text-anchor="middle" font-size="11" font-weight="bold" fill="#4ade80" font-family="sans-serif">VUỐT PHẢI</text>
+
+    <!-- Center prompt -->
+    <circle cx="180" cy="180" r="45" fill="#334155" />
+    <text x="180" y="174" text-anchor="middle" font-size="12" font-weight="bold" fill="#f8fafc" font-family="sans-serif">VUỐT TAY</text>
+    <text x="180" y="188" text-anchor="middle" font-size="9" fill="#94a3b8" font-family="sans-serif">(&gt;= 60px)</text>
+  </g>
+  <circle cx="180" cy="180" r="179" fill="none" stroke="#38bdf8" stroke-width="2" />
+</svg>

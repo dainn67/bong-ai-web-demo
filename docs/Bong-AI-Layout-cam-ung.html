@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="vi"><head><meta charset="utf-8">
+<title>Bống AI — Layout vùng cảm ứng (màn tròn 360×360)</title>
+<style>
+ body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;margin:0;padding:28px;background:#fafafa;color:#263238;}
+ h1{font-size:21px;margin:0 0 4px;} h2{font-size:16px;margin:28px 0 10px;border-bottom:2px solid #cfd8dc;padding-bottom:5px;}
+ .sub{color:#607d8b;font-size:13px;margin-bottom:18px;}
+ .grid{display:flex;flex-wrap:wrap;gap:22px;}
+ figure{margin:0;background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:14px;width:230px;text-align:center;}
+ figcaption{margin-top:8px;font-size:13px;line-height:1.5;}
+ figcaption span{color:#607d8b;font-size:12px;}
+ table{border-collapse:collapse;font-size:13px;background:#fff;width:100%;max-width:820px;}
+ th,td{border:1px solid #e0e0e0;padding:7px 10px;text-align:left;vertical-align:top;}
+ th{background:#eceff1;font-weight:600;}
+ code{background:#eceff1;padding:1px 5px;border-radius:3px;font-size:12px;}
+ .box{background:#fff;border-left:4px solid #26a69a;padding:12px 16px;margin:14px 0;max-width:820px;font-size:13px;line-height:1.65;border-radius:0 6px 6px 0;}
+ ul{font-size:13px;line-height:1.75;max-width:820px;} li{margin-bottom:2px;}
+ .ring{display:inline-block;width:14px;height:14px;border-radius:50%;border:4px solid;vertical-align:-2px;margin-right:5px;}
+</style></head><body>
+<h1>Bống AI — Layout vùng cảm ứng</h1>
+<div class="sub">Màn hình tròn, độ phân giải 360×360 (bốn góc bị cắt). Tài liệu dùng chung cho đội App (lập trình vùng chạm) và người vẽ minh họa (bố cục hình phải khớp vùng chạm).</div>
+
+<h2>1. Bảy layout</h2>
+<div class="grid"><figure>
+  <svg viewBox="0 0 360 360" width="200" height="200">
+    <clipPath id="c80639"><circle cx="180" cy="180" r="180"/></clipPath>
+    <g clip-path="url(#c80639)"><path d="M 0,180 A 180,180 0 0 1 360,180 Z" fill="#c8e6c9" stroke="#fff" stroke-width="2"/><path d="M 360,180 A 180,180 0 0 1 0,180 Z" fill="#bbdefb" stroke="#fff" stroke-width="2"/><text x="180" y="95" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">1</text><text x="180" y="265" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">2</text></g>
+    <circle cx="180" cy="180" r="179" fill="none" stroke="#455a64" stroke-width="3"/>
+  </svg>
+  <figcaption><b>tap2_tren_duoi</b><br><span>2 vùng: trên / dưới.<br>KHÔNG có vùng chết.</span></figcaption>
+</figure>
+<figure>
+  <svg viewBox="0 0 360 360" width="200" height="200">
+    <clipPath id="c95243"><circle cx="180" cy="180" r="180"/></clipPath>
+    <g clip-path="url(#c95243)"><path d="M 180,360 A 180,180 0 0 1 180,0 Z" fill="#c8e6c9" stroke="#fff" stroke-width="2"/><path d="M 180,0 A 180,180 0 0 1 180,360 Z" fill="#bbdefb" stroke="#fff" stroke-width="2"/><text x="95" y="180" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">1</text><text x="265" y="180" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">2</text></g>
+    <circle cx="180" cy="180" r="179" fill="none" stroke="#455a64" stroke-width="3"/>
+  </svg>
+  <figcaption><b>tap2_trai_phai</b><br><span>2 vùng: trái / phải.<br>KHÔNG có vùng chết.</span></figcaption>
+</figure>
+<figure>
+  <svg viewBox="0 0 360 360" width="200" height="200">
+    <clipPath id="c43874"><circle cx="180" cy="180" r="180"/></clipPath>
+    <g clip-path="url(#c43874)"><path d="M 180,180 L 24.12,90.00 A 180,180 0 0 1 335.88,90.00 Z" fill="#c8e6c9" stroke="#fff" stroke-width="2"/>
+<path d="M 180,180 L 335.88,90.00 A 180,180 0 0 1 180.00,360.00 Z" fill="#bbdefb" stroke="#fff" stroke-width="2"/>
+<path d="M 180,180 L 180.00,360.00 A 180,180 0 0 1 24.12,90.00 Z" fill="#ffe0b2" stroke="#fff" stroke-width="2"/>
+<circle cx="180" cy="180" r="45.0" fill="#e0e0e0" stroke="#9e9e9e" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="180.0" y="61.2" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">1</text>
+<text x="282.9" y="239.4" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">2</text>
+<text x="77.1" y="239.4" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">3</text>
+<text x="180" y="180" text-anchor="middle" dominant-baseline="central" font-size="15" fill="#616161">chết</text></g>
+    <circle cx="180" cy="180" r="179" fill="none" stroke="#455a64" stroke-width="3"/>
+  </svg>
+  <figcaption><b>tap3</b><br><span>3 vùng quạt. Vùng chết r = 25% bán kính (45px).</span></figcaption>
+</figure>
+<figure>
+  <svg viewBox="0 0 360 360" width="200" height="200">
+    <clipPath id="c92318"><circle cx="180" cy="180" r="180"/></clipPath>
+    <g clip-path="url(#c92318)"><path d="M 180,180 L 52.72,52.72 A 180,180 0 0 1 307.28,52.72 Z" fill="#c8e6c9" stroke="#fff" stroke-width="2"/>
+<path d="M 180,180 L 307.28,52.72 A 180,180 0 0 1 307.28,307.28 Z" fill="#bbdefb" stroke="#fff" stroke-width="2"/>
+<path d="M 180,180 L 307.28,307.28 A 180,180 0 0 1 52.72,307.28 Z" fill="#ffe0b2" stroke="#fff" stroke-width="2"/>
+<path d="M 180,180 L 52.72,307.28 A 180,180 0 0 1 52.72,52.72 Z" fill="#f8bbd0" stroke="#fff" stroke-width="2"/>
+<circle cx="180" cy="180" r="45.0" fill="#e0e0e0" stroke="#9e9e9e" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="180.0" y="61.2" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">1</text>
+<text x="298.8" y="180.0" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">2</text>
+<text x="180.0" y="298.8" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">3</text>
+<text x="61.2" y="180.0" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">4</text>
+<text x="180" y="180" text-anchor="middle" dominant-baseline="central" font-size="15" fill="#616161">chết</text></g>
+    <circle cx="180" cy="180" r="179" fill="none" stroke="#455a64" stroke-width="3"/>
+  </svg>
+  <figcaption><b>tap4</b><br><span>4 vùng quạt. Vùng chết r = 25% bán kính (45px).</span></figcaption>
+</figure>
+<figure>
+  <svg viewBox="0 0 360 360" width="200" height="200">
+    <clipPath id="c22785"><circle cx="180" cy="180" r="180"/></clipPath>
+    <g clip-path="url(#c22785)"><path d="M 180,180 L 74.20,34.38 A 180,180 0 0 1 285.80,34.38 Z" fill="#c8e6c9" stroke="#fff" stroke-width="2"/>
+<path d="M 180,180 L 285.80,34.38 A 180,180 0 0 1 351.19,235.62 Z" fill="#bbdefb" stroke="#fff" stroke-width="2"/>
+<path d="M 180,180 L 351.19,235.62 A 180,180 0 0 1 180.00,360.00 Z" fill="#ffe0b2" stroke="#fff" stroke-width="2"/>
+<path d="M 180,180 L 180.00,360.00 A 180,180 0 0 1 8.81,235.62 Z" fill="#f8bbd0" stroke="#fff" stroke-width="2"/>
+<path d="M 180,180 L 8.81,235.62 A 180,180 0 0 1 74.20,34.38 Z" fill="#d1c4e9" stroke="#fff" stroke-width="2"/>
+<circle cx="180" cy="180" r="63.0" fill="#e0e0e0" stroke="#9e9e9e" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="180.0" y="61.2" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">1</text>
+<text x="293.0" y="143.3" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">2</text>
+<text x="249.8" y="276.1" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">3</text>
+<text x="110.2" y="276.1" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">4</text>
+<text x="67.0" y="143.3" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">5</text>
+<text x="180" y="180" text-anchor="middle" dominant-baseline="central" font-size="15" fill="#616161">chết</text></g>
+    <circle cx="180" cy="180" r="179" fill="none" stroke="#455a64" stroke-width="3"/>
+  </svg>
+  <figcaption><b>tap5</b><br><span>5 vùng quạt. Vùng chết r = 35% bán kính (63px).</span></figcaption>
+</figure>
+<figure>
+  <svg viewBox="0 0 360 360" width="200" height="200">
+    <clipPath id="c93258"><circle cx="180" cy="180" r="180"/></clipPath>
+    <g clip-path="url(#c93258)"><path d="M 180,180 L 90.00,24.12 A 180,180 0 0 1 270.00,24.12 Z" fill="#c8e6c9" stroke="#fff" stroke-width="2"/>
+<path d="M 180,180 L 270.00,24.12 A 180,180 0 0 1 360.00,180.00 Z" fill="#bbdefb" stroke="#fff" stroke-width="2"/>
+<path d="M 180,180 L 360.00,180.00 A 180,180 0 0 1 270.00,335.88 Z" fill="#ffe0b2" stroke="#fff" stroke-width="2"/>
+<path d="M 180,180 L 270.00,335.88 A 180,180 0 0 1 90.00,335.88 Z" fill="#f8bbd0" stroke="#fff" stroke-width="2"/>
+<path d="M 180,180 L 90.00,335.88 A 180,180 0 0 1 0.00,180.00 Z" fill="#d1c4e9" stroke="#fff" stroke-width="2"/>
+<path d="M 180,180 L 0.00,180.00 A 180,180 0 0 1 90.00,24.12 Z" fill="#b2ebf2" stroke="#fff" stroke-width="2"/>
+<circle cx="180" cy="180" r="63.0" fill="#e0e0e0" stroke="#9e9e9e" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="180.0" y="61.2" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">1</text>
+<text x="282.9" y="120.6" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">2</text>
+<text x="282.9" y="239.4" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">3</text>
+<text x="180.0" y="298.8" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">4</text>
+<text x="77.1" y="239.4" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">5</text>
+<text x="77.1" y="120.6" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="700" fill="#37474f">6</text>
+<text x="180" y="180" text-anchor="middle" dominant-baseline="central" font-size="15" fill="#616161">chết</text></g>
+    <circle cx="180" cy="180" r="179" fill="none" stroke="#455a64" stroke-width="3"/>
+  </svg>
+  <figcaption><b>tap6</b><br><span>6 vùng quạt. Vùng chết r = 35% bán kính (63px).</span></figcaption>
+</figure>
+<figure>
+  <svg viewBox="0 0 360 360" width="200" height="200">
+    <clipPath id="c64604"><circle cx="180" cy="180" r="180"/></clipPath>
+    <g clip-path="url(#c64604)"><defs><marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#37474f"/></marker></defs><circle cx="180" cy="180" r="180" fill="#ffe0b2"/>
+<line x1="180" y1="235" x2="180" y2="110" stroke="#37474f" stroke-width="7" marker-end="url(#ah)" opacity="0.85"/>
+<line x1="180" y1="125" x2="180" y2="250" stroke="#37474f" stroke-width="7" marker-end="url(#ah)" opacity="0.85"/>
+<line x1="235" y1="180" x2="110" y2="180" stroke="#37474f" stroke-width="7" marker-end="url(#ah)" opacity="0.85"/>
+<line x1="125" y1="180" x2="250" y2="180" stroke="#37474f" stroke-width="7" marker-end="url(#ah)" opacity="0.85"/></g>
+    <circle cx="180" cy="180" r="179" fill="none" stroke="#455a64" stroke-width="3"/>
+  </svg>
+  <figcaption><b>swipe</b><br><span>4 hướng vuốt. Quãng tối thiểu 60px, tối đa 800ms.</span></figcaption>
+</figure></div>
+
+<div class="box">
+<b>Quy ước đánh số vùng quạt:</b> vùng <b>1 luôn nằm GIỮA ở mốc 12 giờ</b> (không phải bắt đầu từ 12 giờ), các vùng sau đánh số <b>theo chiều kim đồng hồ</b>. Nhờ vậy <code>tap4</code> cho đúng bố cục trên–phải–dưới–trái, <code>tap3</code> cho một vùng trên và hai vùng dưới.
+</div>
+
+<h2>2. Các luật nhận diện</h2>
+<table>
+<tr><th>Tình huống</th><th>Kết quả</th></tr>
+<tr><td>Chạm vào một vùng hợp lệ</td><td><code>zone1</code> … <code>zone6</code> theo hình trên</td></tr>
+<tr><td>Chạm vào vùng chết ở tâm (layout quạt)</td><td><code>cham_khac</code></td></tr>
+<tr><td>Chạm ngoài đường tròn (panel cảm ứng vuông, bốn góc)</td><td><code>cham_khac</code></td></tr>
+<tr><td>Vuốt đủ 60px trong ≤800ms, trục rõ ràng</td><td><code>vuot_len</code> / <code>vuot_xuong</code> / <code>vuot_trai</code> / <code>vuot_phai</code></td></tr>
+<tr><td>Vuốt quá ngắn, quá chậm, hoặc chéo không rõ trục</td><td><code>cham_khac</code></td></tr>
+<tr><td>Layout là <code>swipe</code> nhưng bé chỉ chạm (không kéo)</td><td><code>cham_khac</code></td></tr>
+<tr><td>Hết 10 giây không có thao tác nào</td><td><code>silent</code></td></tr>
+</table>
+
+<ul>
+<li><b>Lấy toạ độ lúc CHẠM XUỐNG</b>, không phải lúc nhấc tay — trẻ nhỏ hay kéo lê ngón tay.</li>
+<li><b>Trục trội khi vuốt:</b> chênh lệch giữa hai trục phải từ 1,5 lần trở lên mới tính là hướng đó; không thì <code>cham_khac</code>.</li>
+<li><b>Ngoài cửa sổ chờ phản hồi, mọi thao tác chạm bị bỏ qua</b> (chỉ ghi log). Bé đang ôm gấu nên màn hình bị chạm liên tục ngoài ý muốn.</li>
+<li><b>Vùng chết</b> tồn tại vì các tia quạt chụm lại ở tâm — bấm gần tâm gần như ngẫu nhiên. Hai layout chia đôi thẳng không cần vùng chết.</li>
+</ul>
+
+<h2>3. Vòng chờ phản hồi</h2>
+<div class="box">
+<span class="ring" style="border-color:#e53935;"></span><b>Vòng ĐỎ</b> — đang chờ bé NÓI (cửa sổ ~5 giây)<br>
+<span class="ring" style="border-color:#43a047;"></span><b>Vòng XANH LÁ</b> — đang chờ bé CHẠM/VUỐT (cửa sổ 10 giây)
+<br><br>
+Vòng vẽ <b>đè lên hình đang hiển thị</b>, sát mép màn hình, dày khoảng 10px — <b>không xoá hình</b>. Phần diện tích dưới vòng vẫn tính là vùng bên dưới nó khi bé bấm trúng.
+<br><br>
+Đây là thứ giải quyết bài toán lớn nhất của thiết bị chỉ-có-tiếng: trẻ không biết khi nào đến lượt mình. Vòng sáng làm ở <b>tầng firmware</b>, tự động cho mọi điểm dừng — đội nội dung không phải khai báo gì.
+</div>
+
+<h2>4. Ghi chú cho người vẽ minh họa</h2>
+<ul>
+<li>Ảnh dùng cho câu hỏi chạm phải <b>vẽ theo đúng lưới vùng ở trên</b> — mỗi đối tượng bé cần bấm nằm gọn trong một vùng, không đè lên ranh giới.</li>
+<li>Chừa <b>vùng chết ở tâm</b> trống hoặc để hoạ tiết trang trí — đừng đặt đối tượng cần bấm vào đó.</li>
+<li>Chừa <b>viền ngoài ~14px</b> cho vòng chờ khỏi che mất chi tiết quan trọng.</li>
+<li>Bốn góc ảnh bị màn tròn cắt mất — đừng đặt gì quan trọng ở góc.</li>
+</ul>
+</body></html>

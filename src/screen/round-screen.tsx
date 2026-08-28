@@ -69,6 +69,10 @@ const GLOW: Record<FaceMode, string> = {
   speaking: 'shadow-[inset_0_0_80px_rgba(78,217,164,0.28)]',
 };
 
+/** The two wait-ring colours, fixed by `Bong-AI-Layout-cam-ung.html` §3. */
+const RING_TOUCH = '#43a047';
+const RING_SPEECH = '#e53935';
+
 export function RoundScreen() {
   const face = useSimulatorStore((state) => state.face);
   const status = useSimulatorStore((state) => state.status);
@@ -83,6 +87,15 @@ export function RoundScreen() {
   // surface — the thing drawn on it is. See the note in `useDisplayTouch`.
   const overlaid = isOpen(menu) || activity.kind !== null;
   const { displayRef, ripple, pointerHandlers } = useDisplayTouch(tapScreen, !overlaid);
+  // Touch wins: a lesson only ever opens one window at a time, but the mic can
+  // still be flagged as open from the turn before, and two rings would read as
+  // two things to do.
+  const waitRing =
+    activity.waitingFor === 'touch'
+      ? RING_TOUCH
+      : activity.waitingFor === 'speech' || listening
+        ? RING_SPEECH
+        : null;
   // Precedence, strongest first: artwork the backend sent, a face it named,
   // the talking face, then the mood we inferred from the reply.
   const glyph = face.expression
@@ -108,7 +121,12 @@ export function RoundScreen() {
             {isAwake && face.imageUrl ? (
               // Fills the circle edge to edge. The parent clips it, which is
               // what the real display does — nothing exists outside the circle.
-              <img src={face.imageUrl} alt="" className="h-full w-full object-cover" />
+              <img
+                key={`${face.imageUrl}-${face.imageSeq ?? 0}`}
+                src={face.imageUrl}
+                alt=""
+                className="h-full w-full object-cover"
+              />
             ) : (
               <div className="flex flex-col items-center gap-4 px-10 text-center">
                 <span
@@ -136,11 +154,16 @@ export function RoundScreen() {
               />
             )}
 
-            {/* Listening ring, drawn on the device rather than only in the
-                controls: a tap on the glass is the thing that turned the mic
-                on, so the glass has to be where you see that it worked. */}
-            {listening && (
-              <div className="pointer-events-none absolute inset-2 animate-pulse rounded-full ring-2 ring-mint-400/60" />
+            {/* The wait ring, drawn on the device rather than only in the
+                controls: it is the answer to the one problem a device with no
+                words has — the child cannot tell when it is their turn.
+                Green for a hand, red for a voice. Over the picture, never
+                instead of it, and never both at once. */}
+            {isAwake && waitRing && (
+              <div
+                style={{ borderColor: waitRing }}
+                className="pointer-events-none absolute inset-0 z-30 animate-pulse rounded-full border-[10px]"
+              />
             )}
 
             {ripple && (
@@ -470,6 +493,9 @@ function useDisplayTouch(onTap: () => void, enabled: boolean) {
     starts.current.delete(event.pointerId);
     if (!start) return;
 
+    // A drag deliberately does nothing here. Zones and swipes are only
+    // meaningful inside a question window, and that window belongs to
+    // `ActivityView` — this hook is just "wake up / talk to me".
     const end = pointAt(event);
     if (end && isInsideDisplay(end) && isTap(start, end)) onTap();
   };

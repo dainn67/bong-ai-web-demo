@@ -10,11 +10,13 @@
 
 import { Panel } from './dev-drawer';
 import { useSimulatorStore } from '../store/simulator-store';
+import { canPause, phaseLabel } from '../screen/activity-state';
 
 export function LessonPanel() {
   const activity = useSimulatorStore((state) => state.activity);
   const status = useSimulatorStore((state) => state.lessonDebug);
   const skip = useSimulatorStore((state) => state.skipLessonNode);
+  const togglePause = useSimulatorStore((state) => state.toggleActivityPause);
   const metadataUrl = useSimulatorStore((state) => state.lessonMetadataUrl);
 
   // Lessons only, like the app — a story has no nodes to step through, and its
@@ -50,14 +52,32 @@ export function LessonPanel() {
         {status ?? (activity.error ?? 'chưa có node nào — bài học đang tải')}
       </p>
 
-      <button
-        type="button"
-        onClick={skip}
-        disabled={!ready}
-        className="rounded-xl bg-sunny-400 px-3 py-2 text-sm font-bold text-ink-900 transition active:scale-95 disabled:opacity-40"
-      >
-        ⏭ Node tiếp theo
-      </button>
+      {/* The phase, which the glass no longer shows while a picture is up. */}
+      {phaseLabel(activity) && (
+        <p className="text-xs font-medium text-ink-500">{phaseLabel(activity)}</p>
+      )}
+
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={skip}
+          disabled={!ready}
+          className="flex-1 rounded-xl bg-sunny-400 px-3 py-2 text-sm font-bold text-ink-900 transition active:scale-95 disabled:opacity-40"
+        >
+          ⏭ Node tiếp theo
+        </button>
+
+        {/* Also here, not only on the glass: an illustrated lesson fills the
+            circle, so there is nowhere on the device left to put this. */}
+        <button
+          type="button"
+          onClick={togglePause}
+          disabled={!canPause(activity)}
+          className="rounded-xl bg-cream-300 px-3 py-2 text-sm font-bold text-ink-800 transition active:scale-95 disabled:opacity-40"
+        >
+          {activity.phase === 'paused' ? '▶ Tiếp' : '⏸ Dừng'}
+        </button>
+      </div>
 
       <p className="text-xs leading-snug text-ink-500">
         Nhảy tới node cấp cao kế tiếp theo <em>thứ tự trong danh sách</em>, không

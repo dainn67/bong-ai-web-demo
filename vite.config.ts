@@ -27,7 +27,7 @@ export default defineConfig({
     // there, or the built bundle starts answering lesson fetches with
     // `index.html` and every `response.json()` fails on the doctype.
     proxy: {
-      '/api': { target: process.env.VITE_API_URL || 'http://localhost:8000', changeOrigin: true },
+      '/api': { target: process.env.VITE_API_URL || 'https://bong-api.bcserver.xyz', changeOrigin: true },
       '/cdn': {
         target: cdnProxyTarget,
         changeOrigin: true,

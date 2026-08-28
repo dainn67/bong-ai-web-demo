@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { parseIncoming, toDisplayCommand, toEmotion } from './message-types';
+import {
+  parseIncoming,
+  toDisplayCommand,
+  toEmotion,
+  type LessonQuestionIn,
+  type LessonTouchOut,
+} from './message-types';
 
 describe('parseIncoming', () => {
   it('parses a well-formed frame', () => {
@@ -13,6 +19,71 @@ describe('parseIncoming', () => {
 
   it('rejects frames with no type', () => {
     expect(parseIncoming('{"text":"orphan"}')).toBeNull();
+  });
+
+  /**
+   * The literal examples out of `docs/Bong-AI-Touch-Protocol-V2.md`.
+   *
+   * That document is the contract the backend team builds against, so the
+   * examples in it are worth pinning: renaming a field on this side would
+   * otherwise leave the doc quietly describing a protocol nobody speaks.
+   */
+  describe('touch protocol §3', () => {
+    it('parses the lesson_question example from §3.2', () => {
+      const raw = JSON.stringify({
+        type: 'lesson_question',
+        question_type: 'touch',
+        touch_layout: 'tap4',
+        image_url: 'https://cdn.example.com/assets/animals_quiz.svg',
+        timeout_ms: 10000,
+      });
+
+      const parsed = parseIncoming(raw) as LessonQuestionIn;
+      expect(parsed.type).toBe('lesson_question');
+      expect(parsed.question_type).toBe('touch');
+      expect(parsed.touch_layout).toBe('tap4');
+      expect(parsed.timeout_ms).toBe(10000);
+      expect(parsed.image_url).toBe('https://cdn.example.com/assets/animals_quiz.svg');
+    });
+
+    it('serialises the lesson_touch example from §3.1', () => {
+      const frame: LessonTouchOut = {
+        type: 'lesson_touch',
+        session_id: '1651446a-d89e-46ff-b61b-c4472736ce0b',
+        layout: 'tap4',
+        zone: 'zone1',
+        point: { x: 180, y: 65 },
+        duration_ms: 115,
+      };
+
+      expect(JSON.parse(JSON.stringify(frame))).toEqual({
+        type: 'lesson_touch',
+        session_id: '1651446a-d89e-46ff-b61b-c4472736ce0b',
+        layout: 'tap4',
+        zone: 'zone1',
+        point: { x: 180, y: 65 },
+        duration_ms: 115,
+      });
+    });
+
+    it('omits the optional fields rather than sending them as null', () => {
+      // What a timeout sends. An explicit `"point": null` would have the backend
+      // reading a coordinate that never existed.
+      const frame: LessonTouchOut = {
+        type: 'lesson_touch',
+        session_id: undefined,
+        layout: 'tap4',
+        zone: 'silent',
+        point: undefined,
+        duration_ms: undefined,
+      };
+
+      expect(JSON.parse(JSON.stringify(frame))).toEqual({
+        type: 'lesson_touch',
+        layout: 'tap4',
+        zone: 'silent',
+      });
+    });
   });
 
   it('parses content_catalog frame with lessons, stories and topics', () => {
