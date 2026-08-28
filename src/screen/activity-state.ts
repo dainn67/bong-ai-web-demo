@@ -83,6 +83,29 @@ export function canPause(state: ActivityState): boolean {
   return state.phase === 'playing' || state.phase === 'paused';
 }
 
+/**
+ * The patch that closes a wait window, or null when this one is not ours.
+ *
+ * Narrow on both axes deliberately. It only fires for the window it was asked
+ * to close, so a speech window ending cannot silently drop a touch layout out
+ * from under an open touch question. And it only rewinds the phase that window
+ * opened, because a window can outlive its activity — a lesson may error or
+ * finish while the child's finger is still on the glass, and stamping
+ * `playing` over that would hide what happened.
+ */
+export function closeWaitWindow(
+  activity: ActivityState,
+  waitingFor: 'speech' | 'touch',
+  from: ActivityPhase,
+): Partial<ActivityState> | null {
+  if (activity.waitingFor !== waitingFor) return null;
+  return {
+    ...(activity.phase === from ? { phase: 'playing' as const } : {}),
+    waitingFor: null,
+    touchLayout: null,
+  };
+}
+
 /** Vietnamese status line for the phase, shown under the caption. */
 export function phaseLabel(state: ActivityState): string | null {
   switch (state.phase) {

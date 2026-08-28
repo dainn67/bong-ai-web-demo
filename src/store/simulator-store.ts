@@ -42,7 +42,7 @@ import {
   type MenuAction,
   type MenuState,
 } from '../screen/menu-state';
-import { IDLE_ACTIVITY, type ActivityState } from '../screen/activity-state';
+import { closeWaitWindow, IDLE_ACTIVITY, type ActivityState } from '../screen/activity-state';
 import {
   parseTouchLayout,
   type TouchClassificationResult,
@@ -395,6 +395,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     mic = null;
     clearUnmuteTimer();
     set({ micState: 'off', micLevel: 0 });
+    // Nothing on the server-driven path clears a speech window otherwise, so
+    // the red ring would stay lit for the rest of the lesson. The three callers
+    // — disconnect, the toggle, and an activity ending — are all moments the
+    // child's turn is genuinely over.
+    const closed = closeWaitWindow(get().activity, 'speech', 'listening');
+    if (closed) get().setActivity(closed);
   },
 
   toggleListening: () => {
@@ -434,6 +440,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     if (serverQuestion) {
       client?.sendTouch(serverQuestion, result, detail);
       serverQuestion = null;
+      // Nobody else will close this one. A local lesson's window is closed by
+      // `V2Engine.askByTouch` and the dev drawer closes the window it opened,
+      // but a server question has no owner on this side of the socket. Left
+      // open, the green ring stays lit and the glass stays armed for taps that
+      // reach nothing — §4 of the touch protocol has it go out immediately.
+      const closed = closeWaitWindow(get().activity, 'touch', 'touching');
+      if (closed) get().setActivity(closed);
     }
 
     lesson?.dispatchTouch(result);
