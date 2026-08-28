@@ -317,7 +317,16 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         set({ framesIn: get().framesIn + 1 });
         ensurePlayer(set, get).decode(frame);
       },
-      onLog: (direction, type, payload) => appendPacket(set, get, direction, type, payload),
+      onLog: (direction, type, payload) => {
+        appendPacket(set, get, direction, type, payload);
+        // Say it on the glass, not only in the inspector. A failed OTA lookup
+        // is silent otherwise — the badge quietly tries the fallback address
+        // and, when that is wrong too, just goes back to sleep looking like
+        // nothing was ever pressed.
+        if (type === 'ota_failed') {
+          setButtonNotice(set, get, 'Không hỏi được máy chủ — thử địa chỉ dự phòng');
+        }
+      },
     });
     void client.connect();
     startHardwareTimers(set, get);

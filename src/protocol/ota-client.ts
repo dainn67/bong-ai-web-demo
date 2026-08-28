@@ -8,6 +8,21 @@
 
 import type { DeviceConfig } from '../config/device-config';
 
+/**
+ * How long to wait for the OTA endpoint before giving up on it.
+ *
+ * Not a nicety. `WsClient.connect()` awaits this before it opens anything, so
+ * a URL that hangs rather than refusing wedges the whole simulator on "Bống
+ * đang dậy…" with no error, no fallback and no way out but a reload — which is
+ * exactly what a stale OTA address left in `localStorage` does. Real firmware
+ * would time out and try the address it already knows; so does this now.
+ *
+ * Eight seconds: long enough for a cold serverless start on a bad connection,
+ * short enough that a person watching a sleeping toy has not yet concluded the
+ * thing is broken.
+ */
+export const OTA_TIMEOUT_MS = 8_000;
+
 export interface OtaResult {
   wsUrl: string;
   token: string;
@@ -42,14 +57,21 @@ function handshakeBody(config: DeviceConfig) {
 /**
  * Asks the OTA endpoint where to open the chat socket.
  *
- * Throws on any failure — network, non-2xx, or a response missing the URL.
- * Callers are expected to catch and fall back to the configured WebSocket URL,
- * because a dead OTA endpoint should not stop you testing the voice loop.
+ * Throws on any failure — network, non-2xx, a response missing the URL, or the
+ * request outstaying `timeoutMs`. Callers are expected to catch and fall back
+ * to the configured WebSocket URL, because a dead OTA endpoint should not stop
+ * you testing the voice loop.
+ *
+ * `timeoutMs` is a parameter rather than a constant read inside because
+ * `AbortSignal.timeout` runs on a native timer that fake clocks cannot move —
+ * the only way to prove a hang actually ends is to hand the test a small one.
  */
 export async function fetchChatEndpoint(
   config: DeviceConfig,
   signal?: AbortSignal,
+  timeoutMs: number = OTA_TIMEOUT_MS,
 ): Promise<OtaResult> {
+  const timeout = AbortSignal.timeout(timeoutMs);
   const response = await fetch(config.otaUrl, {
     method: 'POST',
     headers: {
@@ -58,7 +80,7 @@ export async function fetchChatEndpoint(
       'Client-Id': config.macAddress,
     },
     body: JSON.stringify(handshakeBody(config)),
-    signal,
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   });
 
   if (!response.ok) {
