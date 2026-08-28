@@ -42,6 +42,8 @@ import { IDLE_ACTIVITY, type ActivityState } from '../screen/activity-state';
 import { parseCatalog, type LessonSummary } from '../lessons/catalog';
 import { StoryPlayer } from '../content/story';
 import { LessonRunner } from '../lessons/lesson-runner';
+import type { TouchZonesConfig, SwipeDirection } from '../screen/touch-input';
+
 
 export interface PacketLogEntry {
   id: number;
@@ -138,6 +140,9 @@ interface SimulatorState {
   childName: string | null;
   loginModalOpen: boolean;
   setLoginModalOpen: (open: boolean) => void;
+  touchZones: TouchZonesConfig | null;
+  sendTouchEvent: (gesture: 'tap' | 'swipe', zone?: string, direction?: SwipeDirection) => void;
+
 
   updateConfig: (patch: Partial<DeviceConfig>) => void;
   connect: () => void;
@@ -256,6 +261,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   childName: null,
   loginModalOpen: false,
   setLoginModalOpen: (open) => set({ loginModalOpen: open }),
+  touchZones: null,
+  sendTouchEvent: (gesture, zone, direction) => {
+    client?.sendTouch(gesture, zone, direction);
+    set({ touchZones: null });
+  },
+
 
   updateConfig: (patch) => {
     const config = { ...get().config, ...patch };
@@ -623,7 +634,7 @@ function stopActivity(set: Setter, get: Getter): void {
   noticeClearTimer = null;
   // The mic belongs to the lesson while one is running; hand it back.
   if (get().micState === 'listening') get().stopListening();
-  set({ micLevel: 0 });
+  set({ micLevel: 0, touchZones: null });
 }
 
 /** Starts a story via server WebSocket stream. */
@@ -735,6 +746,20 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
     return;
   }
 
+  const displayCmd = toDisplayCommand(message);
+  if (displayCmd?.kind === 'touch_zones') {
+    set({
+      touchZones: {
+        mode: displayCmd.mode,
+        zonesCount: displayCmd.zones_count,
+        layout: displayCmd.layout,
+        timeoutMs: displayCmd.timeout_ms,
+      },
+    });
+  } else if (displayCmd?.kind === 'clear_touch_zones') {
+    set({ touchZones: null });
+  }
+
   // Update activity state based on server events during streaming
   const { activity } = get();
   if (activity.kind) {
@@ -754,14 +779,13 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
       }
     }
 
-    const displayCmd = toDisplayCommand(message);
     if (displayCmd?.kind === 'image') {
       set({ activity: { ...get().activity, imageUrl: displayCmd.url } });
     } else if (displayCmd?.kind === 'clear' || displayCmd?.kind === 'expression') {
       set({ activity: { ...get().activity, imageUrl: null } });
     }
-
   }
+
 
   if (message.type === 'tts' && message.state === 'sentence_start') {
     // The decoder's synthesised timestamps restart with every sentence, or a

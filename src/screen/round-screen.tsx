@@ -26,7 +26,9 @@ import type { Emotion, Expression } from '../protocol/message-types';
 import type { FaceMode } from './face-state-machine';
 import { ScreenMenu } from './menu';
 import { ActivityView } from './activity-view';
+import { TouchZonesOverlay } from './touch-zones-overlay';
 import { isOpen } from './menu-state';
+
 
 /**
  * Placeholder faces.
@@ -77,12 +79,15 @@ export function RoundScreen() {
   const tapScreen = useSimulatorStore((state) => state.tapScreen);
   const menu = useSimulatorStore((state) => state.menu);
   const activity = useSimulatorStore((state) => state.activity);
+  const touchZones = useSimulatorStore((state) => state.touchZones);
+  const sendTouchEvent = useSimulatorStore((state) => state.sendTouchEvent);
 
   const isAwake = status === 'connected';
-  // While the menu or an activity owns the glass, the glass is not an input
+  // While the menu, an activity or touch zones own the glass, the glass is not an input
   // surface — the thing drawn on it is. See the note in `useDisplayTouch`.
-  const overlaid = isOpen(menu) || activity.kind !== null;
+  const overlaid = isOpen(menu) || activity.kind !== null || touchZones !== null;
   const { displayRef, ripple, pointerHandlers } = useDisplayTouch(tapScreen, !overlaid);
+
   // Precedence, strongest first: artwork the backend sent, a face it named,
   // the talking face, then the mood we inferred from the reply.
   const glyph = face.expression
@@ -166,8 +171,10 @@ export function RoundScreen() {
                 activity wins over the menu: starting one closes the other. */}
             <ActivityView />
             <ScreenMenu />
+            {touchZones && <TouchZonesOverlay config={touchZones} onTouch={sendTouchEvent} />}
 
             {/* Glass: a fixed highlight across the top, so it reads as covered. */}
+
             <div className="pointer-events-none absolute inset-0 rounded-full bg-gradient-to-b from-white/12 via-transparent to-transparent" />
           </div>
         </div>

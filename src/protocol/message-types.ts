@@ -94,12 +94,16 @@ export function toExpression(value: unknown): Expression | null {
  */
 export interface DisplayIn {
   type: 'display';
-  action: 'expression' | 'show_image';
+  action: 'expression' | 'show_image' | 'set_touch_zones' | 'clear_touch_zones';
   name?: string;
   url?: string;
   width?: number;
   height?: number;
   format?: string;
+  mode?: 'tap' | 'swipe';
+  zones_count?: number;
+  layout?: string;
+  timeout_ms?: number;
 }
 
 export interface DisplayExpressionIn {
@@ -135,6 +139,14 @@ export interface CustomIn {
 export type DisplayCommand =
   | { kind: 'expression'; name: Expression }
   | { kind: 'image'; url: string }
+  | {
+      kind: 'touch_zones';
+      mode: 'tap' | 'swipe';
+      zones_count: number;
+      layout: string;
+      timeout_ms: number;
+    }
+  | { kind: 'clear_touch_zones' }
   /** An image frame carrying no URL is the server clearing the screen. */
   | { kind: 'clear' };
 
@@ -158,7 +170,22 @@ export function toDisplayCommand(message: IncomingMessage): DisplayCommand | nul
       return url ? { kind: 'image', url } : { kind: 'clear' };
     }
   }
-  if (message.type === 'display') return fromParts(message.action, message.name, message.url);
+  if (message.type === 'display') {
+    const d = message as DisplayIn;
+    if (d.action === 'set_touch_zones') {
+      return {
+        kind: 'touch_zones',
+        mode: d.mode || 'tap',
+        zones_count: d.zones_count || 2,
+        layout: d.layout || 'split_vertical',
+        timeout_ms: d.timeout_ms || 10000,
+      };
+    }
+    if (d.action === 'clear_touch_zones') {
+      return { kind: 'clear_touch_zones' };
+    }
+    return fromParts(d.action, d.name, d.url);
+  }
   return null;
 }
 
@@ -176,6 +203,7 @@ function fromParts(
   if (action === 'show_image') return url ? { kind: 'image', url } : { kind: 'clear' };
   return null;
 }
+
 
 /** Model-context-protocol payload. Safe to ignore — we declare `mcp: false`. */
 export interface McpIn {
@@ -321,4 +349,12 @@ export interface PingOut {
   type: 'ping';
 }
 
-export type OutgoingMessage = HelloOut | ListenOut | AbortOut | PingOut;
+export interface TouchOut {
+  type: 'touch_event';
+  gesture: 'tap' | 'swipe';
+  zone?: string;
+  direction?: 'swipe_up' | 'swipe_down' | 'swipe_left' | 'swipe_right';
+}
+
+export type OutgoingMessage = HelloOut | ListenOut | AbortOut | PingOut | TouchOut;
+

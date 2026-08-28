@@ -204,6 +204,18 @@ export class WsClient {
     this.sendRaw({ type: 'start_topic', topic_id: topicId });
   }
 
+  /** Send touch or swipe event to backend. */
+  sendTouch(gesture: 'tap' | 'swipe', zone?: string, direction?: string): void {
+    const payload: Record<string, unknown> = {
+      type: 'touch_event',
+      gesture,
+    };
+    if (zone) payload.zone = zone;
+    if (direction) payload.direction = direction;
+    this.sendRaw(payload as { type: string } & Record<string, unknown>);
+  }
+
+
   /**
    * Ships a frame outside the typed conversation union.
    *

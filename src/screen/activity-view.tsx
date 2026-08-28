@@ -35,13 +35,15 @@ export function ActivityView() {
       {hasImage && (
         <>
           <img
+            key={activity.imageUrl!}
             src={activity.imageUrl!}
             alt=""
-            className="absolute inset-0 h-full w-full object-cover pointer-events-none"
+            className="absolute inset-0 h-full w-full object-cover pointer-events-none transition-opacity duration-500 animate-fadeIn"
           />
           <div className="absolute inset-0 bg-gradient-to-b from-ink-950/70 via-ink-950/20 to-ink-950/85 pointer-events-none" />
         </>
       )}
+
 
       {/* Same budget as the menu: the inscribed square, spent in full. */}
       <div className="relative z-10 flex w-[76%] flex-col items-center gap-1.5">
