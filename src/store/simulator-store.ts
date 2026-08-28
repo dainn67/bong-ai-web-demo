@@ -20,7 +20,11 @@ import {
 } from '../hardware/button-press';
 import { MicCapture } from '../audio/mic-capture';
 import { OpusPlayer } from '../audio/opus-player';
-import { toDisplayCommand, type IncomingMessage } from '../protocol/message-types';
+import {
+  toDisplayCommand,
+  type IncomingMessage,
+  type LessonQuestionIn,
+} from '../protocol/message-types';
 import type { ConnectionStatus } from '../protocol/ws-client';
 import { WsClient } from '../protocol/ws-client';
 import {
@@ -38,9 +42,16 @@ import {
   type MenuAction,
   type MenuState,
 } from '../screen/menu-state';
-import { IDLE_ACTIVITY, type ActivityState } from '../screen/activity-state';
+import { closeWaitWindow, IDLE_ACTIVITY, type ActivityState } from '../screen/activity-state';
+import {
+  parseTouchLayout,
+  type TouchClassificationResult,
+  type TouchDetail,
+  type TouchLayoutType,
+} from '../screen/touch-layout';
+import { DEFAULT_TOUCH_TIMEOUT_MS } from '../lessons/lesson-v2-types';
 import { parseCatalog, type LessonSummary } from '../lessons/catalog';
-import { StoryPlayer } from '../content/story';
+import { StoryPlayer, loadStory } from '../content/story';
 import { LessonRunner } from '../lessons/lesson-runner';
 import type { TouchZonesConfig, SwipeDirection } from '../screen/touch-input';
 
@@ -156,6 +167,20 @@ interface SimulatorState {
   toggleListening: () => void;
   /** What a tap on the glass does, which depends on whether the badge is awake. */
   tapScreen: () => void;
+  /**
+   * Hands a classified touch/swipe to whoever is waiting for one.
+   *
+   * That is the local lesson engine, the server, or the dev drawer, depending on
+   * who opened the window — the caller does not need to know which.
+   */
+  dispatchTouch: (result: TouchClassificationResult, detail?: TouchDetail) => void;
+  /**
+   * The last classified touch, for the dev drawer.
+   *
+   * Instrumentation only — no device reports this to anyone. `at` is what makes
+   * two identical results in a row distinguishable to a subscriber.
+   */
+  lastTouch: ({ result: TouchClassificationResult; at: number } & Partial<TouchDetail>) | null;
   setVolume: (volume: number) => void;
 
   setHardware: (patch: Partial<HardwareState>) => void;
@@ -224,6 +249,22 @@ const bootedAt = Date.now();
 let unmuteTimer: ReturnType<typeof setTimeout> | null = null;
 let lastBargeIn = 0;
 let nextPacketId = 0;
+/**
+ * The layout of a touch window the *server* opened, or null.
+ *
+ * Doubles as the flag for whether an answer goes back on the wire. A local
+ * lesson and the dev drawer both open windows too, and firing `lesson_touch` at
+ * a backend that never asked would have it grading answers to questions it did
+ * not set.
+ */
+let serverQuestion: TouchLayoutType | null = null;
+/** Closes a server-opened question window when `timeout_ms` runs out. */
+let questionTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearQuestionTimer(): void {
+  if (questionTimer) clearTimeout(questionTimer);
+  questionTimer = null;
+}
 
 export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   config: loadConfig(),
@@ -258,6 +299,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   activity: IDLE_ACTIVITY,
   lessonDebug: null,
   lessonPosition: null,
+  lastTouch: null,
   childName: null,
   loginModalOpen: false,
   setLoginModalOpen: (open) => set({ loginModalOpen: open }),
@@ -286,7 +328,16 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         set({ framesIn: get().framesIn + 1 });
         ensurePlayer(set, get).decode(frame);
       },
-      onLog: (direction, type, payload) => appendPacket(set, get, direction, type, payload),
+      onLog: (direction, type, payload) => {
+        appendPacket(set, get, direction, type, payload);
+        // Say it on the glass, not only in the inspector. A failed OTA lookup
+        // is silent otherwise — the badge quietly tries the fallback address
+        // and, when that is wrong too, just goes back to sleep looking like
+        // nothing was ever pressed.
+        if (type === 'ota_failed') {
+          setButtonNotice(set, get, 'Không hỏi được máy chủ — thử địa chỉ dự phòng');
+        }
+      },
     });
     void client.connect();
     startHardwareTimers(set, get);
@@ -364,6 +415,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     mic = null;
     clearUnmuteTimer();
     set({ micState: 'off', micLevel: 0 });
+    // Nothing on the server-driven path clears a speech window otherwise, so
+    // the red ring would stay lit for the rest of the lesson. The three callers
+    // — disconnect, the toggle, and an activity ending — are all moments the
+    // child's turn is genuinely over.
+    const closed = closeWaitWindow(get().activity, 'speech', 'listening');
+    if (closed) get().setActivity(closed);
   },
 
   toggleListening: () => {
@@ -385,6 +442,34 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     else if (status === 'connected') toggleListening();
     // Mid-connection a tap is ignored rather than queued: the wake is already
     // under way, and a second one would tear down the socket that is opening.
+    //
+    // Nothing here needs to guard against a running activity — while one owns
+    // the glass `RoundScreen` does not arm this at all, and the touch that
+    // matters then is a question's, which `ActivityView` handles.
+  },
+
+  dispatchTouch: (result, detail) => {
+    set({ lastTouch: { result, at: Date.now(), ...detail } });
+
+    // Answered, so the window's own clock is done with.
+    clearQuestionTimer();
+
+    // Only a question the server opened gets an answer on the wire. A local
+    // lesson's question is the engine's business and the server was never told
+    // it existed; the dev drawer's is not a question at all.
+    if (serverQuestion) {
+      client?.sendTouch(serverQuestion, result, detail);
+      serverQuestion = null;
+      // Nobody else will close this one. A local lesson's window is closed by
+      // `V2Engine.askByTouch` and the dev drawer closes the window it opened,
+      // but a server question has no owner on this side of the socket. Left
+      // open, the green ring stays lit and the glass stays armed for taps that
+      // reach nothing — §4 of the touch protocol has it go out immediately.
+      const closed = closeWaitWindow(get().activity, 'touch', 'touching');
+      if (closed) get().setActivity(closed);
+    }
+
+    lesson?.dispatchTouch(result);
   },
 
   setVolume: (volume) => {
@@ -571,12 +656,22 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       menu: INITIAL_MENU_STATE,
       lessonDebug: null,
       lessonPosition: null,
+      lastTouch: null,
     });
   },
 
   toggleActivityPause: () => {
     const { activity } = get();
     if (!activity.kind) return;
+
+    // A local lesson is driven from `LessonRunner`, not from the socket, so its
+    // engine has to be told directly. Without this the button moved the label
+    // and nothing else: the clips kept playing.
+    if (lesson) {
+      void lesson.togglePause();
+      return;
+    }
+
     if (activity.phase === 'paused') {
       void ensurePlayer(set, get).resume();
       if (activity.kind === 'story') client?.resumeStory();
@@ -632,18 +727,47 @@ function stopActivity(set: Setter, get: Getter): void {
   lesson = null;
   if (noticeClearTimer) clearTimeout(noticeClearTimer);
   noticeClearTimer = null;
+  // Any question window dies with the activity that posed it, and an answer
+  // arriving afterwards belongs to nobody.
+  clearQuestionTimer();
+  serverQuestion = null;
   // The mic belongs to the lesson while one is running; hand it back.
   if (get().micState === 'listening') get().stopListening();
-  set({ micLevel: 0, touchZones: null });
+  set({ micLevel: 0, touchZones: null, face: { ...get().face, said: '', heard: '' } });
+
 }
 
-/** Starts a story via server WebSocket stream. */
+/** Starts a story. Plays via StoryPlayer if metadata is available, and informs server. */
 async function startStory(set: Setter, get: Getter, entry: LessonSummary): Promise<void> {
   stopActivity(set, get);
   set({
     menu: INITIAL_MENU_STATE,
-    activity: { ...IDLE_ACTIVITY, kind: 'story', title: entry.title, phase: 'playing' },
+    activity: { ...IDLE_ACTIVITY, kind: 'story', title: entry.title, imageUrl: entry.coverUrl ?? null, phase: 'playing' },
   });
+
+  if (entry.metadataUrl) {
+    try {
+      const controller = new AbortController();
+      activityFetch = controller;
+      const loaded = await loadStory(entry.metadataUrl, controller.signal);
+      activityFetch = null;
+      story = new StoryPlayer(loaded, {
+        onCue: (_index, text) => {
+          set({ activity: { ...get().activity, caption: text } });
+        },
+        onEnded: () => {
+          set({ activity: { ...get().activity, phase: 'finished' } });
+        },
+        onError: (err) => {
+          set({ activity: { ...get().activity, phase: 'error', error: err } });
+        },
+      });
+      await story.play();
+      return;
+    } catch {
+      // If fetching fails or it's a websocket-only story, fall back to websocket stream
+    }
+  }
 
   if (get().status === 'disconnected') {
     await get().connect();
@@ -732,6 +856,11 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
     return;
   }
 
+  if (message.type === 'lesson_question') {
+    openServerQuestion(get, message);
+    return;
+  }
+
   if (message.type === 'activity_state') {
     const actState = message.state;
     if (actState === 'paused') {
@@ -780,7 +909,17 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
     }
 
     if (displayCmd?.kind === 'image') {
-      set({ activity: { ...get().activity, imageUrl: displayCmd.url } });
+      // Sequence bumped alongside the url, so the server re-sending the same
+      // GIF for a second branch plays it again instead of showing a frozen
+      // last frame. §3.3 of the touch protocol leans on this.
+      const previous = get().activity;
+      set({
+        activity: {
+          ...previous,
+          imageUrl: displayCmd.url,
+          imageSeq: (previous.imageSeq ?? 0) + 1,
+        },
+      });
     } else if (displayCmd?.kind === 'clear' || displayCmd?.kind === 'expression') {
       set({ activity: { ...get().activity, imageUrl: null } });
     }
@@ -800,6 +939,81 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
   if (message.state === 'stop') {
     idleTimer = setTimeout(() => set({ face: toIdle(get().face) }), IDLE_DELAY_MS);
   }
+}
+
+/**
+ * Opens the question window the server asked for — §3.2 of the touch protocol.
+ *
+ * The server-driven twin of what `V2Engine` does for a local lesson: put the
+ * artwork up, light the wait ring, start the clock. Without it a backend-run
+ * lesson can show a picture and then wait forever for an answer the glass gave
+ * the child no way to give.
+ */
+function openServerQuestion(get: Getter, message: LessonQuestionIn): void {
+  clearQuestionTimer();
+  serverQuestion = null;
+
+  const { activity, setActivity } = get();
+  // A question can arrive before anything has claimed the glass: a lesson the
+  // backend drives never went through `startEntry`. Claim it here, or
+  // `ActivityView` renders nothing and the child watches a face while the badge
+  // waits for an answer.
+  const claim: Partial<ActivityState> = activity.kind
+    ? {}
+    : { kind: 'lesson', title: 'Bài học Bống', error: null };
+
+  // A fresh url restarts the animation; no url leaves whatever is up alone.
+  const artwork: Partial<ActivityState> = message.image_url
+    ? { imageUrl: message.image_url, imageSeq: (activity.imageSeq ?? 0) + 1 }
+    : {};
+
+  if (message.question_type === 'speech') {
+    setActivity({ ...claim, ...artwork, phase: 'listening', waitingFor: 'speech', touchLayout: null });
+    // §3.2 describes the speech case as opening the mic, and the mic is ours.
+    void get().startListening();
+    return;
+  }
+
+  const layout = parseTouchLayout(message.touch_layout);
+  if (!layout) {
+    // Same rule as the lesson parser: never open a window against a grid the
+    // artwork was not drawn to. Shown on the glass because in a simulator that
+    // is where whoever is testing the backend is already looking.
+    setActivity({
+      ...claim,
+      ...artwork,
+      notice: `Layout chạm không hợp lệ: "${String(message.touch_layout)}"`,
+    });
+    return;
+  }
+
+  serverQuestion = layout;
+  setActivity({
+    ...claim,
+    ...artwork,
+    phase: 'touching',
+    waitingFor: 'touch',
+    touchLayout: layout,
+    notice: null,
+  });
+
+  const timeoutMs =
+    typeof message.timeout_ms === 'number' && message.timeout_ms > 0
+      ? message.timeout_ms
+      : DEFAULT_TOUCH_TIMEOUT_MS;
+
+  questionTimer = setTimeout(() => {
+    questionTimer = null;
+    // Answered in the meantime — `dispatchTouch` got there first.
+    if (serverQuestion !== layout) return;
+    serverQuestion = null;
+
+    // Reported rather than dropped: otherwise a child who simply does not touch
+    // leaves the badge and the backend each waiting on the other. `silent` is
+    // the name the lesson schema already gives that branch.
+    client?.sendTouch(layout, 'silent');
+    get().setActivity({ phase: 'playing', waitingFor: null, touchLayout: null });
+  }, timeoutMs);
 }
 
 function appendPacket(

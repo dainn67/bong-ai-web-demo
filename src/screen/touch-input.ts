@@ -1,5 +1,5 @@
 /**
- * Turning browser pointer events into touches on a 240×240 round display.
+ * Turning browser pointer events into touches on a 360×360 round display.
  *
  * Pure geometry and timing, no DOM and no React, so the rules that decide what
  * counts as a touch can be tested without a screen to poke at.
@@ -10,12 +10,12 @@
  */
 
 /** The badge's display, in its own pixels. The DOM element is any size. */
-export const DISPLAY_SIZE = 240;
+export const DISPLAY_SIZE = 360;
 
 export interface DevicePoint {
-  /** 0 … 240, left to right. */
+  /** 0 … 360, left to right. */
   x: number;
-  /** 0 … 240, top to bottom. */
+  /** 0 … 360, top to bottom. */
   y: number;
 }
 
@@ -40,7 +40,7 @@ const TAP_TIMEOUT_MS = 700;
  * Maps a point on the rendered element to a point on the device's display.
  *
  * The element is drawn at whatever size the layout gives it; the firmware only
- * ever thinks in its own 240 pixels, so everything above this line does too.
+ * ever thinks in its own 360 pixels, so everything above this line does too.
  */
 export function toDevicePoint(
   clientX: number,

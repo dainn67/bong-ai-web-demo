@@ -5,6 +5,11 @@
  * Field names are the server's, so they stay snake_case — do not "fix" them.
  */
 
+// Type-only, so nothing of the screen layer survives into the bundle here. The
+// touch frames genuinely carry these exact values, and spelling them out beats
+// a `string` that any typo slips through.
+import type { TouchClassificationResult, TouchLayoutType } from '../screen/touch-layout';
+
 /** Emotions the backend attaches to `llm` frames when `features.emoji` is on. */
 export const EMOTIONS = ['happy', 'sad', 'angry', 'surprised', 'neutral'] as const;
 export type Emotion = (typeof EMOTIONS)[number];
@@ -258,12 +263,29 @@ export interface ActivityStateIn {
   session_id?: string;
 }
 
+/**
+ * The server opening a question window — §3.2 of the touch protocol.
+ *
+ * `touch_layout` stays a bare `string` on purpose. It is whatever the backend
+ * put on the wire, and narrowing it here would only move the lie: the handler
+ * runs it through `parseTouchLayout` and refuses the window if it names none of
+ * the seven, rather than grading a child against a grid the artwork never used.
+ */
+export interface LessonQuestionIn {
+  type: 'lesson_question';
+  question_type: 'touch' | 'speech';
+  touch_layout?: string;
+  timeout_ms?: number;
+  image_url?: string;
+}
+
 export type IncomingMessage =
   | HelloIn
   | SttIn
   | LlmIn
   | TtsIn
   | ListenIn
+  | LessonQuestionIn
   | ActivityStateIn
   | DisplayIn
   | DisplayExpressionIn
@@ -356,5 +378,21 @@ export interface TouchOut {
   direction?: 'swipe_up' | 'swipe_down' | 'swipe_left' | 'swipe_right';
 }
 
-export type OutgoingMessage = HelloOut | ListenOut | AbortOut | PingOut | TouchOut;
+/**
+ * The child's answer to a touch question — §3.1 of the touch protocol.
+ *
+ * Typed against the classifier rather than as bare strings, because unlike an
+ * incoming frame this one is ours to get right: every value that goes out came
+ * from `classifyGesture`, and the compiler may as well say so.
+ */
+export interface LessonTouchOut {
+  type: 'lesson_touch';
+  session_id?: string;
+  layout: TouchLayoutType;
+  zone: TouchClassificationResult;
+  point?: { x: number; y: number };
+  duration_ms?: number;
+}
+
+export type OutgoingMessage = HelloOut | ListenOut | AbortOut | PingOut | LessonTouchOut | TouchOut;
 

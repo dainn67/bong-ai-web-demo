@@ -240,10 +240,17 @@ npm test
 node scripts/fake-server.mjs   # a backend that says what you tell it to
 ```
 
-The live server is intermittent and never sends `display` frames, so the fake
-one is how you exercise screen content and any other reply you need on demand.
-Point the connection panel at `ws://localhost:5181/`, with a dead OTA URL so
-the client falls back to it.
+The live server is intermittent, never sends `display` frames, and has never
+heard of `lesson_question` — so the fake one is how you exercise screen content
+and the touch protocol. Point the connection panel at `ws://localhost:5181/`,
+with a dead OTA URL so the client falls back to it.
+
+It reads as well as talks. After the display demo it asks three questions in a
+row — `tap4` over the four-animal picture, then `swipe`, then a speech one —
+and each waits for the real `lesson_touch` frame to come back before branching.
+Sit on your hands and the client reports `silent` instead, which is the other
+half worth watching: without it the badge and the backend wait on each other
+forever. Every frame in both directions is logged.
 
 Tests cover the pure logic — frame parsing, URL building, the face state
 machine. They run in Node with no DOM, so the whole suite is near-instant.

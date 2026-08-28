@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 360" width="360" height="360">
+  <defs>
+    <clipPath id="circleClip">
+      <circle cx="180" cy="180" r="180" />
+    </clipPath>
+  </defs>
+  <g clip-path="url(#circleClip)">
+    <!-- Zone 1 (Top - MÈO): angle [-45deg, 45deg] -->
+    <path d="M 180,180 L 52.72,52.72 A 180,180 0 0 1 307.28,52.72 Z" fill="#dcfce7" stroke="#ffffff" stroke-width="2.5" />
+    <text x="180" y="70" text-anchor="middle" font-size="38" dominant-baseline="central">🐱</text>
+    <text x="180" y="105" text-anchor="middle" font-size="13" font-weight="bold" fill="#166534" font-family="sans-serif">1. CON MÈO</text>
+
+    <!-- Zone 2 (Right - CHÓ): angle [45deg, 135deg] -->
+    <path d="M 180,180 L 307.28,52.72 A 180,180 0 0 1 307.28,307.28 Z" fill="#e0f2fe" stroke="#ffffff" stroke-width="2.5" />
+    <text x="290" y="165" text-anchor="middle" font-size="38" dominant-baseline="central">🐶</text>
+    <text x="290" y="200" text-anchor="middle" font-size="13" font-weight="bold" fill="#075985" font-family="sans-serif">2. CON CHÓ</text>
+
+    <!-- Zone 3 (Bottom - VOI): angle [135deg, 225deg] -->
+    <path d="M 180,180 L 307.28,307.28 A 180,180 0 0 1 52.72,307.28 Z" fill="#ffedd5" stroke="#ffffff" stroke-width="2.5" />
+    <text x="180" y="295" text-anchor="middle" font-size="38" dominant-baseline="central">🐘</text>
+    <text x="180" y="260" text-anchor="middle" font-size="13" font-weight="bold" fill="#9a3412" font-family="sans-serif">3. CON VOI</text>
+
+    <!-- Zone 4 (Left - KHỈ): angle [225deg, 315deg] -->
+    <path d="M 180,180 L 52.72,307.28 A 180,180 0 0 1 52.72,52.72 Z" fill="#fce7f3" stroke="#ffffff" stroke-width="2.5" />
+    <text x="70" y="165" text-anchor="middle" font-size="38" dominant-baseline="central">🐒</text>
+    <text x="70" y="200" text-anchor="middle" font-size="13" font-weight="bold" fill="#9d174d" font-family="sans-serif">4. CON KHỈ</text>
+
+    <!-- Dead Zone at Center (r = 45px) -->
+    <circle cx="180" cy="180" r="45" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 3" />
+    <text x="180" y="174" text-anchor="middle" font-size="11" font-weight="bold" fill="#64748b" font-family="sans-serif">VÙNG CHẾT</text>
+    <text x="180" y="188" text-anchor="middle" font-size="9" fill="#94a3b8" font-family="sans-serif">(cham_khac)</text>
+  </g>
+  <circle cx="180" cy="180" r="179" fill="none" stroke="#334155" stroke-width="2" />
+</svg>

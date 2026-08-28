@@ -17,6 +17,10 @@ import { LessonMic } from './lesson-mic';
 import { parseGraph } from './lesson-graph';
 import { LinearEngine, parseLinear } from './linear-engine';
 
+import { isLessonV2, parseLessonV2 } from './lesson-v2-parser';
+import { V2Engine } from './v2-engine';
+import type { TouchClassificationResult } from '../screen/touch-layout';
+
 export interface LessonRunnerHandlers {
   onActivity: (patch: Partial<ActivityState>) => void;
   getVolume: () => number;
@@ -26,7 +30,7 @@ export class LessonRunner {
   private readonly player = new GroupPlayer();
   private readonly mic = new LessonMic();
   private readonly data = new LessonDataStore();
-  private engine: GraphEngine | LinearEngine | null = null;
+  private engine: V2Engine | GraphEngine | LinearEngine | null = null;
   private readonly abort = new AbortController();
 
   private readonly summary: LessonSummary;
@@ -77,8 +81,31 @@ export class LessonRunner {
       title: this.summary.title,
     };
 
-    // The format is detected from which key is present, exactly as the app
-    // does: `nodes` is a v2 graph, `parts` is a v1 linear lesson.
+    // 1. Version 2 (indexes[], parallel audio[] + visual[]).
+    //
+    // Decided by `version` and nothing else — §8 forbids inferring the format
+    // from which arrays happen to be present. So a file that says 2 and then
+    // does not parse is a broken version 2 file, and saying so beats re-reading
+    // it under version 1's rules and playing something subtly wrong.
+    if (isLessonV2(raw)) {
+      const v2Graph = parseLessonV2(raw, {
+        phone: account.phone,
+        voiceId: account.voiceId,
+        bongVolume: account.bongVolume,
+      });
+      if (!v2Graph) {
+        this.handlers.onActivity({
+          phase: 'error',
+          error: 'Bài học khai "version": 2 nhưng thiếu mảng "indexes"',
+        });
+        return;
+      }
+      this.engine = new V2Engine({ ...common, graph: v2Graph, data: this.data }, handlers);
+      await this.engine.start();
+      return;
+    }
+
+    // 2. Version 1 legacy Graph format (flat nodes[])
     if (isRecord(raw) && Array.isArray(raw.nodes)) {
       const graph = parseGraph(raw, {
         phone: account.phone,
@@ -90,6 +117,7 @@ export class LessonRunner {
       return;
     }
 
+    // 3. Version 1 linear lesson (parts[])
     if (isRecord(raw) && Array.isArray(raw.parts)) {
       this.engine = new LinearEngine({ ...common, lesson: parseLinear(raw) }, handlers);
       await this.engine.start();
@@ -100,6 +128,12 @@ export class LessonRunner {
       phase: 'error',
       error: 'Không nhận dạng được định dạng bài học',
     });
+  }
+
+  dispatchTouch(result: TouchClassificationResult): void {
+    if (this.engine instanceof V2Engine) {
+      this.engine.dispatchTouch(result);
+    }
   }
 
   private async loadAccount(): Promise<Account | null> {

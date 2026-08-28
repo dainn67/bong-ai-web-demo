@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 360" width="360" height="360">
+  <defs>
+    <clipPath id="circleClip"><circle cx="180" cy="180" r="180" /></clipPath>
+  </defs>
+  <g clip-path="url(#circleClip)">
+    <!-- Zone 1 (Top: [-36deg, 36deg]) -->
+    <path d="M 180,180 L 74.2,34.38 A 180,180 0 0 1 285.8,34.38 Z" fill="#fef08a" stroke="#ffffff" stroke-width="2" />
+    <text x="180" y="65" text-anchor="middle" font-size="34" dominant-baseline="central">⭐</text>
+    <text x="180" y="98" text-anchor="middle" font-size="11" font-weight="bold" fill="#854d0e" font-family="sans-serif">1. SAO</text>
+
+    <!-- Zone 2 (Top-Right: [36deg, 108deg]) -->
+    <path d="M 180,180 L 285.8,34.38 A 180,180 0 0 1 351.18,235.62 Z" fill="#fce7f3" stroke="#ffffff" stroke-width="2" />
+    <text x="280" y="145" text-anchor="middle" font-size="34" dominant-baseline="central">❤️</text>
+    <text x="280" y="178" text-anchor="middle" font-size="11" font-weight="bold" fill="#9d174d" font-family="sans-serif">2. TIM</text>
+
+    <!-- Zone 3 (Bottom-Right: [108deg, 180deg]) -->
+    <path d="M 180,180 L 351.18,235.62 A 180,180 0 0 1 180,360 Z" fill="#e0f2fe" stroke="#ffffff" stroke-width="2" />
+    <text x="245" y="275" text-anchor="middle" font-size="34" dominant-baseline="central">☁️</text>
+    <text x="245" y="308" text-anchor="middle" font-size="11" font-weight="bold" fill="#0369a1" font-family="sans-serif">3. MÂY</text>
+
+    <!-- Zone 4 (Bottom-Left: [180deg, 252deg]) -->
+    <path d="M 180,180 L 180,360 A 180,180 0 0 1 8.82,235.62 Z" fill="#dcfce7" stroke="#ffffff" stroke-width="2" />
+    <text x="115" y="275" text-anchor="middle" font-size="34" dominant-baseline="central">🌈</text>
+    <text x="115" y="308" text-anchor="middle" font-size="11" font-weight="bold" fill="#15803d" font-family="sans-serif">4. CẦU VỒNG</text>
+
+    <!-- Zone 5 (Top-Left: [252deg, 324deg]) -->
+    <path d="M 180,180 L 8.82,235.62 A 180,180 0 0 1 74.2,34.38 Z" fill="#ffedd5" stroke="#ffffff" stroke-width="2" />
+    <text x="80" y="145" text-anchor="middle" font-size="34" dominant-baseline="central">⚡</text>
+    <text x="80" y="178" text-anchor="middle" font-size="11" font-weight="bold" fill="#c2410c" font-family="sans-serif">5. CHỚP</text>
+
+    <!-- Dead Zone at Center (r = 63px - 35%) -->
+    <circle cx="180" cy="180" r="63" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 3" />
+    <text x="180" y="174" text-anchor="middle" font-size="12" font-weight="bold" fill="#64748b" font-family="sans-serif">VÙNG CHẾT</text>
+    <text x="180" y="190" text-anchor="middle" font-size="9" fill="#94a3b8" font-family="sans-serif">(cham_khac)</text>
+  </g>
+  <circle cx="180" cy="180" r="179" fill="none" stroke="#334155" stroke-width="2" />
+</svg>
