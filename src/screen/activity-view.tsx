@@ -31,6 +31,7 @@ const TEXT_BOX = 'pointer-events-none relative z-10 flex w-[76%] flex-col items-
 
 export function ActivityView() {
   const activity = useSimulatorStore((state) => state.activity);
+  const face = useSimulatorStore((state) => state.face);
   const togglePause = useSimulatorStore((state) => state.toggleActivityPause);
   const skip = useSimulatorStore((state) => state.skipLessonNode);
   const position = useSimulatorStore((state) => state.lessonPosition);
@@ -43,7 +44,10 @@ export function ActivityView() {
   const status = phaseLabel(activity);
   const listening = activity.phase === 'listening';
   const waitingForTouch = activity.waitingFor === 'touch' && Boolean(activity.touchLayout);
-  const hasImage = Boolean(activity.imageUrl);
+  const effectiveImageUrl = activity.imageUrl || face.imageUrl;
+  const effectiveImageSeq = activity.imageSeq || face.imageSeq;
+  const hasImage = Boolean(effectiveImageUrl);
+
 
   const sampleAt = (event: ReactPointerEvent<HTMLDivElement>): TouchGestureSample => ({
     ...toDevicePoint(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect()),
@@ -96,12 +100,13 @@ export function ActivityView() {
         // rather than on top of it.
         <img
           // Keyed on the sequence too, so showing the same GIF twice restarts it.
-          key={`${activity.imageUrl}-${activity.imageSeq ?? 0}`}
-          src={activity.imageUrl!}
+          key={`${effectiveImageUrl}-${effectiveImageSeq ?? 0}`}
+          src={effectiveImageUrl!}
           alt=""
           className="pointer-events-none absolute inset-0 h-full w-full object-cover"
         />
       ) : (
+
         <div className={TEXT_BOX}>
           <p className="w-full truncate text-[10px] font-bold uppercase tracking-[0.18em] text-cream-200/80">
             {activity.title}

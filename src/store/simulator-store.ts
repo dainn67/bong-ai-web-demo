@@ -868,7 +868,7 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
       player?.stop();
       set({ activity: { ...get().activity, phase: 'paused' } });
     } else if (actState === 'playing') {
-      set({ activity: { ...get().activity, phase: 'playing' } });
+      set({ activity: { ...get().activity, kind: get().activity.kind ?? 'lesson', phase: 'playing' } });
     } else if (actState === 'idle') {
       stopActivity(set, get);
       set({ activity: IDLE_ACTIVITY, menu: INITIAL_MENU_STATE });
@@ -892,6 +892,19 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
 
   // Update activity state based on server events during streaming
   const { activity } = get();
+  if (displayCmd?.kind === 'image') {
+    const previous = get().activity;
+    set({
+      activity: {
+        ...previous,
+        imageUrl: displayCmd.url,
+        imageSeq: (previous.imageSeq ?? 0) + 1,
+      },
+    });
+  } else if (displayCmd?.kind === 'clear' || displayCmd?.kind === 'expression') {
+    set({ activity: { ...get().activity, imageUrl: null } });
+  }
+
   if (activity.kind) {
     if (message.type === 'tts' && message.text) {
       set({
@@ -908,23 +921,8 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
         set({ activity: { ...activity, phase: 'evaluating' } });
       }
     }
-
-    if (displayCmd?.kind === 'image') {
-      // Sequence bumped alongside the url, so the server re-sending the same
-      // GIF for a second branch plays it again instead of showing a frozen
-      // last frame. §3.3 of the touch protocol leans on this.
-      const previous = get().activity;
-      set({
-        activity: {
-          ...previous,
-          imageUrl: displayCmd.url,
-          imageSeq: (previous.imageSeq ?? 0) + 1,
-        },
-      });
-    } else if (displayCmd?.kind === 'clear' || displayCmd?.kind === 'expression') {
-      set({ activity: { ...get().activity, imageUrl: null } });
-    }
   }
+
 
 
   if (message.type === 'tts' && message.state === 'sentence_start') {
