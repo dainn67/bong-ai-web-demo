@@ -1,10 +1,19 @@
 /**
- * The instruments, tucked away.
+ * The instruments, beside the badge rather than over it.
  *
- * Everything in here is scaffolding no real badge has. It stays one click from
- * the demo rather than beside it: the device is the thing being shown, and a
- * packet log competing with it for attention makes the product look like a
- * debugging session.
+ * Everything in here is scaffolding no real badge has, so it stays shut by
+ * default: the device is the thing being shown, and a packet log competing with
+ * it for attention makes the product look like a debugging session.
+ *
+ * Open, though, it sits *next to* the badge on a wide screen and pushes the
+ * page over to make room, because the two are read together. Watching a frame
+ * arrive means tapping the glass and looking at the log in the same breath, and
+ * the old dimmed scrim made that impossible twice over — it swallowed the tap,
+ * and it blurred the screen you were trying to read the result off.
+ *
+ * Narrow screens have nowhere to put a second column, so there it stays an
+ * overlay with a scrim you can dismiss by clicking away. Still no blur: the
+ * badge behind it is information, not decoration.
  */
 
 import { useEffect, type ReactNode } from 'react';
@@ -37,9 +46,12 @@ export function DevDrawer({ open, onClose }: DevDrawerProps) {
 
   return (
     <>
+      {/* Below `lg` only, where the drawer covers the badge anyway. Above it
+          the badge stays live, so anything that ate clicks would defeat the
+          point of having both on screen at once. */}
       <div
         onClick={onClose}
-        className={`fixed inset-0 z-10 bg-ink-900/20 backdrop-blur-[2px] transition-opacity duration-300 ${
+        className={`fixed inset-0 z-10 bg-ink-900/20 transition-opacity duration-300 lg:hidden ${
           open ? 'opacity-100' : 'pointer-events-none opacity-0'
         }`}
       />

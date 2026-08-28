@@ -13,14 +13,27 @@ import { fetchProfile, hasStoredSession, type Account } from './api/auth-client'
  * Everything that is not the device lives behind the Dev button. What is being
  * demonstrated here is a toy a small child talks to, and it should look like
  * one — the packet log is for the person building it, not the person seeing it.
+ *
+ * When the drawer is open on a wide screen the whole page is padded by its
+ * width instead of being covered by it. The drawer is `fixed`, so it takes no
+ * room in the flow and only this padding keeps the badge — and the header's own
+ * buttons — out from under it.
  */
 export default function App() {
   const [devOpen, setDevOpen] = useState(false);
   const setLoginOpen = useSimulatorStore((state) => state.setLoginModalOpen);
 
   return (
-    <main className="flex min-h-screen flex-col">
-      <Header onOpenDev={() => setDevOpen(true)} onOpenLogin={() => setLoginOpen(true)} />
+    <main
+      className={`flex min-h-screen flex-col transition-[padding] duration-300 ease-out ${
+        devOpen ? 'lg:pr-[26rem]' : ''
+      }`}
+    >
+      <Header
+        devOpen={devOpen}
+        onToggleDev={() => setDevOpen((open) => !open)}
+        onOpenLogin={() => setLoginOpen(true)}
+      />
 
       <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-12">
         <RoundScreen />
@@ -34,7 +47,15 @@ export default function App() {
   );
 }
 
-function Header({ onOpenDev, onOpenLogin }: { onOpenDev: () => void; onOpenLogin: () => void }) {
+function Header({
+  devOpen,
+  onToggleDev,
+  onOpenLogin,
+}: {
+  devOpen: boolean;
+  onToggleDev: () => void;
+  onOpenLogin: () => void;
+}) {
   const [account, setAccount] = useState<Account | null>(null);
   const loginModalOpen = useSimulatorStore((state) => state.loginModalOpen);
 
@@ -75,10 +96,15 @@ function Header({ onOpenDev, onOpenLogin }: { onOpenDev: () => void; onOpenLogin
         </button>
 
         <StatusPill />
+        {/* A toggle, not an opener. The drawer no longer covers this button,
+            so pressing it with the panel already open has to do something. */}
         <button
           type="button"
-          onClick={onOpenDev}
-          className="rounded-blob bg-white px-4 py-2 text-sm font-bold text-ink-700 shadow-[0_6px_16px_-10px_rgba(61,44,36,0.6)] transition hover:bg-cream-100 active:scale-95"
+          onClick={onToggleDev}
+          aria-expanded={devOpen}
+          className={`rounded-blob px-4 py-2 text-sm font-bold shadow-[0_6px_16px_-10px_rgba(61,44,36,0.6)] transition active:scale-95 ${
+            devOpen ? 'bg-ink-700 text-cream-100 hover:bg-ink-900' : 'bg-white text-ink-700 hover:bg-cream-100'
+          }`}
         >
           Kỹ thuật
         </button>
