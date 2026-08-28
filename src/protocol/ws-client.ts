@@ -210,7 +210,7 @@ export class WsClient {
   }
 
   /** Send touch or swipe event to backend. */
-  sendTouch(gesture: 'tap' | 'swipe', zone?: string, direction?: string): void {
+  sendTouchEvent(gesture: 'tap' | 'swipe', zone?: string, direction?: string): void {
     const payload: Record<string, unknown> = {
       type: 'touch_event',
       gesture,
@@ -219,6 +219,7 @@ export class WsClient {
     if (direction) payload.direction = direction;
     this.sendRaw(payload as { type: string } & Record<string, unknown>);
   }
+
 
 
   /**

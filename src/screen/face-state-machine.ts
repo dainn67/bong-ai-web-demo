@@ -133,8 +133,11 @@ function reduceDisplay(state: FaceState, message: IncomingMessage): FaceState {
       return { ...state, imageUrl: command.url, imageSeq: state.imageSeq + 1 };
     case 'clear':
       return { ...state, imageUrl: null };
+    default:
+      return state;
   }
 }
+
 
 function reduceTts(state: FaceState, ttsState: string, text?: string): FaceState {
   switch (ttsState) {

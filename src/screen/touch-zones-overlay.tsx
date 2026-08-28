@@ -1,6 +1,5 @@
 import { useState, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import {
-  DISPLAY_SIZE,
   getSwipeDirection,
   getTouchZone,
   toDevicePoint,
@@ -8,6 +7,7 @@ import {
   type TouchStart,
   type TouchZonesConfig,
 } from './touch-input';
+
 
 interface TouchZonesOverlayProps {
   config: TouchZonesConfig;

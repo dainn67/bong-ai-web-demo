@@ -305,9 +305,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   setLoginModalOpen: (open) => set({ loginModalOpen: open }),
   touchZones: null,
   sendTouchEvent: (gesture, zone, direction) => {
-    client?.sendTouch(gesture, zone, direction);
+    client?.sendTouchEvent(gesture, zone, direction);
     set({ touchZones: null });
   },
+
 
 
   updateConfig: (patch) => {

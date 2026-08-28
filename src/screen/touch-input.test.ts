@@ -47,26 +47,27 @@ describe('isTap', () => {
 
 describe('getTouchZone', () => {
   it('splits vertical into zone_1 (left) and zone_2 (right)', () => {
-    expect(getTouchZone({ x: 50, y: 120 }, 2, 'split_vertical')).toBe('zone_1');
-    expect(getTouchZone({ x: 180, y: 120 }, 2, 'split_vertical')).toBe('zone_2');
+    expect(getTouchZone({ x: 50, y: 180 }, 2, 'split_vertical')).toBe('zone_1');
+    expect(getTouchZone({ x: 260, y: 180 }, 2, 'split_vertical')).toBe('zone_2');
   });
 
   it('splits horizontal into zone_1 (top) and zone_2 (bottom)', () => {
-    expect(getTouchZone({ x: 120, y: 40 }, 2, 'split_horizontal')).toBe('zone_1');
-    expect(getTouchZone({ x: 120, y: 200 }, 2, 'split_horizontal')).toBe('zone_2');
+    expect(getTouchZone({ x: 180, y: 50 }, 2, 'split_horizontal')).toBe('zone_1');
+    expect(getTouchZone({ x: 180, y: 260 }, 2, 'split_horizontal')).toBe('zone_2');
   });
 
   it('resolves quadrants for 4 zones', () => {
     expect(getTouchZone({ x: 50, y: 50 }, 4, 'quadrant')).toBe('zone_1');
-    expect(getTouchZone({ x: 190, y: 50 }, 4, 'quadrant')).toBe('zone_2');
-    expect(getTouchZone({ x: 50, y: 190 }, 4, 'quadrant')).toBe('zone_3');
-    expect(getTouchZone({ x: 190, y: 190 }, 4, 'quadrant')).toBe('zone_4');
+    expect(getTouchZone({ x: 260, y: 50 }, 4, 'quadrant')).toBe('zone_2');
+    expect(getTouchZone({ x: 50, y: 260 }, 4, 'quadrant')).toBe('zone_3');
+    expect(getTouchZone({ x: 260, y: 260 }, 4, 'quadrant')).toBe('zone_4');
   });
 
   it('resolves radial slices for 3 zones', () => {
-    expect(getTouchZone({ x: 120, y: 30 }, 3, 'radial_3')).toBe('zone_1');
+    expect(getTouchZone({ x: 180, y: 50 }, 3, 'radial_3')).toBe('zone_1');
   });
 });
+
 
 describe('getSwipeDirection', () => {
   it('detects swipe directions correctly', () => {
