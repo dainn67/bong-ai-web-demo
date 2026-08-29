@@ -22,9 +22,9 @@ export const SCREEN_CENTER_Y = SCREEN_RADIUS; // 180
 export const DEAD_ZONE_RADIUS_25 = SCREEN_RADIUS * 0.25; // 45px (tap3, tap4)
 export const DEAD_ZONE_RADIUS_35 = SCREEN_RADIUS * 0.35; // 63px (tap5, tap6)
 
-export const SWIPE_MIN_DISTANCE_PX = 60;
-export const SWIPE_MAX_DURATION_MS = 800;
-export const SWIPE_AXIS_DOMINANCE_RATIO = 1.5;
+export const SWIPE_MIN_DISTANCE_PX = 30;
+export const SWIPE_MAX_DURATION_MS = 1200;
+export const SWIPE_AXIS_DOMINANCE_RATIO = 1.2;
 
 export type TouchLayoutType =
   | 'tap2_tren_duoi'

@@ -114,17 +114,17 @@ describe('touch-layout', () => {
       expect(classifySwipe(base, { x: 280, y: 180, at: 1400 })).toBe('vuot_phai');
     });
 
-    it('rejects a swipe shorter than 60px', () => {
-      expect(classifySwipe(base, { x: 180, y: 130, at: 1400 })).toBe('cham_khac');
+    it('rejects a swipe shorter than minimum distance', () => {
+      expect(classifySwipe(base, { x: 180, y: 165, at: 1400 })).toBe('cham_khac');
     });
 
-    it('rejects a swipe slower than 800ms', () => {
-      expect(classifySwipe(base, { x: 180, y: 50, at: 1900 })).toBe('cham_khac');
+    it('rejects a swipe slower than maximum duration', () => {
+      expect(classifySwipe(base, { x: 180, y: 50, at: 2500 })).toBe('cham_khac');
     });
 
-    it('rejects a diagonal with no dominant axis (< 1.5x)', () => {
-      // dx 80, dy 70 — ratio 1.14.
-      expect(classifySwipe(base, { x: 260, y: 250, at: 1400 })).toBe('cham_khac');
+    it('rejects a diagonal with no dominant axis (< 1.2x)', () => {
+      // dx 80, dy 75 — ratio 1.06.
+      expect(classifySwipe(base, { x: 260, y: 255, at: 1400 })).toBe('cham_khac');
     });
 
     it('rejects a swipe that started off the glass', () => {
