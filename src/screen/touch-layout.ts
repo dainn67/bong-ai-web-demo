@@ -124,12 +124,14 @@ const FAN_LAYOUTS: Partial<Record<TouchLayoutType, { sectors: number; deadRadius
  */
 export type LayoutGeometry =
   | { kind: 'halves'; split: 'horizontal' | 'vertical' }
+  | { kind: 'quadrants'; deadRadius: number }
   | { kind: 'fan'; sectors: number; deadRadius: number }
   | { kind: 'swipe' };
 
 export function layoutGeometry(layout: TouchLayoutType): LayoutGeometry {
   if (layout === 'tap2_tren_duoi') return { kind: 'halves', split: 'horizontal' };
   if (layout === 'tap2_trai_phai') return { kind: 'halves', split: 'vertical' };
+  if (layout === 'tap4') return { kind: 'quadrants', deadRadius: DEAD_ZONE_RADIUS_25 };
   if (layout === 'swipe') return { kind: 'swipe' };
   const fan = FAN_LAYOUTS[layout]!;
   return { kind: 'fan', sectors: fan.sectors, deadRadius: fan.deadRadius };
@@ -139,6 +141,7 @@ export function layoutGeometry(layout: TouchLayoutType): LayoutGeometry {
 export function zoneCountFor(layout: TouchLayoutType): number {
   const geometry = layoutGeometry(layout);
   if (geometry.kind === 'halves') return 2;
+  if (geometry.kind === 'quadrants') return 4;
   if (geometry.kind === 'swipe') return 4;
   return geometry.sectors;
 }
@@ -181,6 +184,18 @@ export function classifyTap(point: Point2D, layout: TouchLayoutType): TouchClass
   const dy = point.y - SCREEN_CENTER_Y;
   if (dx * dx + dy * dy <= fan.deadRadius * fan.deadRadius) {
     return 'cham_khac';
+  }
+
+  // tap4 represents 4 quadrants (Góc phần tư):
+  // Zone 1: Top-Left (x <= center, y <= center)
+  // Zone 2: Top-Right (x > center, y <= center)
+  // Zone 3: Bottom-Right (x > center, y > center)
+  // Zone 4: Bottom-Left (x <= center, y > center)
+  if (layout === 'tap4') {
+    if (point.x <= SCREEN_CENTER_X && point.y <= SCREEN_CENTER_Y) return 'zone1';
+    if (point.x > SCREEN_CENTER_X && point.y <= SCREEN_CENTER_Y) return 'zone2';
+    if (point.x > SCREEN_CENTER_X && point.y > SCREEN_CENTER_Y) return 'zone3';
+    return 'zone4';
   }
 
   // Clockwise from 12 o'clock. In screen coordinates 12 o'clock is dx=0, dy=-R,
