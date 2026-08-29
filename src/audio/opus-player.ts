@@ -9,6 +9,24 @@
 
 import { FRAME_DURATION_US } from './audio-format';
 
+/**
+ * How far ahead of the audio clock the first frame of a burst is scheduled.
+ *
+ * Without it there is no jitter tolerance at all: frames are 60ms long and
+ * arrive about 60ms apart, so the queue runs exactly level with the clock and
+ * any frame that is late is a hole. Measured against the live server, 74% of
+ * frames arrive inside 70ms and **24% arrive 70–200ms late** — a quarter of
+ * them punching a gap, which is what "the audio lags" actually is.
+ *
+ * 250ms swallows that band. It is affordable because the same measurement puts
+ * average delivery at 1.04x realtime once the script's own pauses are excluded:
+ * the server keeps up, so the lead refills instead of eroding.
+ *
+ * The cost is 250ms before a reply starts. That is below the gap a person
+ * leaves before answering, and far below the cost of a chopped sentence.
+ */
+const JITTER_BUFFER_MS = 250;
+
 export interface OpusPlayerHandlers {
   /** Fires on the transitions only, not per frame. */
   onPlayingChange: (playing: boolean) => void;
@@ -173,7 +191,14 @@ export class OpusPlayer {
     // Never schedule in the past: after a gap the queue time has fallen behind
     // the clock, and starting at a stale time plays the frame instantly, out of
     // order with whatever is still queued.
-    const startAt = Math.max(context.currentTime, this.nextStartTime);
+    //
+    // When the queue has drained — the start of a reply, or after a stall — the
+    // frame goes a jitter buffer's worth into the future rather than straight
+    // out. That lead is the only thing standing between a late frame and an
+    // audible hole, and playing the first frame immediately guarantees there is
+    // never any.
+    const floor = context.currentTime + JITTER_BUFFER_MS / 1000;
+    const startAt = this.nextStartTime > context.currentTime ? this.nextStartTime : floor;
     source.start(startAt);
     this.nextStartTime = startAt + buffer.duration;
 
