@@ -47,14 +47,23 @@ describe('touch-layout', () => {
     it('returns cham_khac in the dead centre (r <= 45px)', () => {
       expect(classifyTap({ x: 180, y: 180 }, 'tap4')).toBe('cham_khac');
       expect(classifyTap({ x: 180, y: 150 }, 'tap4')).toBe('cham_khac'); // 30px out
-      expect(classifyTap({ x: 100, y: 100 }, 'tap4')).toBe('zone1'); // Top-Left quadrant
+      expect(classifyTap({ x: 220, y: 140 }, 'tap4')).toBe('zone1'); // clear of it
     });
 
-    it('maps 4 quadrants: Zone 1 (top-left), Zone 2 (top-right), Zone 3 (bottom-right), Zone 4 (bottom-left)', () => {
-      expect(classifyTap({ x: 90, y: 90 }, 'tap4')).toBe('zone1'); // Top-Left
-      expect(classifyTap({ x: 270, y: 90 }, 'tap4')).toBe('zone2'); // Top-Right
-      expect(classifyTap({ x: 270, y: 270 }, 'tap4')).toBe('zone3'); // Bottom-Right
-      expect(classifyTap({ x: 90, y: 270 }, 'tap4')).toBe('zone4'); // Bottom-Left
+    it('starts zone 1 at 12 o clock and runs clockwise', () => {
+      // A fan of four, like tap3 is a fan of three. Zone 1 is the top-right
+      // quarter — 12 o'clock to 3 — not the top-left one, and not the top.
+      expect(classifyTap({ x: 270, y: 90 }, 'tap4')).toBe('zone1'); // ~1:30
+      expect(classifyTap({ x: 270, y: 270 }, 'tap4')).toBe('zone2'); // ~4:30
+      expect(classifyTap({ x: 90, y: 270 }, 'tap4')).toBe('zone3'); // ~7:30
+      expect(classifyTap({ x: 90, y: 90 }, 'tap4')).toBe('zone4'); // ~10:30
+    });
+
+    it('gives 12 o clock itself to zone 1, the lower-numbered side', () => {
+      // The boundary lands exactly on the top. Pinned so both sides of the
+      // wire agree about a press one pixel either way.
+      expect(classifyTap({ x: 180, y: 50 }, 'tap4')).toBe('zone1');
+      expect(classifyTap({ x: 179, y: 50 }, 'tap4')).toBe('zone4');
     });
 
     it('returns cham_khac outside the circle, where the glass does not exist', () => {
@@ -182,28 +191,19 @@ describe('touch-layout', () => {
     });
 
     it('agrees with the classifier about every zone it draws', () => {
-      // Fan layouts (tap3, tap5, tap6)
-      for (const layout of ['tap3', 'tap5', 'tap6'] as const) {
+      // All four fans, tap4 included — there is no special case any more, and
+      // this loop failing for one layout is what a reintroduced one looks like.
+      for (const layout of ['tap3', 'tap4', 'tap5', 'tap6'] as const) {
         const geometry = layoutGeometry(layout);
-        if (geometry.kind !== 'fan') throw new Error('expected a fan');
+        if (geometry.kind !== 'fan') throw new Error(`${layout} should be a fan`);
         const sectorDeg = 360 / geometry.sectors;
         const radius = (180 + geometry.deadRadius) / 2;
         for (let i = 0; i < geometry.sectors; i++) {
+          // The middle of the slice, which is where the overlay puts the label.
           const rad = ((i * sectorDeg + sectorDeg / 2 - 90) * Math.PI) / 180;
           const point = { x: 180 + radius * Math.cos(rad), y: 180 + radius * Math.sin(rad) };
           expect(classifyTap(point, layout)).toBe(`zone${i + 1}`);
         }
-      }
-
-      // Quadrants layout (tap4)
-      const qGeom = layoutGeometry('tap4');
-      if (qGeom.kind !== 'quadrants') throw new Error('expected quadrants');
-      const qRadius = (180 + qGeom.deadRadius) / 2;
-      const qAngles = [315, 45, 135, 225];
-      for (let i = 0; i < 4; i++) {
-        const rad = ((qAngles[i] - 90) * Math.PI) / 180;
-        const point = { x: 180 + qRadius * Math.cos(rad), y: 180 + qRadius * Math.sin(rad) };
-        expect(classifyTap(point, 'tap4')).toBe(`zone${i + 1}`);
       }
     });
   });

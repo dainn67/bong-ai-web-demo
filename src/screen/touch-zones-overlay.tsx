@@ -186,38 +186,6 @@ function ZoneShapes({
     );
   }
 
-  if (geometry.kind === 'quadrants') {
-    const deadRadius = geometry.deadRadius;
-    const quadrants = [
-      { zone: 'zone1', from: 270, to: 360, labelDeg: 315, num: '1' },
-      { zone: 'zone2', from: 0, to: 90, labelDeg: 45, num: '2' },
-      { zone: 'zone3', from: 90, to: 180, labelDeg: 135, num: '3' },
-      { zone: 'zone4', from: 180, to: 270, labelDeg: 225, num: '4' },
-    ];
-    return (
-      <>
-        {quadrants.map(({ zone, from, to, labelDeg, num }) => {
-          const label = polar(labelDeg, (SCREEN_RADIUS + deadRadius) / 2);
-          return (
-            <g key={zone}>
-              <path d={sectorPath(from, to)} fill={fill(zone)} stroke={stroke} strokeWidth={2} />
-              <ZoneLabel x={label.x} y={label.y} text={num} />
-            </g>
-          );
-        })}
-        <circle
-          cx={SCREEN_CENTER_X}
-          cy={SCREEN_CENTER_Y}
-          r={deadRadius}
-          fill={activeZone === 'cham_khac' ? 'rgba(248,113,113,0.35)' : 'rgba(0,0,0,0.25)'}
-          stroke={stroke}
-          strokeWidth={2}
-          strokeDasharray="5 4"
-        />
-      </>
-    );
-  }
-
   const { sectors, deadRadius } = geometry;
   const sectorDeg = 360 / sectors;
 
