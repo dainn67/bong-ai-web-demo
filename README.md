@@ -207,7 +207,7 @@ until it was already awake would be a strange thing to hand a child.
 `src/screen/touch-input.ts` holds the rules as pure functions, so what counts
 as a touch is tested without a screen to poke at:
 
-- **Coordinates are the device's**, 0–240, whatever size the badge is drawn at.
+- **Coordinates are the device's**, 0–360, whatever size the badge is drawn at.
   The firmware only ever thinks in its own pixels, so everything above that
   line does too.
 - **The corners are not the device.** The display is round and its element is

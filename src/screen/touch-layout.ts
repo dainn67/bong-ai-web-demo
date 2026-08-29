@@ -188,12 +188,19 @@ export function classifyTap(point: Point2D, layout: TouchLayoutType): TouchClass
   let angleDeg = (Math.atan2(dx, -dy) * 180) / Math.PI;
   if (angleDeg < 0) angleDeg += 360;
 
-  // Zone 1 is centred on 12 o'clock rather than starting there, so it spans
-  // [-sectorDeg/2, +sectorDeg/2]. Shifting by half a sector makes it [0, sectorDeg).
+  // Zone 1 **starts** at 12 o'clock and runs clockwise, so it spans
+  // [0, sectorDeg). No half-sector shift: the boundary sits on 12 o'clock
+  // rather than the middle of zone 1 doing so.
+  //
+  // This matches the lesson artwork, which is drawn that way throughout, and
+  // is the convention the project settled on. An earlier revision had zone 1
+  // centred on 12 o'clock instead; the docs and the demo pictures in this repo
+  // were moved with it, so anything still showing a slice straddling the top
+  // is from before that decision and is wrong.
   const sectorDeg = 360 / fan.sectors;
-  const shifted = (angleDeg + sectorDeg / 2) % 360;
+  const index = Math.min(fan.sectors - 1, Math.floor(angleDeg / sectorDeg));
 
-  return `zone${Math.floor(shifted / sectorDeg) + 1}` as TouchZoneResult;
+  return `zone${index + 1}` as TouchZoneResult;
 }
 
 /**

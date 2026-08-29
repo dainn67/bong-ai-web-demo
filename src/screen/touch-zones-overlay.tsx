@@ -193,10 +193,11 @@ function ZoneShapes({
     <>
       {Array.from({ length: sectors }, (_, i) => {
         const zone = `zone${i + 1}`;
-        // Zone 1 is *centred* on 12 o'clock, so it starts half a sector before
-        // it. Getting this wrong by half a sector is the single easiest way to
-        // make every answer look like a content bug.
-        const from = i * sectorDeg - sectorDeg / 2;
+        // Zone 1 *starts* at 12 o'clock, so a boundary line sits on it and the
+        // sectors run clockwise from there — the same arithmetic `classifyTap`
+        // does. Half a sector out here is the single easiest way to make every
+        // answer look like a content bug.
+        const from = i * sectorDeg;
         const label = polar(from + sectorDeg / 2, (SCREEN_RADIUS + deadRadius) / 2);
         return (
           <g key={zone}>
