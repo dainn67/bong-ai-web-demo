@@ -3,8 +3,12 @@ import {
   classifyGesture,
   classifySwipe,
   classifyTap,
+  DEAD_ZONE_RADIUS_25,
+  DEAD_ZONE_RADIUS_35,
+  layoutGeometry,
   parseTouchLayout,
   TOUCH_LAYOUTS,
+  zoneCountFor,
 } from './touch-layout';
 
 describe('touch-layout', () => {
@@ -129,6 +133,76 @@ describe('touch-layout', () => {
       expect(classifyGesture({ x: 180, y: 50, at: 1000 }, { x: 180, y: 310, at: 1200 }, 'tap4')).toBe(
         'zone1',
       );
+    });
+  });
+
+  describe('zone naming', () => {
+    // Measured against the live server: answering `zone1` and `zone2` on one
+    // question returns two different branch clips, while `zone_1`, `zone_2` and
+    // nonsense all return the same fallback. The underscore spelling matches no
+    // branch in any lesson, so every answer took one path and the branching
+    // looked broken. Pinned here so it cannot come back.
+    it('has no underscore between the word and the number', () => {
+      for (const layout of TOUCH_LAYOUTS) {
+        if (layout === 'swipe') continue;
+        const result = classifyTap({ x: 180, y: 40 }, layout);
+        expect(result).toMatch(/^zone[1-6]$/);
+      }
+    });
+
+    it('names swipes in Vietnamese, the way lesson branches do', () => {
+      const from = { x: 180, y: 240, at: 1000 };
+      expect(classifySwipe(from, { x: 180, y: 120, at: 1200 })).toBe('vuot_len');
+      expect(classifySwipe(from, { x: 60, y: 240, at: 1200 })).toBe('vuot_trai');
+    });
+  });
+
+  describe('layoutGeometry', () => {
+    it('splits the two-zone layouts on the axis their name says', () => {
+      expect(layoutGeometry('tap2_tren_duoi')).toEqual({ kind: 'halves', split: 'horizontal' });
+      expect(layoutGeometry('tap2_trai_phai')).toEqual({ kind: 'halves', split: 'vertical' });
+    });
+
+    it('reports the sector count and dead radius the classifier uses', () => {
+      expect(layoutGeometry('tap3')).toEqual({
+        kind: 'fan',
+        sectors: 3,
+        deadRadius: DEAD_ZONE_RADIUS_25,
+      });
+      expect(layoutGeometry('tap6')).toEqual({
+        kind: 'fan',
+        sectors: 6,
+        deadRadius: DEAD_ZONE_RADIUS_35,
+      });
+      // 25% and 35% of the 180px radius, per the layout doc.
+      expect(DEAD_ZONE_RADIUS_25).toBeCloseTo(45);
+      expect(DEAD_ZONE_RADIUS_35).toBeCloseTo(63);
+    });
+
+    it('agrees with the classifier about every zone it draws', () => {
+      // The drawing and the verdict reading one table is the whole point: a
+      // label placed in the middle of the slice it names must classify as that
+      // zone, or the picture is lying about where the boundaries are.
+      for (const layout of ['tap3', 'tap4', 'tap5', 'tap6'] as const) {
+        const geometry = layoutGeometry(layout);
+        if (geometry.kind !== 'fan') throw new Error('expected a fan');
+        const sectorDeg = 360 / geometry.sectors;
+        const radius = (180 + geometry.deadRadius) / 2;
+        for (let i = 0; i < geometry.sectors; i++) {
+          const rad = ((i * sectorDeg - 90) * Math.PI) / 180;
+          const point = { x: 180 + radius * Math.cos(rad), y: 180 + radius * Math.sin(rad) };
+          expect(classifyTap(point, layout)).toBe(`zone${i + 1}`);
+        }
+      }
+    });
+  });
+
+  describe('zoneCountFor', () => {
+    it('counts answer zones, which is what the server keeps getting wrong', () => {
+      expect(zoneCountFor('tap2_tren_duoi')).toBe(2);
+      expect(zoneCountFor('tap4')).toBe(4);
+      expect(zoneCountFor('tap6')).toBe(6);
+      expect(zoneCountFor('swipe')).toBe(4);
     });
   });
 });

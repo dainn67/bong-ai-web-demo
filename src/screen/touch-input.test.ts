@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DISPLAY_SIZE, isInsideDisplay, isTap, toDevicePoint, getTouchZone, getSwipeDirection } from './touch-input';
+import { DISPLAY_SIZE, isInsideDisplay, isTap, toDevicePoint } from './touch-input';
 
 
 const rect = { left: 100, top: 50, width: 480, height: 480 };
@@ -42,43 +42,6 @@ describe('isTap', () => {
 
   it('rejects a long press', () => {
     expect(isTap(start, { x: 180, y: 180, at: 2400 })).toBe(false);
-  });
-});
-
-describe('getTouchZone', () => {
-  it('splits vertical into zone_1 (left) and zone_2 (right)', () => {
-    expect(getTouchZone({ x: 50, y: 180 }, 2, 'split_vertical')).toBe('zone_1');
-    expect(getTouchZone({ x: 260, y: 180 }, 2, 'split_vertical')).toBe('zone_2');
-  });
-
-  it('splits horizontal into zone_1 (top) and zone_2 (bottom)', () => {
-    expect(getTouchZone({ x: 180, y: 50 }, 2, 'split_horizontal')).toBe('zone_1');
-    expect(getTouchZone({ x: 180, y: 260 }, 2, 'split_horizontal')).toBe('zone_2');
-  });
-
-  it('resolves quadrants for 4 zones', () => {
-    expect(getTouchZone({ x: 50, y: 50 }, 4, 'quadrant')).toBe('zone_1');
-    expect(getTouchZone({ x: 260, y: 50 }, 4, 'quadrant')).toBe('zone_2');
-    expect(getTouchZone({ x: 50, y: 260 }, 4, 'quadrant')).toBe('zone_3');
-    expect(getTouchZone({ x: 260, y: 260 }, 4, 'quadrant')).toBe('zone_4');
-  });
-
-  it('resolves radial slices for 3 zones', () => {
-    expect(getTouchZone({ x: 180, y: 50 }, 3, 'radial_3')).toBe('zone_1');
-  });
-});
-
-
-describe('getSwipeDirection', () => {
-  it('detects swipe directions correctly', () => {
-    expect(getSwipeDirection({ x: 120, y: 120 }, { x: 200, y: 120 })).toBe('swipe_right');
-    expect(getSwipeDirection({ x: 120, y: 120 }, { x: 40, y: 120 })).toBe('swipe_left');
-    expect(getSwipeDirection({ x: 120, y: 120 }, { x: 120, y: 200 })).toBe('swipe_down');
-    expect(getSwipeDirection({ x: 120, y: 120 }, { x: 120, y: 40 })).toBe('swipe_up');
-  });
-
-  it('rejects movements smaller than min swipe distance', () => {
-    expect(getSwipeDirection({ x: 120, y: 120 }, { x: 125, y: 125 })).toBeNull();
   });
 });
 

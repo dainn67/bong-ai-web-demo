@@ -45,15 +45,16 @@ import {
 import { closeWaitWindow, IDLE_ACTIVITY, type ActivityState } from '../screen/activity-state';
 import {
   parseTouchLayout,
+  TOUCH_LAYOUTS,
   type TouchClassificationResult,
   type TouchDetail,
   type TouchLayoutType,
+  type TouchWindow,
 } from '../screen/touch-layout';
 import { DEFAULT_TOUCH_TIMEOUT_MS } from '../lessons/lesson-v2-types';
 import { parseCatalog, type LessonSummary } from '../lessons/catalog';
 import { StoryPlayer, loadStory } from '../content/story';
 import { LessonRunner } from '../lessons/lesson-runner';
-import type { TouchZonesConfig, SwipeDirection } from '../screen/touch-input';
 
 
 export interface PacketLogEntry {
@@ -151,8 +152,15 @@ interface SimulatorState {
   childName: string | null;
   loginModalOpen: boolean;
   setLoginModalOpen: (open: boolean) => void;
-  touchZones: TouchZonesConfig | null;
-  sendTouchEvent: (gesture: 'tap' | 'swipe', zone?: string, direction?: SwipeDirection) => void;
+  /** The touch window the server has open, or null. Drives the zone overlay. */
+  touchZones: TouchWindow | null;
+  /**
+   * Answers the open touch window.
+   *
+   * Takes the classification, not a raw zone name — the layout is already
+   * known here, so the caller cannot pair a result with the wrong grid.
+   */
+  sendTouchEvent: (result: TouchClassificationResult, detail?: TouchDetail) => void;
 
 
   updateConfig: (patch: Partial<DeviceConfig>) => void;
@@ -261,6 +269,52 @@ let serverQuestion: TouchLayoutType | null = null;
 /** Closes a server-opened question window when `timeout_ms` runs out. */
 let questionTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** Fires `silent` when nobody touches a `set_touch_zones` window in time. */
+let touchZoneTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Opens the touch window the server asked for.
+ *
+ * Refuses a layout that names none of the seven, and says so on the glass
+ * rather than defaulting. A default here is precisely the bug this replaces:
+ * the old code fell back to a left/right split, so a `tap6` question drew two
+ * zones over a six-slice picture and graded the child against a grid the
+ * artwork was never drawn to.
+ */
+function openTouchWindow(set: Setter, get: Getter, raw: string, timeoutMs: number): void {
+  clearTouchWindow(set);
+
+  const layout = parseTouchLayout(raw);
+  if (!layout) {
+    set({
+      activity: {
+        ...get().activity,
+        notice: raw
+          ? `Layout chạm không hợp lệ: "${raw}"`
+          : `Máy chủ mở câu hỏi chạm nhưng không gửi "layout" (cần một trong: ${TOUCH_LAYOUTS.join(', ')})`,
+      },
+    });
+    return;
+  }
+
+  set({ touchZones: { layout, timeoutMs } });
+
+  // Reported rather than dropped: a child who simply does not touch would
+  // otherwise leave the badge and the server each waiting on the other, and
+  // `silent` is the branch every touch question already carries for it.
+  touchZoneTimer = setTimeout(() => {
+    touchZoneTimer = null;
+    if (get().touchZones?.layout !== layout) return;
+    get().sendTouchEvent('silent');
+  }, timeoutMs);
+}
+
+function clearTouchWindow(set: Setter): void {
+  if (touchZoneTimer) clearTimeout(touchZoneTimer);
+  touchZoneTimer = null;
+  set({ touchZones: null });
+}
+
 function clearQuestionTimer(): void {
   if (questionTimer) clearTimeout(questionTimer);
   questionTimer = null;
@@ -304,9 +358,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   loginModalOpen: false,
   setLoginModalOpen: (open) => set({ loginModalOpen: open }),
   touchZones: null,
-  sendTouchEvent: (gesture, zone, direction) => {
-    client?.sendTouchEvent(gesture, zone, direction);
-    set({ touchZones: null });
+  sendTouchEvent: (result, detail) => {
+    const window = get().touchZones;
+    if (!window) return;
+    clearTouchWindow(set);
+    client?.sendTouchEvent(window.layout, result, detail);
+    set({ lastTouch: { result, at: Date.now(), ...detail } });
   },
 
 
@@ -734,7 +791,11 @@ function stopActivity(set: Setter, get: Getter): void {
   serverQuestion = null;
   // The mic belongs to the lesson while one is running; hand it back.
   if (get().micState === 'listening') get().stopListening();
-  set({ micLevel: 0, touchZones: null, face: { ...get().face, said: '', heard: '' } });
+  // Through the helper, so the silent timer dies with the window it belonged
+  // to — otherwise it fires into the next activity and answers a question
+  // nobody asked.
+  clearTouchWindow(set);
+  set({ micLevel: 0, face: { ...get().face, said: '', heard: '' } });
 
 }
 
@@ -878,16 +939,9 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
 
   const displayCmd = toDisplayCommand(message);
   if (displayCmd?.kind === 'touch_zones') {
-    set({
-      touchZones: {
-        mode: displayCmd.mode,
-        zonesCount: displayCmd.zones_count,
-        layout: displayCmd.layout,
-        timeoutMs: displayCmd.timeout_ms,
-      },
-    });
+    openTouchWindow(set, get, displayCmd.layout, displayCmd.timeoutMs);
   } else if (displayCmd?.kind === 'clear_touch_zones') {
-    set({ touchZones: null });
+    clearTouchWindow(set);
   }
 
   // Update activity state based on server events during streaming

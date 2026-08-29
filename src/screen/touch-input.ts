@@ -7,6 +7,12 @@
  * Pointer events rather than touch events on purpose: one code path covers a
  * finger, a mouse and a stylus, and it carries a `pointerId`, which is what
  * makes more than one finger at a time tractable later.
+ *
+ * What a touch *means* — which of the seven zone grids it is graded against —
+ * lives in `touch-layout.ts`, and only there. A second classifier used to sit
+ * in this file, with its own layout names and its own `zone_1` spelling; the
+ * two disagreed, and the one the screen used was the wrong one. One classifier
+ * is the whole fix.
  */
 
 /** The badge's display, in its own pixels. The DOM element is any size. */
@@ -82,114 +88,3 @@ export function isTap(start: TouchStart, end: TouchStart): boolean {
     end.at - start.at <= TAP_TIMEOUT_MS && Math.hypot(dx, dy) <= TAP_SLOP
   );
 }
-
-/** Minimum distance in device pixels to count as a swipe gesture */
-export const SWIPE_MIN_DISTANCE = 20;
-
-export type SwipeDirection = 'swipe_up' | 'swipe_down' | 'swipe_left' | 'swipe_right';
-
-export interface TouchZonesConfig {
-  mode: 'tap' | 'swipe';
-  zonesCount: number;
-  layout?: string;
-  timeoutMs?: number;
-}
-
-/**
- * Resolves which zone (e.g. 'zone_1', 'zone_2', ..., 'zone_6') a point belongs to
- * on the 240x240 circular screen.
- */
-export function getTouchZone(
-  point: DevicePoint,
-  zonesCount: number = 2,
-  layout: string = 'split_vertical'
-): string {
-  const count = Math.max(2, Math.min(6, zonesCount));
-  const cx = DISPLAY_SIZE / 2; // 120
-  const cy = DISPLAY_SIZE / 2; // 120
-
-  if (layout === 'split_horizontal' && count === 2) {
-    return point.y <= cy ? 'zone_1' : 'zone_2';
-  }
-
-  if (layout === 'split_vertical' && count === 2) {
-    return point.x <= cx ? 'zone_1' : 'zone_2';
-  }
-
-  if (count === 3) {
-    if (layout === 'split_vertical_3' || layout === 'columns') {
-      if (point.x <= 80) return 'zone_1';
-      if (point.x <= 160) return 'zone_2';
-      return 'zone_3';
-    }
-    // Radial 3 slices (top, bottom-right, bottom-left)
-    const rad = Math.atan2(point.y - cy, point.x - cx);
-    let deg = (rad * 180) / Math.PI;
-    deg = (deg + 360 + 90) % 360;
-    if (deg < 120) return 'zone_1';
-    if (deg < 240) return 'zone_2';
-    return 'zone_3';
-  }
-
-  if (count === 4) {
-    if (layout === 'split_vertical_4') {
-      if (point.x <= 60) return 'zone_1';
-      if (point.x <= 120) return 'zone_2';
-      if (point.x <= 180) return 'zone_3';
-      return 'zone_4';
-    }
-    // Quadrants: top-left (1), top-right (2), bottom-left (3), bottom-right (4)
-    if (point.x <= cx && point.y <= cy) return 'zone_1';
-    if (point.x > cx && point.y <= cy) return 'zone_2';
-    if (point.x <= cx && point.y > cy) return 'zone_3';
-    return 'zone_4';
-  }
-
-  if (count === 5) {
-    // 5 radial slices of 72 degrees
-    const rad = Math.atan2(point.y - cy, point.x - cx);
-    let deg = (rad * 180) / Math.PI;
-    deg = (deg + 360 + 90 - 36) % 360;
-    const idx = Math.floor(deg / 72) + 1;
-    return `zone_${Math.min(5, Math.max(1, idx))}`;
-  }
-
-  if (count === 6) {
-    if (layout === 'grid_2x3') {
-      const col = point.x <= 80 ? 1 : point.x <= 160 ? 2 : 3;
-      const row = point.y <= cy ? 0 : 3;
-      return `zone_${col + row}`;
-    }
-    // 6 radial slices of 60 degrees
-    const rad = Math.atan2(point.y - cy, point.x - cx);
-    let deg = (rad * 180) / Math.PI;
-    deg = (deg + 360 + 90 - 30) % 360;
-    const idx = Math.floor(deg / 60) + 1;
-    return `zone_${Math.min(6, Math.max(1, idx))}`;
-  }
-
-  return point.x <= cx ? 'zone_1' : 'zone_2';
-}
-
-/**
- * Determines swipe direction from start to end points.
- */
-export function getSwipeDirection(
-  start: DevicePoint,
-  end: DevicePoint
-): SwipeDirection | null {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const dist = Math.hypot(dx, dy);
-
-  if (dist < SWIPE_MIN_DISTANCE) {
-    return null;
-  }
-
-  if (Math.abs(dx) > Math.abs(dy)) {
-    return dx > 0 ? 'swipe_right' : 'swipe_left';
-  } else {
-    return dy > 0 ? 'swipe_down' : 'swipe_up';
-  }
-}
-

@@ -115,6 +115,46 @@ const FAN_LAYOUTS: Partial<Record<TouchLayoutType, { sectors: number; deadRadius
 };
 
 /**
+ * The shape of a layout, for whoever has to draw it.
+ *
+ * Exported so the overlay can render the grid the child is actually being
+ * graded against, rather than keeping a second private idea of it. Drawing and
+ * classifying reading from the same table is what stops the picture and the
+ * verdict drifting apart.
+ */
+export type LayoutGeometry =
+  | { kind: 'halves'; split: 'horizontal' | 'vertical' }
+  | { kind: 'fan'; sectors: number; deadRadius: number }
+  | { kind: 'swipe' };
+
+export function layoutGeometry(layout: TouchLayoutType): LayoutGeometry {
+  if (layout === 'tap2_tren_duoi') return { kind: 'halves', split: 'horizontal' };
+  if (layout === 'tap2_trai_phai') return { kind: 'halves', split: 'vertical' };
+  if (layout === 'swipe') return { kind: 'swipe' };
+  const fan = FAN_LAYOUTS[layout]!;
+  return { kind: 'fan', sectors: fan.sectors, deadRadius: fan.deadRadius };
+}
+
+/** How many answer zones a layout offers, ignoring `cham_khac` and `silent`. */
+export function zoneCountFor(layout: TouchLayoutType): number {
+  const geometry = layoutGeometry(layout);
+  if (geometry.kind === 'halves') return 2;
+  if (geometry.kind === 'swipe') return 4;
+  return geometry.sectors;
+}
+
+/**
+ * A touch window the server has opened: which grid, and how long it stays open.
+ *
+ * `layout` is already narrowed to one of the seven — a window is never opened
+ * against a name that failed `parseTouchLayout`.
+ */
+export interface TouchWindow {
+  layout: TouchLayoutType;
+  timeoutMs: number;
+}
+
+/**
  * Classifies a single tap touch point according to the given layout.
  *
  * Takes coordinates at press-down. Outside circle or dead zone yields 'cham_khac'.
