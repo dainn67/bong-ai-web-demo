@@ -115,6 +115,46 @@ const FAN_LAYOUTS: Partial<Record<TouchLayoutType, { sectors: number; deadRadius
 };
 
 /**
+ * The shape of a layout, for whoever has to draw it.
+ *
+ * Exported so the overlay can render the grid the child is actually being
+ * graded against, rather than keeping a second private idea of it. Drawing and
+ * classifying reading from the same table is what stops the picture and the
+ * verdict drifting apart.
+ */
+export type LayoutGeometry =
+  | { kind: 'halves'; split: 'horizontal' | 'vertical' }
+  | { kind: 'fan'; sectors: number; deadRadius: number }
+  | { kind: 'swipe' };
+
+export function layoutGeometry(layout: TouchLayoutType): LayoutGeometry {
+  if (layout === 'tap2_tren_duoi') return { kind: 'halves', split: 'horizontal' };
+  if (layout === 'tap2_trai_phai') return { kind: 'halves', split: 'vertical' };
+  if (layout === 'swipe') return { kind: 'swipe' };
+  const fan = FAN_LAYOUTS[layout]!;
+  return { kind: 'fan', sectors: fan.sectors, deadRadius: fan.deadRadius };
+}
+
+/** How many answer zones a layout offers, ignoring `cham_khac` and `silent`. */
+export function zoneCountFor(layout: TouchLayoutType): number {
+  const geometry = layoutGeometry(layout);
+  if (geometry.kind === 'halves') return 2;
+  if (geometry.kind === 'swipe') return 4;
+  return geometry.sectors;
+}
+
+/**
+ * A touch window the server has opened: which grid, and how long it stays open.
+ *
+ * `layout` is already narrowed to one of the seven — a window is never opened
+ * against a name that failed `parseTouchLayout`.
+ */
+export interface TouchWindow {
+  layout: TouchLayoutType;
+  timeoutMs: number;
+}
+
+/**
  * Classifies a single tap touch point according to the given layout.
  *
  * Takes coordinates at press-down. Outside circle or dead zone yields 'cham_khac'.
@@ -148,12 +188,19 @@ export function classifyTap(point: Point2D, layout: TouchLayoutType): TouchClass
   let angleDeg = (Math.atan2(dx, -dy) * 180) / Math.PI;
   if (angleDeg < 0) angleDeg += 360;
 
-  // Zone 1 is centred on 12 o'clock rather than starting there, so it spans
-  // [-sectorDeg/2, +sectorDeg/2]. Shifting by half a sector makes it [0, sectorDeg).
+  // Zone 1 **starts** at 12 o'clock and runs clockwise, so it spans
+  // [0, sectorDeg). No half-sector shift: the boundary sits on 12 o'clock
+  // rather than the middle of zone 1 doing so.
+  //
+  // This matches the lesson artwork, which is drawn that way throughout, and
+  // is the convention the project settled on. An earlier revision had zone 1
+  // centred on 12 o'clock instead; the docs and the demo pictures in this repo
+  // were moved with it, so anything still showing a slice straddling the top
+  // is from before that decision and is wrong.
   const sectorDeg = 360 / fan.sectors;
-  const shifted = (angleDeg + sectorDeg / 2) % 360;
+  const index = Math.min(fan.sectors - 1, Math.floor(angleDeg / sectorDeg));
 
-  return `zone${Math.floor(shifted / sectorDeg) + 1}` as TouchZoneResult;
+  return `zone${index + 1}` as TouchZoneResult;
 }
 
 /**

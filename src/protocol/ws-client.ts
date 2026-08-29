@@ -209,15 +209,38 @@ export class WsClient {
     this.sendRaw({ type: 'start_topic', topic_id: topicId });
   }
 
-  /** Send touch or swipe event to backend. */
-  sendTouchEvent(gesture: 'tap' | 'swipe', zone?: string, direction?: string): void {
-    const payload: Record<string, unknown> = {
+  /**
+   * The child's answer to a touch question.
+   *
+   * `touch_event` rather than the spec's `lesson_touch` because that is the
+   * frame the live server actually listens for — verified against it, not
+   * assumed.
+   *
+   * The **values** are the spec's, though, and that is the part that was
+   * broken: `zone1`, not `zone_1`. Measured against the live server, answering
+   * `zone1` and `zone2` on the same question returns two different branch
+   * clips, while `zone_1`, `zone_2` and outright nonsense all return the same
+   * one — the fallback. Underscored names match no branch in any lesson, so
+   * every touch answer took the same path and the branching looked broken.
+   *
+   * A swipe result goes in `zone` *and* `direction`. Only the tap case is
+   * verified; sending both means whichever field the server reads for a swipe
+   * question, it finds `vuot_len` rather than a name that matches nothing.
+   */
+  sendTouchEvent(
+    layout: TouchLayoutType,
+    result: TouchClassificationResult,
+    detail?: TouchDetail,
+  ): void {
+    const gesture = layout === 'swipe' ? 'swipe' : 'tap';
+    this.sendRaw({
       type: 'touch_event',
       gesture,
-    };
-    if (zone) payload.zone = zone;
-    if (direction) payload.direction = direction;
-    this.sendRaw(payload as { type: string } & Record<string, unknown>);
+      layout,
+      zone: result,
+      ...(gesture === 'swipe' ? { direction: result } : {}),
+      ...(detail ? { point: detail.point, duration_ms: detail.durationMs } : {}),
+    });
   }
 
 

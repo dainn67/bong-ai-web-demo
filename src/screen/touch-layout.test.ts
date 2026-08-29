@@ -3,8 +3,12 @@ import {
   classifyGesture,
   classifySwipe,
   classifyTap,
+  DEAD_ZONE_RADIUS_25,
+  DEAD_ZONE_RADIUS_35,
+  layoutGeometry,
   parseTouchLayout,
   TOUCH_LAYOUTS,
+  zoneCountFor,
 } from './touch-layout';
 
 describe('touch-layout', () => {
@@ -46,11 +50,20 @@ describe('touch-layout', () => {
       expect(classifyTap({ x: 180, y: 134 }, 'tap4')).toBe('zone1'); // 46px out
     });
 
-    it('numbers four zones clockwise from 12 o clock', () => {
-      expect(classifyTap({ x: 180, y: 50 }, 'tap4')).toBe('zone1'); // top
-      expect(classifyTap({ x: 310, y: 180 }, 'tap4')).toBe('zone2'); // right
-      expect(classifyTap({ x: 180, y: 310 }, 'tap4')).toBe('zone3'); // bottom
-      expect(classifyTap({ x: 50, y: 180 }, 'tap4')).toBe('zone4'); // left
+    it('starts zone 1 at 12 o clock and runs clockwise', () => {
+      // Quadrants, so the middle of each is a diagonal. Zone 1 is the
+      // top-right quarter, not the top — a boundary sits on 12 o'clock.
+      expect(classifyTap({ x: 270, y: 90 }, 'tap4')).toBe('zone1'); // ~1:30
+      expect(classifyTap({ x: 270, y: 270 }, 'tap4')).toBe('zone2'); // ~4:30
+      expect(classifyTap({ x: 90, y: 270 }, 'tap4')).toBe('zone3'); // ~7:30
+      expect(classifyTap({ x: 90, y: 90 }, 'tap4')).toBe('zone4'); // ~10:30
+    });
+
+    it('gives 12 o clock itself to zone 1, the lower-numbered side', () => {
+      // The boundary lands exactly on the top. Pinned so both sides of the
+      // wire agree about a press one pixel either way.
+      expect(classifyTap({ x: 180, y: 50 }, 'tap4')).toBe('zone1');
+      expect(classifyTap({ x: 179, y: 50 }, 'tap4')).toBe('zone4');
     });
 
     it('returns cham_khac outside the circle, where the glass does not exist', () => {
@@ -65,10 +78,10 @@ describe('touch-layout', () => {
       expect(classifyTap({ x: 180, y: 180 }, 'tap3')).toBe('cham_khac');
     });
 
-    it('puts zone 1 across the top and two zones below it', () => {
-      expect(classifyTap({ x: 180, y: 60 }, 'tap3')).toBe('zone1');
-      expect(classifyTap({ x: 280, y: 260 }, 'tap3')).toBe('zone2'); // ~4 o'clock
-      expect(classifyTap({ x: 80, y: 260 }, 'tap3')).toBe('zone3'); // ~8 o'clock
+    it('starts zone 1 at 12 o clock, so the three run 0-120-240', () => {
+      expect(classifyTap({ x: 280, y: 110 }, 'tap3')).toBe('zone1'); // ~2 o'clock
+      expect(classifyTap({ x: 180, y: 320 }, 'tap3')).toBe('zone2'); // 6 o'clock
+      expect(classifyTap({ x: 80, y: 110 }, 'tap3')).toBe('zone3'); // ~10 o'clock
     });
   });
 
@@ -79,13 +92,15 @@ describe('touch-layout', () => {
       expect(classifyTap({ x: 180, y: 130 }, 'tap6')).toBe('cham_khac');
     });
 
-    it('numbers tap6 clockwise every 60 degrees', () => {
-      expect(classifyTap({ x: 180, y: 40 }, 'tap6')).toBe('zone1'); // 12 o'clock
-      expect(classifyTap({ x: 290, y: 110 }, 'tap6')).toBe('zone2'); // 2 o'clock
-      expect(classifyTap({ x: 290, y: 250 }, 'tap6')).toBe('zone3'); // 4 o'clock
-      expect(classifyTap({ x: 180, y: 320 }, 'tap6')).toBe('zone4'); // 6 o'clock
-      expect(classifyTap({ x: 70, y: 250 }, 'tap6')).toBe('zone5'); // 8 o'clock
-      expect(classifyTap({ x: 70, y: 110 }, 'tap6')).toBe('zone6'); // 10 o'clock
+    it('numbers tap6 clockwise every 60 degrees from 12 o clock', () => {
+      // Sector centres now sit at 30, 90, 150, … — the 1, 3, 5 o'clock
+      // positions — because zone 1 begins at the top rather than straddling it.
+      expect(classifyTap({ x: 245, y: 70 }, 'tap6')).toBe('zone1'); // ~1 o'clock
+      expect(classifyTap({ x: 320, y: 180 }, 'tap6')).toBe('zone2'); // 3 o'clock
+      expect(classifyTap({ x: 245, y: 290 }, 'tap6')).toBe('zone3'); // ~5 o'clock
+      expect(classifyTap({ x: 115, y: 290 }, 'tap6')).toBe('zone4'); // ~7 o'clock
+      expect(classifyTap({ x: 40, y: 180 }, 'tap6')).toBe('zone5'); // 9 o'clock
+      expect(classifyTap({ x: 115, y: 70 }, 'tap6')).toBe('zone6'); // ~11 o'clock
     });
   });
 
@@ -129,6 +144,77 @@ describe('touch-layout', () => {
       expect(classifyGesture({ x: 180, y: 50, at: 1000 }, { x: 180, y: 310, at: 1200 }, 'tap4')).toBe(
         'zone1',
       );
+    });
+  });
+
+  describe('zone naming', () => {
+    // Measured against the live server: answering `zone1` and `zone2` on one
+    // question returns two different branch clips, while `zone_1`, `zone_2` and
+    // nonsense all return the same fallback. The underscore spelling matches no
+    // branch in any lesson, so every answer took one path and the branching
+    // looked broken. Pinned here so it cannot come back.
+    it('has no underscore between the word and the number', () => {
+      for (const layout of TOUCH_LAYOUTS) {
+        if (layout === 'swipe') continue;
+        const result = classifyTap({ x: 180, y: 40 }, layout);
+        expect(result).toMatch(/^zone[1-6]$/);
+      }
+    });
+
+    it('names swipes in Vietnamese, the way lesson branches do', () => {
+      const from = { x: 180, y: 240, at: 1000 };
+      expect(classifySwipe(from, { x: 180, y: 120, at: 1200 })).toBe('vuot_len');
+      expect(classifySwipe(from, { x: 60, y: 240, at: 1200 })).toBe('vuot_trai');
+    });
+  });
+
+  describe('layoutGeometry', () => {
+    it('splits the two-zone layouts on the axis their name says', () => {
+      expect(layoutGeometry('tap2_tren_duoi')).toEqual({ kind: 'halves', split: 'horizontal' });
+      expect(layoutGeometry('tap2_trai_phai')).toEqual({ kind: 'halves', split: 'vertical' });
+    });
+
+    it('reports the sector count and dead radius the classifier uses', () => {
+      expect(layoutGeometry('tap3')).toEqual({
+        kind: 'fan',
+        sectors: 3,
+        deadRadius: DEAD_ZONE_RADIUS_25,
+      });
+      expect(layoutGeometry('tap6')).toEqual({
+        kind: 'fan',
+        sectors: 6,
+        deadRadius: DEAD_ZONE_RADIUS_35,
+      });
+      // 25% and 35% of the 180px radius, per the layout doc.
+      expect(DEAD_ZONE_RADIUS_25).toBeCloseTo(45);
+      expect(DEAD_ZONE_RADIUS_35).toBeCloseTo(63);
+    });
+
+    it('agrees with the classifier about every zone it draws', () => {
+      // The drawing and the verdict reading one table is the whole point: a
+      // label placed in the middle of the slice it names must classify as that
+      // zone, or the picture is lying about where the boundaries are.
+      for (const layout of ['tap3', 'tap4', 'tap5', 'tap6'] as const) {
+        const geometry = layoutGeometry(layout);
+        if (geometry.kind !== 'fan') throw new Error('expected a fan');
+        const sectorDeg = 360 / geometry.sectors;
+        const radius = (180 + geometry.deadRadius) / 2;
+        for (let i = 0; i < geometry.sectors; i++) {
+          // The middle of the slice, which is where the overlay puts the label.
+          const rad = ((i * sectorDeg + sectorDeg / 2 - 90) * Math.PI) / 180;
+          const point = { x: 180 + radius * Math.cos(rad), y: 180 + radius * Math.sin(rad) };
+          expect(classifyTap(point, layout)).toBe(`zone${i + 1}`);
+        }
+      }
+    });
+  });
+
+  describe('zoneCountFor', () => {
+    it('counts answer zones, which is what the server keeps getting wrong', () => {
+      expect(zoneCountFor('tap2_tren_duoi')).toBe(2);
+      expect(zoneCountFor('tap4')).toBe(4);
+      expect(zoneCountFor('tap6')).toBe(6);
+      expect(zoneCountFor('swipe')).toBe(4);
     });
   });
 });

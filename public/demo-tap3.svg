@@ -3,20 +3,20 @@
     <clipPath id="circleClip"><circle cx="180" cy="180" r="180" /></clipPath>
   </defs>
   <g clip-path="url(#circleClip)">
-    <!-- Zone 1 (Top - Máy bay): [-60deg, 60deg] -> (24.1, 90) to (335.9, 90) -->
-    <path d="M 180,180 L 24.12,90 A 180,180 0 0 1 335.88,90 Z" fill="#e0e7ff" stroke="#ffffff" stroke-width="2.5" />
-    <text x="180" y="70" text-anchor="middle" font-size="40" dominant-baseline="central">✈️</text>
-    <text x="180" y="110" text-anchor="middle" font-size="13" font-weight="bold" fill="#3730a3" font-family="sans-serif">1. MÁY BAY</text>
+    <!-- Zone 1 (0deg -> 120deg, clockwise from 12h) -->
+    <path d="M 180,180 L 180.00,0.00 A 180,180 0 0 1 335.88,270.00 Z" fill="#e0e7ff" stroke="#ffffff" stroke-width="2.5" />
+    <text x="277" y="106" text-anchor="middle" font-size="40" dominant-baseline="central">✈️</text>
+    <text x="277" y="142" text-anchor="middle" font-size="13" font-weight="bold" fill="#3730a3" font-family="sans-serif">1. MÁY BAY</text>
 
-    <!-- Zone 2 (Bottom-Right - Tàu thủy): [60deg, 180deg] -> (335.9, 90) to (180, 360) -->
-    <path d="M 180,180 L 335.88,90 A 180,180 0 0 1 180,360 Z" fill="#ccfbf1" stroke="#ffffff" stroke-width="2.5" />
-    <text x="265" y="225" text-anchor="middle" font-size="40" dominant-baseline="central">🚢</text>
-    <text x="265" y="265" text-anchor="middle" font-size="13" font-weight="bold" fill="#115e59" font-family="sans-serif">2. TÀU THỦY</text>
+    <!-- Zone 2 (120deg -> 240deg, clockwise from 12h) -->
+    <path d="M 180,180 L 335.88,270.00 A 180,180 0 0 1 24.12,270.00 Z" fill="#ccfbf1" stroke="#ffffff" stroke-width="2.5" />
+    <text x="180" y="274" text-anchor="middle" font-size="40" dominant-baseline="central">🚢</text>
+    <text x="180" y="310" text-anchor="middle" font-size="13" font-weight="bold" fill="#115e59" font-family="sans-serif">2. TÀU THỦY</text>
 
-    <!-- Zone 3 (Bottom-Left - Ô tô): [180deg, 300deg] -> (180, 360) to (24.1, 90) -->
-    <path d="M 180,180 L 180,360 A 180,180 0 0 1 24.12,90 Z" fill="#fef3c7" stroke="#ffffff" stroke-width="2.5" />
-    <text x="95" y="225" text-anchor="middle" font-size="40" dominant-baseline="central">🚗</text>
-    <text x="95" y="265" text-anchor="middle" font-size="13" font-weight="bold" fill="#92400e" font-family="sans-serif">3. Ô TÔ</text>
+    <!-- Zone 3 (240deg -> 360deg, clockwise from 12h) -->
+    <path d="M 180,180 L 24.12,270.00 A 180,180 0 0 1 180.00,0.00 Z" fill="#fef3c7" stroke="#ffffff" stroke-width="2.5" />
+    <text x="83" y="106" text-anchor="middle" font-size="40" dominant-baseline="central">🚗</text>
+    <text x="83" y="142" text-anchor="middle" font-size="13" font-weight="bold" fill="#92400e" font-family="sans-serif">3. Ô TÔ</text>
 
     <!-- Dead Zone at Center (r = 45px) -->
     <circle cx="180" cy="180" r="45" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 3" />

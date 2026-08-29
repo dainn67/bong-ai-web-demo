@@ -26,13 +26,15 @@ Tài liệu này định nghĩa chuẩn định dạng gói tin trao đổi qua 
 |---|:---:|---|---|
 | **`tap2_tren_duoi`** | 2 | `zone1` (Trên), `zone2` (Dưới) | Nửa trên: $y \le 180$, Nửa dưới: $y > 180$. Không có vùng chết. |
 | **`tap2_trai_phai`** | 2 | `zone1` (Trái), `zone2` (Phải) | Nửa trái: $x \le 180$, Nửa phải: $x > 180$. Không có vùng chết. |
-| **`tap3`** | 3 | `zone1`, `zone2`, `zone3`, `cham_khac` | 3 rẻ quạt $120^\circ$. Zone 1 ở đỉnh ($300^\circ \to 60^\circ$). Vùng chết $r \le 45\text{px}$. |
-| **`tap4`** | 4 | `zone1`, `zone2`, `zone3`, `zone4`, `cham_khac` | 4 góc phần tư $90^\circ$. Zone 1 ở trên ($315^\circ \to 45^\circ$). Vùng chết $r \le 45\text{px}$. |
-| **`tap5`** | 5 | `zone1` .. `zone5`, `cham_khac` | 5 rẻ quạt $72^\circ$. Zone 1 ở đỉnh ($324^\circ \to 36^\circ$). Vùng chết $r \le 63\text{px}$. |
-| **`tap6`** | 6 | `zone1` .. `zone6`, `cham_khac` | 6 rẻ quạt $60^\circ$. Zone 1 ở đỉnh ($330^\circ \to 30^\circ$). Vùng chết $r \le 63\text{px}$. |
+| **`tap3`** | 3 | `zone1`, `zone2`, `zone3`, `cham_khac` | 3 rẻ quạt $120^\circ$. Zone 1 **bắt đầu** từ đỉnh ($0^\circ \to 120^\circ$). Vùng chết $r \le 45\text{px}$. |
+| **`tap4`** | 4 | `zone1`, `zone2`, `zone3`, `zone4`, `cham_khac` | 4 góc phần tư $90^\circ$. Zone 1 **bắt đầu** từ đỉnh ($0^\circ \to 90^\circ$), tức góc phần tư trên–phải. Vùng chết $r \le 45\text{px}$. |
+| **`tap5`** | 5 | `zone1` .. `zone5`, `cham_khac` | 5 rẻ quạt $72^\circ$. Zone 1 **bắt đầu** từ đỉnh ($0^\circ \to 72^\circ$). Vùng chết $r \le 63\text{px}$. |
+| **`tap6`** | 6 | `zone1` .. `zone6`, `cham_khac` | 6 rẻ quạt $60^\circ$. Zone 1 **bắt đầu** từ đỉnh ($0^\circ \to 60^\circ$). Vùng chết $r \le 63\text{px}$. |
 | **`swipe`** | 4 | `vuot_len`, `vuot_xuong`, `vuot_trai`, `vuot_phai`, `cham_khac` | Vuốt dứt khoát 4 hướng. Chạm đơn thuần hoặc vuốt $<60\text{px} \to$ `cham_khac`. |
 
-> **Điểm nằm trên đường biên.** Mọi layout đều lấy biên **thuộc về vùng có số nhỏ hơn**: tại đúng $y = 180$ thì `tap2_tren_duoi` trả `zone1`, tại đúng $x = 180$ thì `tap2_trai_phai` trả `zone1`. Chỉ lệch một hàng pixel, nhưng cần chốt để hai bên không chấm khác nhau ở đó.
+> **Quy ước đánh số vùng quạt.** Zone 1 **bắt đầu** ở mốc 12 giờ (không phải nằm giữa mốc đó), các vùng sau đánh số **theo chiều kim đồng hồ**. Nghĩa là có một đường biên nằm đúng trên đỉnh 12 giờ, và hình minh hoạ phải được vẽ theo đúng quy ước này.
+>
+> **Điểm nằm trên đường biên.** Mọi layout đều lấy biên **thuộc về vùng có số nhỏ hơn**: tại đúng $y = 180$ thì `tap2_tren_duoi` trả `zone1`, tại đúng $x = 180$ thì `tap2_trai_phai` trả `zone1`, và tại đúng $0^\circ$ (đỉnh 12 giờ) thì các layout quạt trả `zone1`. Chỉ lệch một hàng pixel, nhưng cần chốt để hai bên không chấm khác nhau ở đó.
 >
 > **Ngoài vòng kính.** Tấm cảm ứng là hình vuông còn kính là hình tròn, nên ngón tay có thể chạm vào bốn góc không tồn tại. Mọi điểm có $r > 180\text{px}$ đều trả `cham_khac`, kể cả khi nó là điểm bắt đầu của một cú vuốt.
 

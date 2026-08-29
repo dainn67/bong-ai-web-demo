@@ -1,63 +1,94 @@
-import { useState, useRef, type PointerEvent as ReactPointerEvent } from 'react';
-import {
-  getSwipeDirection,
-  getTouchZone,
-  toDevicePoint,
-  type SwipeDirection,
-  type TouchStart,
-  type TouchZonesConfig,
-} from './touch-input';
+/**
+ * The touch window, drawn on the glass.
+ *
+ * Its whole job is to show the child the grid they are being graded against,
+ * and to report where they pressed. What the press *means* — which branch runs
+ * next — belongs to the server, never here.
+ *
+ * Everything is drawn from `layoutGeometry`, the same table `classifyTap` reads.
+ * That is deliberate and it is the fix: this file used to keep its own idea of
+ * the layouts, with its own names and its own shapes, and the two disagreed —
+ * so the picture showed one thing and the verdict said another.
+ *
+ * Zones are real pie slices, because that is what the artwork is. Rectangles
+ * over a sliced circle would light up the wrong region for every press near a
+ * boundary, which is exactly the case a tester is trying to check.
+ */
 
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { toDevicePoint, DISPLAY_SIZE } from './touch-input';
+import {
+  classifyGesture,
+  layoutGeometry,
+  SCREEN_CENTER_X,
+  SCREEN_CENTER_Y,
+  SCREEN_RADIUS,
+  type TouchClassificationResult,
+  type TouchDetail,
+  type TouchGestureSample,
+  type TouchLayoutType,
+  type TouchWindow,
+} from './touch-layout';
 
 interface TouchZonesOverlayProps {
-  config: TouchZonesConfig;
-  onTouch: (gesture: 'tap' | 'swipe', zone?: string, direction?: SwipeDirection) => void;
+  config: TouchWindow;
+  onTouch: (result: TouchClassificationResult, detail: TouchDetail) => void;
 }
 
+/** Vietnamese names for the swipe directions, for the hint arrows. */
+const SWIPE_HINTS: { result: TouchClassificationResult; label: string; icon: string; at: string }[] = [
+  { result: 'vuot_len', label: 'Lên', icon: '⬆️', at: 'top-6 left-1/2 -translate-x-1/2' },
+  { result: 'vuot_xuong', label: 'Xuống', icon: '⬇️', at: 'bottom-10 left-1/2 -translate-x-1/2' },
+  { result: 'vuot_trai', label: 'Trái', icon: '⬅️', at: 'left-6 top-1/2 -translate-y-1/2' },
+  { result: 'vuot_phai', label: 'Phải', icon: '➡️', at: 'right-6 top-1/2 -translate-y-1/2' },
+];
+
 export function TouchZonesOverlay({ config, onTouch }: TouchZonesOverlayProps) {
-  const [activeZone, setActiveZone] = useState<string | null>(null);
-  const startPoint = useRef<TouchStart | null>(null);
+  const { layout } = config;
+  const geometry = layoutGeometry(layout);
+
   const containerRef = useRef<HTMLDivElement>(null);
+  const startPoint = useRef<TouchGestureSample | null>(null);
+  // Reset between questions comes from the `key` at the mount point, not from
+  // an effect: a new layout is a new window, and remounting is the honest way
+  // to say so.
+  const [activeZone, setActiveZone] = useState<TouchClassificationResult | null>(null);
 
-  const { mode, zonesCount, layout = 'split_vertical' } = config;
-
-  const handlePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    e.stopPropagation();
+  const sampleAt = (event: ReactPointerEvent<HTMLDivElement>): TouchGestureSample | null => {
     const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const pt = toDevicePoint(e.clientX, e.clientY, rect);
-    startPoint.current = { ...pt, at: e.timeStamp };
-    e.currentTarget.setPointerCapture(e.pointerId);
-
-    if (mode === 'tap') {
-      const z = getTouchZone(pt, zonesCount, layout);
-      setActiveZone(z);
-    }
+    if (!rect) return null;
+    return { ...toDevicePoint(event.clientX, event.clientY, rect), at: event.timeStamp };
   };
 
-  const handlePointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
-    e.stopPropagation();
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    const start = sampleAt(event);
+    if (!start) return;
+    startPoint.current = start;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    // Preview only, and only for taps: a swipe has not happened yet at press-down.
+    if (geometry.kind !== 'swipe') setActiveZone(classifyGesture(start, null, layout));
+  };
+
+  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.stopPropagation();
     const start = startPoint.current;
     startPoint.current = null;
     setActiveZone(null);
+    if (!start) return;
 
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect || !start) return;
+    const end = sampleAt(event);
+    if (!end) return;
 
-    const end = { ...toDevicePoint(e.clientX, e.clientY, rect), at: e.timeStamp };
-
-    if (mode === 'swipe') {
-      const dir = getSwipeDirection(start, end);
-      if (dir) {
-        onTouch('swipe', undefined, dir);
-      }
-    } else {
-      const zone = getTouchZone(end, zonesCount, layout);
-      onTouch('tap', zone);
-    }
+    onTouch(classifyGesture(start, end, layout), {
+      // Press-down, which is what §3.1 asks for: the point the child aimed at,
+      // before their finger had a chance to slide.
+      point: { x: start.x, y: start.y },
+      durationMs: Math.max(0, Math.round(end.at - start.at)),
+    });
   };
 
-  const handlePointerCancel = () => {
+  const onPointerCancel = () => {
     startPoint.current = null;
     setActiveZone(null);
   };
@@ -65,242 +96,176 @@ export function TouchZonesOverlay({ config, onTouch }: TouchZonesOverlayProps) {
   return (
     <div
       ref={containerRef}
-      onPointerDown={handlePointerDown}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerCancel}
-      className="absolute inset-0 z-30 flex items-center justify-center select-none cursor-pointer rounded-full overflow-hidden"
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      className="absolute inset-0 z-30 cursor-crosshair select-none overflow-hidden rounded-full"
     >
-      {/* Semi-transparent interactive backdrop */}
-      <div className="absolute inset-0 bg-ink-950/20 backdrop-blur-[1px]" />
+      {/* Faint, and no blur. The artwork underneath is the question — the grid
+          is there to show where the boundaries fall, not to replace it. */}
+      <svg
+        viewBox={`0 0 ${DISPLAY_SIZE} ${DISPLAY_SIZE}`}
+        className="pointer-events-none absolute inset-0 h-full w-full"
+      >
+        <ZoneShapes layout={layout} activeZone={activeZone} />
+      </svg>
 
-      {mode === 'tap' && renderTapLayout(zonesCount, layout, activeZone, (z) => onTouch('tap', z))}
-      {mode === 'swipe' && renderSwipeLayout((dir) => onTouch('swipe', undefined, dir))}
+      {geometry.kind === 'swipe' && (
+        <div className="pointer-events-none absolute inset-0">
+          {SWIPE_HINTS.map((hint) => (
+            <span
+              key={hint.result}
+              className={`absolute flex flex-col items-center gap-0.5 rounded-xl border border-cream-100/20 bg-ink-900/70 px-2 py-1 text-cream-100 shadow-md ${hint.at}`}
+            >
+              <span className="text-base leading-none">{hint.icon}</span>
+              <span className="text-[9px] font-bold">{hint.label}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
-      {/* Floating Mode Badge */}
-      <div className="pointer-events-none absolute bottom-4 px-3 py-1 rounded-full bg-ink-900/80 border border-cream-100/20 backdrop-blur-md shadow-lg">
-        <p className="text-[11px] font-bold text-cream-100 tracking-wide flex items-center gap-1.5 animate-pulse">
-          {mode === 'tap' ? '👆 Chạm để chọn' : '👉 Vuốt để trả lời'}
+      <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-cream-100/20 bg-ink-900/80 px-3 py-1 shadow-lg backdrop-blur-md">
+        <p className="text-[11px] font-bold tracking-wide text-cream-100">
+          {geometry.kind === 'swipe' ? '👉 Vuốt để trả lời' : '👆 Chạm để chọn'}
         </p>
       </div>
     </div>
   );
 }
 
-function renderTapLayout(
-  zonesCount: number,
-  layout: string,
-  activeZone: string | null,
-  onSelect: (zone: string) => void,
-) {
-  if (zonesCount === 2) {
-    if (layout === 'split_horizontal') {
-      return (
-        <div className="absolute inset-0 flex flex-col pointer-events-none">
-          <div
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect('zone_1');
-            }}
-            className={`pointer-events-auto flex-1 flex flex-col items-center justify-center border-b border-cream-100/30 transition-all ${
-              activeZone === 'zone_1' ? 'bg-mint-400/30 ring-2 ring-mint-300' : 'bg-cream-100/5 hover:bg-cream-100/15'
-            }`}
-          >
-            <span className="text-sm font-black text-cream-100 bg-ink-900/60 px-3 py-1 rounded-full border border-cream-100/20 shadow">
-              Phần Trên (1)
-            </span>
-          </div>
-          <div
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect('zone_2');
-            }}
-            className={`pointer-events-auto flex-1 flex flex-col items-center justify-center transition-all ${
-              activeZone === 'zone_2' ? 'bg-mint-400/30 ring-2 ring-mint-300' : 'bg-cream-100/5 hover:bg-cream-100/15'
-            }`}
-          >
-            <span className="text-sm font-black text-cream-100 bg-ink-900/60 px-3 py-1 rounded-full border border-cream-100/20 shadow">
-              Phần Dưới (2)
-            </span>
-          </div>
-        </div>
-      );
-    }
+/**
+ * The zone boundaries, as SVG.
+ *
+ * Numbers are device pixels throughout, so the shape drawn and the shape
+ * classified are the same arithmetic.
+ */
+function ZoneShapes({
+  layout,
+  activeZone,
+}: {
+  layout: TouchLayoutType;
+  activeZone: TouchClassificationResult | null;
+}) {
+  const geometry = layoutGeometry(layout);
 
-    // Default 2 zones: split_vertical
+  const fill = (zone: string) =>
+    activeZone === zone ? 'rgba(74,222,128,0.35)' : 'rgba(255,255,255,0.06)';
+  const stroke = 'rgba(255,255,255,0.55)';
+
+  if (geometry.kind === 'swipe') {
+    return <circle cx={SCREEN_CENTER_X} cy={SCREEN_CENTER_Y} r={SCREEN_RADIUS - 1} fill="none" stroke={stroke} strokeWidth={2} />;
+  }
+
+  if (geometry.kind === 'halves') {
+    const horizontal = geometry.split === 'horizontal';
     return (
-      <div className="absolute inset-0 flex pointer-events-none">
-        <div
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelect('zone_1');
-          }}
-          className={`pointer-events-auto flex-1 flex flex-col items-center justify-center border-r border-cream-100/30 transition-all ${
-            activeZone === 'zone_1' ? 'bg-mint-400/30 ring-2 ring-mint-300' : 'bg-cream-100/5 hover:bg-cream-100/15'
-          }`}
-        >
-          <span className="text-sm font-black text-cream-100 bg-ink-900/60 px-3 py-1 rounded-full border border-cream-100/20 shadow">
-            Trái (1)
-          </span>
-        </div>
-        <div
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelect('zone_2');
-          }}
-          className={`pointer-events-auto flex-1 flex flex-col items-center justify-center transition-all ${
-            activeZone === 'zone_2' ? 'bg-mint-400/30 ring-2 ring-mint-300' : 'bg-cream-100/5 hover:bg-cream-100/15'
-          }`}
-        >
-          <span className="text-sm font-black text-cream-100 bg-ink-900/60 px-3 py-1 rounded-full border border-cream-100/20 shadow">
-            Phải (2)
-          </span>
-        </div>
-      </div>
+      <>
+        <path
+          d={halfPath(horizontal, true)}
+          fill={fill('zone1')}
+          stroke={stroke}
+          strokeWidth={2}
+        />
+        <path
+          d={halfPath(horizontal, false)}
+          fill={fill('zone2')}
+          stroke={stroke}
+          strokeWidth={2}
+        />
+        <ZoneLabel
+          x={horizontal ? SCREEN_CENTER_X : SCREEN_RADIUS / 2}
+          y={horizontal ? SCREEN_RADIUS / 2 : SCREEN_CENTER_Y}
+          text="1"
+        />
+        <ZoneLabel
+          x={horizontal ? SCREEN_CENTER_X : SCREEN_CENTER_X + SCREEN_RADIUS / 2}
+          y={horizontal ? SCREEN_CENTER_Y + SCREEN_RADIUS / 2 : SCREEN_CENTER_Y}
+          text="2"
+        />
+      </>
     );
   }
 
-  if (zonesCount === 3) {
-    return (
-      <div className="absolute inset-0 flex pointer-events-none">
-        {[1, 2, 3].map((num) => {
-          const zId = `zone_${num}`;
-          return (
-            <div
-              key={zId}
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelect(zId);
-              }}
-              className={`pointer-events-auto flex-1 flex flex-col items-center justify-center border-r border-cream-100/25 last:border-r-0 transition-all ${
-                activeZone === zId ? 'bg-mint-400/30 ring-2 ring-mint-300' : 'bg-cream-100/5 hover:bg-cream-100/15'
-              }`}
-            >
-              <span className="text-sm font-black text-cream-100 bg-ink-900/60 w-8 h-8 flex items-center justify-center rounded-full border border-cream-100/20 shadow">
-                {num}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
+  const { sectors, deadRadius } = geometry;
+  const sectorDeg = 360 / sectors;
 
-  if (zonesCount === 4) {
-    return (
-      <div className="absolute inset-0 grid grid-cols-2 grid-rows-2 pointer-events-none">
-        {[
-          { id: 'zone_1', label: '1' },
-          { id: 'zone_2', label: '2' },
-          { id: 'zone_3', label: '3' },
-          { id: 'zone_4', label: '4' },
-        ].map((z) => (
-          <div
-            key={z.id}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect(z.id);
-            }}
-            className={`pointer-events-auto flex items-center justify-center border border-cream-100/20 transition-all ${
-              activeZone === z.id ? 'bg-mint-400/30 ring-2 ring-mint-300' : 'bg-cream-100/5 hover:bg-cream-100/15'
-            }`}
-          >
-            <span className="text-sm font-black text-cream-100 bg-ink-900/60 w-8 h-8 flex items-center justify-center rounded-full border border-cream-100/20 shadow">
-              {z.label}
-            </span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  // 5 or 6 zones
-  const total = Math.min(6, zonesCount);
   return (
-    <div className="absolute inset-0 grid grid-cols-3 grid-rows-2 pointer-events-none">
-      {Array.from({ length: total }, (_, i) => {
-        const num = i + 1;
-        const zId = `zone_${num}`;
+    <>
+      {Array.from({ length: sectors }, (_, i) => {
+        const zone = `zone${i + 1}`;
+        // Zone 1 *starts* at 12 o'clock, so a boundary line sits on it and the
+        // sectors run clockwise from there — the same arithmetic `classifyTap`
+        // does. Half a sector out here is the single easiest way to make every
+        // answer look like a content bug.
+        const from = i * sectorDeg;
+        const label = polar(from + sectorDeg / 2, (SCREEN_RADIUS + deadRadius) / 2);
         return (
-          <div
-            key={zId}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect(zId);
-            }}
-            className={`pointer-events-auto flex items-center justify-center border border-cream-100/20 transition-all ${
-              activeZone === zId ? 'bg-mint-400/30 ring-2 ring-mint-300' : 'bg-cream-100/5 hover:bg-cream-100/15'
-            }`}
-          >
-            <span className="text-sm font-black text-cream-100 bg-ink-900/60 w-8 h-8 flex items-center justify-center rounded-full border border-cream-100/20 shadow">
-              {num}
-            </span>
-          </div>
+          <g key={zone}>
+            <path d={sectorPath(from, from + sectorDeg)} fill={fill(zone)} stroke={stroke} strokeWidth={2} />
+            <ZoneLabel x={label.x} y={label.y} text={String(i + 1)} />
+          </g>
         );
       })}
-    </div>
+      {/* The dead centre. Drawn because it is a real answer — `cham_khac` —
+          and a child who taps a hole they cannot see just taps harder. */}
+      <circle
+        cx={SCREEN_CENTER_X}
+        cy={SCREEN_CENTER_Y}
+        r={deadRadius}
+        fill={activeZone === 'cham_khac' ? 'rgba(248,113,113,0.35)' : 'rgba(0,0,0,0.25)'}
+        stroke={stroke}
+        strokeWidth={2}
+        strokeDasharray="5 4"
+      />
+    </>
   );
 }
 
-function renderSwipeLayout(onSwipe: (dir: SwipeDirection) => void) {
+function ZoneLabel({ x, y, text }: { x: number; y: number; text: string }) {
   return (
-    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-      <div className="relative w-48 h-48 flex items-center justify-center">
-        {/* Up Arrow */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onSwipe('swipe_up');
-          }}
-          className="pointer-events-auto absolute top-1 flex flex-col items-center gap-0.5 p-2 rounded-xl bg-ink-900/70 hover:bg-ink-900 border border-cream-100/20 text-cream-100 active:scale-90 transition shadow-md"
-        >
-          <span className="text-lg leading-none">⬆️</span>
-          <span className="text-[9px] font-bold">Lên</span>
-        </button>
-
-        {/* Down Arrow */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onSwipe('swipe_down');
-          }}
-          className="pointer-events-auto absolute bottom-8 flex flex-col items-center gap-0.5 p-2 rounded-xl bg-ink-900/70 hover:bg-ink-900 border border-cream-100/20 text-cream-100 active:scale-90 transition shadow-md"
-        >
-          <span className="text-lg leading-none">⬇️</span>
-          <span className="text-[9px] font-bold">Xuống</span>
-        </button>
-
-        {/* Left Arrow */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onSwipe('swipe_left');
-          }}
-          className="pointer-events-auto absolute left-1 flex flex-col items-center gap-0.5 p-2 rounded-xl bg-ink-900/70 hover:bg-ink-900 border border-cream-100/20 text-cream-100 active:scale-90 transition shadow-md"
-        >
-          <span className="text-lg leading-none">⬅️</span>
-          <span className="text-[9px] font-bold">Trái</span>
-        </button>
-
-        {/* Right Arrow */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onSwipe('swipe_right');
-          }}
-          className="pointer-events-auto absolute right-1 flex flex-col items-center gap-0.5 p-2 rounded-xl bg-ink-900/70 hover:bg-ink-900 border border-cream-100/20 text-cream-100 active:scale-90 transition shadow-md"
-        >
-          <span className="text-lg leading-none">➡️</span>
-          <span className="text-[9px] font-bold">Phải</span>
-        </button>
-
-        <div className="w-12 h-12 rounded-full border border-dashed border-cream-100/40 flex items-center justify-center text-xs font-semibold text-cream-200/60">
-          Vuốt
-        </div>
-      </div>
-    </div>
+    <>
+      <circle cx={x} cy={y} r={15} fill="rgba(24,20,18,0.7)" stroke="rgba(255,255,255,0.3)" />
+      <text
+        x={x}
+        y={y}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={16}
+        fontWeight="bold"
+        fill="#fff"
+      >
+        {text}
+      </text>
+    </>
   );
+}
+
+/** Half the circle: top/bottom when `horizontal`, else left/right. */
+function halfPath(horizontal: boolean, first: boolean): string {
+  const r = SCREEN_RADIUS;
+  if (horizontal) {
+    return first
+      ? `M 0,${r} A ${r},${r} 0 0 1 ${2 * r},${r} Z`
+      : `M ${2 * r},${r} A ${r},${r} 0 0 1 0,${r} Z`;
+  }
+  return first
+    ? `M ${r},${2 * r} A ${r},${r} 0 0 1 ${r},0 Z`
+    : `M ${r},0 A ${r},${r} 0 0 1 ${r},${2 * r} Z`;
+}
+
+/** A pie slice between two angles, measured clockwise from 12 o'clock. */
+function sectorPath(fromDeg: number, toDeg: number): string {
+  const a = polar(fromDeg, SCREEN_RADIUS);
+  const b = polar(toDeg, SCREEN_RADIUS);
+  const large = toDeg - fromDeg > 180 ? 1 : 0;
+  return `M ${SCREEN_CENTER_X},${SCREEN_CENTER_Y} L ${a.x},${a.y} A ${SCREEN_RADIUS},${SCREEN_RADIUS} 0 ${large} 1 ${b.x},${b.y} Z`;
+}
+
+/** Degrees clockwise from 12 o'clock, to a point at `radius`. */
+function polar(deg: number, radius: number): { x: number; y: number } {
+  const rad = ((deg - 90) * Math.PI) / 180;
+  return {
+    x: SCREEN_CENTER_X + radius * Math.cos(rad),
+    y: SCREEN_CENTER_Y + radius * Math.sin(rad),
+  };
 }

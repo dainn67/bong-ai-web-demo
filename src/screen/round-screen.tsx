@@ -194,7 +194,15 @@ export function RoundScreen() {
                 activity wins over the menu: starting one closes the other. */}
             <ActivityView />
             <ScreenMenu />
-            {touchZones && <TouchZonesOverlay config={touchZones} onTouch={sendTouchEvent} />}
+            {/* Keyed on the layout so a new question gets a fresh overlay
+                rather than the previous one's highlight. */}
+            {touchZones && (
+              <TouchZonesOverlay
+                key={touchZones.layout}
+                config={touchZones}
+                onTouch={sendTouchEvent}
+              />
+            )}
 
             {/* Glass: a fixed highlight across the top, so it reads as covered. */}
 

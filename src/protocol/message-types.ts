@@ -144,13 +144,21 @@ export interface CustomIn {
 export type DisplayCommand =
   | { kind: 'expression'; name: Expression }
   | { kind: 'image'; url: string }
-  | {
-      kind: 'touch_zones';
-      mode: 'tap' | 'swipe';
-      zones_count: number;
-      layout: string;
-      timeout_ms: number;
-    }
+  /**
+   * The server opening a touch window.
+   *
+   * Only `layout` and the timeout survive the normalisation. `mode` and
+   * `zones_count` are deliberately dropped: measured against the live server,
+   * `zones_count` is **always 2** and `mode` is **always `tap`**, whatever the
+   * question — so a client that believed them drew two zones over a six-slice
+   * picture. `layout` is the field the server gets right, and it already says
+   * everything the other two were trying to say.
+   *
+   * Left as the raw string: narrowing it here would only move the lie. The
+   * store runs it through `parseTouchLayout` and refuses the window outright if
+   * it names none of the seven.
+   */
+  | { kind: 'touch_zones'; layout: string; timeoutMs: number }
   | { kind: 'clear_touch_zones' }
   /** An image frame carrying no URL is the server clearing the screen. */
   | { kind: 'clear' };
@@ -178,12 +186,13 @@ export function toDisplayCommand(message: IncomingMessage): DisplayCommand | nul
   if (message.type === 'display') {
     const d = message as DisplayIn;
     if (d.action === 'set_touch_zones') {
+      // No default layout. A missing one has to reach the store as missing, so
+      // it can say so on the glass — falling back to a grid nobody asked for is
+      // how a child ends up graded against a picture that was never drawn.
       return {
         kind: 'touch_zones',
-        mode: d.mode || 'tap',
-        zones_count: d.zones_count || 2,
-        layout: d.layout || 'split_vertical',
-        timeout_ms: d.timeout_ms || 10000,
+        layout: String(d.layout ?? ''),
+        timeoutMs: typeof d.timeout_ms === 'number' && d.timeout_ms > 0 ? d.timeout_ms : 10_000,
       };
     }
     if (d.action === 'clear_touch_zones') {
