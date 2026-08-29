@@ -141,8 +141,7 @@ function Row({
       className="w-full shrink-0 rounded-2xl bg-cream-200/10 px-2.5 py-2 text-center transition active:scale-[0.97] active:bg-cream-200/20"
     >
       <span className="flex items-center justify-center gap-1.5">
-        <span className="text-base leading-none">{icon}</span>
-        <span className="truncate text-sm font-bold text-cream-100">{title}</span>
+        <span className="truncate text-xs font-bold text-cream-100">{title}</span>
       </span>
       {hint && (
         <span className="mt-0.5 block truncate text-[10px] leading-tight text-cream-200/45">
