@@ -932,7 +932,11 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
       set({ activity: { ...get().activity, kind: get().activity.kind ?? 'lesson', phase: 'playing' } });
     } else if (actState === 'idle') {
       stopActivity(set, get);
-      set({ activity: IDLE_ACTIVITY, menu: INITIAL_MENU_STATE });
+      set({
+        activity: IDLE_ACTIVITY,
+        menu: INITIAL_MENU_STATE,
+        face: { ...get().face, imageUrl: null },
+      });
     }
     return;
   }

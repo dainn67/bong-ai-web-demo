@@ -106,6 +106,13 @@ export function reduceFace(state: FaceState, message: IncomingMessage): FaceStat
     case 'display_image':
       return reduceDisplay(state, message);
 
+    case 'activity_state': {
+      if (message.state === 'idle') {
+        return { ...state, imageUrl: null };
+      }
+      return state;
+    }
+
     case 'tts':
       return reduceTts(state, message.state, message.text);
 
