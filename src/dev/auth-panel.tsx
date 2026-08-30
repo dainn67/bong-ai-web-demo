@@ -17,26 +17,36 @@ import {
   fetchProfile,
   hasActiveSubscription,
   hasStoredSession,
-  login,
+  listChildren,
+  loginAndBind,
   logout,
+  registerAndBindDevice,
   type Account,
+  type ChildItem,
 } from '../api/auth-client';
 import { loadConfig } from '../config/device-config';
+import { useSimulatorStore } from '../store/simulator-store';
 
 export function AuthPanel() {
   const [account, setAccount] = useState<Account | null>(null);
-  const [phone, setPhone] = useState('');
-  const [password, setPassword] = useState('');
+  const [children, setChildren] = useState<ChildItem[]>([]);
+  const [phone, setPhone] = useState('+84123456789');
+  const [password, setPassword] = useState('123456');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const connect = useSimulatorStore((state) => state.connect);
 
-  // A token in storage outlives the page, so restore the session on mount
-  // rather than making the tester sign in after every reload.
+  // Restore session
   useEffect(() => {
     if (!hasStoredSession()) return;
     let cancelled = false;
     void fetchProfile()
-      .then((loaded) => !cancelled && setAccount(loaded))
+      .then(async (loaded) => {
+        if (cancelled) return;
+        setAccount(loaded);
+        const kids = await listChildren().catch(() => []);
+        if (!cancelled) setChildren(kids);
+      })
       .catch(() => !cancelled && logout());
     return () => {
       cancelled = true;
@@ -48,8 +58,27 @@ export function AuthPanel() {
     setError(null);
     try {
       const config = loadConfig();
-      setAccount(await login(phone.trim(), password, config.macAddress));
+      const res = await loginAndBind(phone.trim(), password, config.macAddress);
+      setAccount(res.account);
+      setChildren(res.children);
       setPassword('');
+      connect();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const switchChild = async (childId: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const config = loadConfig();
+      await registerAndBindDevice(config.macAddress, childId, 'Robot Bống');
+      const updated = await fetchProfile();
+      setAccount(updated);
+      connect();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -60,6 +89,8 @@ export function AuthPanel() {
   const signOut = () => {
     logout();
     setAccount(null);
+    setChildren([]);
+    connect();
   };
 
   return (
@@ -77,7 +108,14 @@ export function AuthPanel() {
         )
       }
     >
-      {account ? <Signed account={account} /> : null}
+      {account ? (
+        <Signed
+          account={account}
+          childrenList={children}
+          onSwitchChild={switchChild}
+          busy={busy}
+        />
+      ) : null}
 
       {!account && (
         <div className="flex flex-col gap-2">
@@ -108,7 +146,7 @@ export function AuthPanel() {
             disabled={busy || !phone.trim() || !password}
             className="rounded-xl bg-coral-500 px-3 py-2 text-sm font-bold text-white transition active:scale-95 disabled:opacity-40"
           >
-            {busy ? 'Đang đăng nhập…' : 'Đăng nhập'}
+            {busy ? 'Đang đăng nhập & gán…' : 'Đăng nhập & Gán thiết bị'}
           </button>
           {error && <p className="text-xs font-medium text-berry-500">{error}</p>}
         </div>
@@ -119,31 +157,57 @@ export function AuthPanel() {
 
 /**
  * What is shown once signed in.
- *
- * These five lines are chosen on purpose. The subscription date is the one that
- * earns its place: every `/lessions/*` route sits behind an active-subscription
- * check, so a lapsed one makes grading fail in a way that looks exactly like a
- * bug. The voice and volume are the values that get substituted into clip URLs,
- * so seeing them is how you tell a silent lesson from a missing account.
  */
-function Signed({ account }: { account: Account }) {
+function Signed({
+  account,
+  childrenList,
+  onSwitchChild,
+  busy,
+}: {
+  account: Account;
+  childrenList: ChildItem[];
+  onSwitchChild: (childId: string) => void;
+  busy: boolean;
+}) {
   const active = hasActiveSubscription(account);
   const expires = account.subscriptionExpiresAt
     ? new Date(account.subscriptionExpiresAt).toLocaleDateString('vi-VN')
     : null;
 
   return (
-    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
-      <Field label="Phụ huynh" value={account.phone} />
-      <Field label="Bé" value={account.child?.nickname ?? account.child?.name ?? '—'} />
-      <Field
-        label="Thuê bao"
-        value={active ? `còn hạn${expires ? ` đến ${expires}` : ''}` : 'hết hạn'}
-        tone={active ? 'ok' : 'bad'}
-      />
-      <Field label="voiceID" value={account.voiceId ?? '—'} tone={account.voiceId ? 'ok' : 'bad'} />
-      <Field label="bongVolume" value={account.bongVolume === null ? '—' : `${account.bongVolume}`} />
-    </dl>
+    <div className="space-y-3">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
+        <Field label="Phụ huynh" value={account.phone} />
+        <Field label="Bé hiện tại" value={account.child?.nickname ?? account.child?.name ?? '—'} />
+        <Field
+          label="Thuê bao"
+          value={active ? `còn hạn${expires ? ` đến ${expires}` : ''}` : 'hết hạn'}
+          tone={active ? 'ok' : 'bad'}
+        />
+        <Field label="voiceID" value={account.voiceId ?? '—'} tone={account.voiceId ? 'ok' : 'bad'} />
+        <Field label="bongVolume" value={account.bongVolume === null ? '—' : `${account.bongVolume}`} />
+      </dl>
+
+      {childrenList.length > 1 && (
+        <div className="pt-2 border-t border-cream-200">
+          <label className="block text-[11px] font-bold text-ink-600 mb-1">
+            Đổi bé gán với thiết bị này:
+          </label>
+          <select
+            value={account.child?.id || ''}
+            onChange={(e) => onSwitchChild(e.target.value)}
+            disabled={busy}
+            className="w-full rounded-xl bg-cream-100 border border-cream-300 px-3 py-1.5 text-xs font-bold text-ink-900 outline-none"
+          >
+            {childrenList.map((c) => (
+              <option key={c.id} value={c.id}>
+                Bé {c.name} {c.nickname ? `(${c.nickname})` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+    </div>
   );
 }
 

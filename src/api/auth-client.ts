@@ -67,6 +67,69 @@ export async function fetchProfile(): Promise<Account> {
   return parseAccount(await request<unknown>('/profile'));
 }
 
+export interface ChildItem {
+  id: string;
+  name: string;
+  nickname?: string | null;
+  birthday?: string | null;
+}
+
+export async function listChildren(): Promise<ChildItem[]> {
+  const res = await request<{ success?: boolean; data?: ChildItem[] }>('/children');
+  return Array.isArray(res.data) ? res.data : [];
+}
+
+export async function registerAndBindDevice(
+  deviceId: string,
+  childId?: string | null,
+  name?: string
+): Promise<unknown> {
+  // 1. Register device (ignore duplicate if already registered)
+  try {
+    await request('/devices/register', {
+      method: 'POST',
+      body: { device_id: deviceId, name: name || 'Robot Bống' },
+    });
+  } catch {
+    // Already registered or exists, proceed to bind
+  }
+
+  // 2. Bind device to user & child
+  return await request(`/devices/${encodeURIComponent(deviceId)}/bind`, {
+    method: 'PUT',
+    body: {
+      child_id: childId ? childId : null,
+      name: name || 'Robot Bống',
+    },
+  });
+}
+
+export async function loginAndBind(
+  phone: string,
+  password: string,
+  deviceId: string,
+  childId?: string
+): Promise<{ account: Account; children: ChildItem[] }> {
+  // 1. Login
+  const account = await login(phone, password, deviceId);
+
+  // 2. List children
+  let children: ChildItem[] = [];
+  try {
+    children = await listChildren();
+  } catch {
+    children = [];
+  }
+
+  // 3. Bind device to chosen child or first child
+  const targetChildId = childId || (children.length > 0 ? children[0].id : account.child?.id || null);
+  await registerAndBindDevice(deviceId, targetChildId, 'Robot Bống');
+
+  // 4. Return updated profile
+  const updated = await fetchProfile();
+  return { account: updated, children };
+}
+
 export function logout(): void {
   tokenStore.clear();
 }
