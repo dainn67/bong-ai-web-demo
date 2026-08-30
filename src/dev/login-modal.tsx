@@ -47,8 +47,10 @@ export function LoginModal() {
       const loginPass = overridePass ?? password;
       const acc = await login(loginPhone.trim(), loginPass, config.macAddress);
       setAccount(acc);
-      setSuccessMsg(`Đã liên kết thiết bị thành công cho bé ${acc.child?.name || 'Bé Bống'}!`);
-      // Retry telemetry sync immediately
+      const childName = acc.child?.name || 'Bé Bống';
+      setSuccessMsg(`Đã liên kết thiết bị thành công cho bé ${childName}!`);
+      // Reconnect websocket so xiaozhi-server resolves the new child immediately
+      useSimulatorStore.getState().connect();
       setTimeout(() => {
         reportCondition();
         setTimeout(() => setOpen(false), 1200);
@@ -64,6 +66,7 @@ export function LoginModal() {
     logout();
     setAccount(null);
     setSuccessMsg(null);
+    useSimulatorStore.getState().connect();
   };
 
   return (
