@@ -149,7 +149,7 @@ export function parseAccount(raw: unknown): Account {
     userId: String(raw.id ?? raw.user_id ?? ''),
     phone: String(raw.phone ?? ''),
     name: asString(raw.name),
-    voiceId: asString(raw.voice_id),
+    voiceId: asString(raw.voice_id) || (isRecord(raw.selected_voices) ? asString(raw.selected_voices.vi) : null) || 'vi-VN-Wavenet-C',
     bongVolume: typeof raw.bong_volume === 'number' ? raw.bong_volume : null,
     aiNickname: asString(raw.ai_nickname) ?? 'Bống',
     subscriptionStatus: asString(raw.subscription_status),
