@@ -63,7 +63,6 @@ export class V2Engine {
   private touchTimer: ReturnType<typeof setTimeout> | null = null;
   private activeVisualUrl: string | null = null;
   private activeVisualSeq = 0;
-  private activeVisualStop: 'giu' | 'tat' = 'tat';
 
   get currentVisualUrl(): string | null {
     return this.activeVisualUrl;
@@ -200,7 +199,6 @@ export class V2Engine {
       }
     } else {
       this.showVisual(null);
-      this.activeVisualStop = 'tat';
     }
 
     const visualDone = this.runVisualChannel(index.visual, currentGen);
@@ -257,7 +255,6 @@ export class V2Engine {
   ): Promise<void> {
     if (visualNodes.length === 0) {
       this.showVisual(null);
-      this.activeVisualStop = 'tat';
       return;
     }
 
@@ -270,7 +267,6 @@ export class V2Engine {
       }
 
       this.showVisual(node.url);
-      this.activeVisualStop = node.stop === 'tat' ? 'tat' : 'giu';
 
       // §4.2: an endless picture keeps showing but stops being the index's
       // clock, so as far as this track is concerned it is done the moment it
@@ -295,7 +291,6 @@ export class V2Engine {
       // §4.1: through the next node's waitMs the glass shows whatever this
       // node's `stop` left behind — the held frame, or black.
       if (node.stop === 'tat') {
-        this.activeVisualStop = 'tat';
         this.showVisual(null);
       }
     }
