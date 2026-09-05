@@ -283,7 +283,7 @@ describe('v2-engine', () => {
     ]);
   });
 
-  it('holds visual across subsequent audio-only indexes when stop is "giu"', async () => {
+  it('blanks visual across subsequent audio-only indexes (index 10, 11, 12 with visual: [])', async () => {
     const graph = graphOf(
       index('9', {
         audio: [voice('A9')],
@@ -298,8 +298,9 @@ describe('v2-engine', () => {
     const engine = engineFor(graph);
     await engine.start();
 
-    // Visual should remain book.png throughout indexes 9, 10, 11, 12 and never cut to null
-    expect(shown()).toEqual(['https://cdn.example.com/book.png']);
+    // §4.3: Index có mảng visual rỗng -> màn hình đen suốt index đó.
+    // Visual should show book.png during index 9, and then cut to null when index 10 starts.
+    expect(shown()).toEqual(['https://cdn.example.com/book.png', null]);
     expect(played).toEqual([
       'https://cdn.example.com/A9.mp3',
       'https://cdn.example.com/A10.mp3',

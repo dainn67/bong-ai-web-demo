@@ -188,19 +188,19 @@ export class V2Engine {
       return;
     }
 
-    // Visual glass policy:
+    // Visual glass policy (§4.3):
     // 1. If next picture starts at waitMs 0, cut straight to it (anti-flicker).
     // 2. If next picture starts with waitMs > 0, cut to black during the gap.
     // 3. If there is no visual in this index (visual: []):
-    //    - If previous visual was `stop: "giu"`, keep the held frame visible across audio nodes!
-    //    - If previous visual was `stop: "tat"`, ensure screen is black.
+    //    Cut to black! "Index có mảng visual rỗng → màn hình đen suốt index đó."
     const firstVisual = index.visual[0];
     if (firstVisual) {
       if (firstVisual.waitMs > 0) {
         this.showVisual(null);
       }
-    } else if (this.activeVisualStop === 'tat') {
+    } else {
       this.showVisual(null);
+      this.activeVisualStop = 'tat';
     }
 
     const visualDone = this.runVisualChannel(index.visual, currentGen);
@@ -256,9 +256,8 @@ export class V2Engine {
     currentGen: number,
   ): Promise<void> {
     if (visualNodes.length === 0) {
-      if (this.activeVisualStop === 'tat') {
-        this.showVisual(null);
-      }
+      this.showVisual(null);
+      this.activeVisualStop = 'tat';
       return;
     }
 
