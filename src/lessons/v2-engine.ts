@@ -63,6 +63,7 @@ export class V2Engine {
   private touchTimer: ReturnType<typeof setTimeout> | null = null;
   private activeVisualUrl: string | null = null;
   private activeVisualSeq = 0;
+  private activeVisualStop: 'giu' | 'tat' = 'tat';
 
   get currentVisualUrl(): string | null {
     return this.activeVisualUrl;
@@ -187,11 +188,18 @@ export class V2Engine {
       return;
     }
 
-    // §4.3: an index ends on black, and an index with no visual is black
-    // throughout. The one exception is the mandatory anti-flicker case — when
-    // the next picture starts at waitMs 0, cut straight to it.
+    // Visual glass policy:
+    // 1. If next picture starts at waitMs 0, cut straight to it (anti-flicker).
+    // 2. If next picture starts with waitMs > 0, cut to black during the gap.
+    // 3. If there is no visual in this index (visual: []):
+    //    - If previous visual was `stop: "giu"`, keep the held frame visible across audio nodes!
+    //    - If previous visual was `stop: "tat"`, ensure screen is black.
     const firstVisual = index.visual[0];
-    if (!firstVisual || firstVisual.waitMs > 0) {
+    if (firstVisual) {
+      if (firstVisual.waitMs > 0) {
+        this.showVisual(null);
+      }
+    } else if (this.activeVisualStop === 'tat') {
       this.showVisual(null);
     }
 
@@ -231,6 +239,7 @@ export class V2Engine {
   }
 
   private showVisual(url: string | null): void {
+    if (url === null && this.activeVisualUrl === null) return;
     this.activeVisualUrl = url;
     if (url === null) {
       this.handlers.onActivity({ imageUrl: null });
@@ -247,7 +256,9 @@ export class V2Engine {
     currentGen: number,
   ): Promise<void> {
     if (visualNodes.length === 0) {
-      this.showVisual(null);
+      if (this.activeVisualStop === 'tat') {
+        this.showVisual(null);
+      }
       return;
     }
 
@@ -260,6 +271,7 @@ export class V2Engine {
       }
 
       this.showVisual(node.url);
+      this.activeVisualStop = node.stop === 'tat' ? 'tat' : 'giu';
 
       // §4.2: an endless picture keeps showing but stops being the index's
       // clock, so as far as this track is concerned it is done the moment it
@@ -283,7 +295,10 @@ export class V2Engine {
 
       // §4.1: through the next node's waitMs the glass shows whatever this
       // node's `stop` left behind — the held frame, or black.
-      if (node.stop === 'tat') this.showVisual(null);
+      if (node.stop === 'tat') {
+        this.activeVisualStop = 'tat';
+        this.showVisual(null);
+      }
     }
   }
 

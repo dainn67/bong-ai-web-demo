@@ -283,6 +283,47 @@ describe('v2-engine', () => {
     ]);
   });
 
+  it('holds visual across subsequent audio-only indexes when stop is "giu"', async () => {
+    const graph = graphOf(
+      index('9', {
+        audio: [voice('A9')],
+        visual: [picture('book', { nodeType: 'video', durationMs: 200, stop: 'giu' })],
+        next: '10',
+      }),
+      index('10', { audio: [voice('A10')], visual: [], next: '11' }),
+      index('11', { audio: [voice('A11')], visual: [], next: '12' }),
+      index('12', { audio: [voice('A12')], visual: [] }),
+    );
+
+    const engine = engineFor(graph);
+    await engine.start();
+
+    // Visual should remain book.png throughout indexes 9, 10, 11, 12 and never cut to null
+    expect(shown()).toEqual(['https://cdn.example.com/book.png']);
+    expect(played).toEqual([
+      'https://cdn.example.com/A9.mp3',
+      'https://cdn.example.com/A10.mp3',
+      'https://cdn.example.com/A11.mp3',
+      'https://cdn.example.com/A12.mp3',
+    ]);
+  });
+
+  it('blanks glass on subsequent audio-only index when previous visual had stop "tat"', async () => {
+    const graph = graphOf(
+      index('1', {
+        audio: [voice('A1')],
+        visual: [picture('intro', { nodeType: 'video', durationMs: 200, stop: 'tat' })],
+        next: '2',
+      }),
+      index('2', { audio: [voice('A2')], visual: [] }),
+    );
+
+    const engine = engineFor(graph);
+    await engine.start();
+
+    expect(shown()).toEqual(['https://cdn.example.com/intro.png', null]);
+  });
+
   describe('touch questions (§5.2)', () => {
     function touchGraph(extra: Partial<LessonV2AudioNode> = {}) {
       return graphOf(
