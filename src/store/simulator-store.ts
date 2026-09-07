@@ -1286,6 +1286,18 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
       set({ activity: { ...get().activity, phase: 'paused' } });
     } else if (actState === 'playing') {
       set({ activity: { ...get().activity, kind: get().activity.kind ?? 'lesson', phase: 'playing' } });
+      const order = (message as { order?: string }).order;
+      if (order && get().directIndexes.length > 0) {
+        const matched = get().directIndexes.find((idx) => idx.order === String(order));
+        if (matched) {
+          set({
+            directActiveIndex: matched,
+            directPlaybackState: 'playing',
+            lessonPosition: `${matched.order}/${get().directIndexes.length}`,
+            lessonDebug: `Index ${matched.order}`,
+          });
+        }
+      }
     } else if (actState === 'idle') {
       stopActivity(set, get);
       set({
@@ -1323,7 +1335,10 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
         idx.visuals.some((v) => v.url === url || (v.fileName && url.includes(v.fileName)))
       );
       if (matched) {
-        set({ directActiveIndex: matched, directPlaybackState: 'playing' });
+        const current = get().directActiveIndex;
+        if (!current || current.order === matched.order || get().directPlaybackState !== 'playing') {
+          set({ directActiveIndex: matched, directPlaybackState: 'playing' });
+        }
       }
     }
   } else if (displayCmd?.kind === 'clear' || displayCmd?.kind === 'expression') {
