@@ -17,6 +17,7 @@ describe('lesson-v2-parser', () => {
     // Says 2, so it is a version 2 file — a broken one, not a version 1 one.
     // Reading it under the old rules would play something subtly wrong.
     expect(isLessonV2({ version: 2 })).toBe(true);
+    expect(isLessonV2({ version: '2' })).toBe(true);
     expect(parseLessonV2({ version: 2 }, CONTEXT)).toBeNull();
   });
 

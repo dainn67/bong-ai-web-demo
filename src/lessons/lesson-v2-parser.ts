@@ -27,7 +27,8 @@ import type { ParseContext } from './lesson-node';
  */
 export function isLessonV2(raw: unknown): boolean {
   if (!raw || typeof raw !== 'object') return false;
-  return (raw as Record<string, unknown>).version === 2;
+  const v = (raw as Record<string, unknown>).version;
+  return v === 2 || v === '2';
 }
 
 export function parseLessonV2(raw: unknown, context: ParseContext): LessonV2Graph | null {
