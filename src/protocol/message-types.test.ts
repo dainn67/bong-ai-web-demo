@@ -153,3 +153,26 @@ describe('toEmotion', () => {
     expect(toEmotion(undefined)).toBeNull();
   });
 });
+
+describe('jump and next lesson index messages', () => {
+  it('serialises jump_lesson_index frame correctly', () => {
+    const frame = {
+      type: 'jump_lesson_index',
+      order: '57',
+    };
+    expect(JSON.parse(JSON.stringify(frame))).toEqual({
+      type: 'jump_lesson_index',
+      order: '57',
+    });
+  });
+
+  it('serialises next_lesson_index frame correctly', () => {
+    const frame = {
+      type: 'next_lesson_index',
+    };
+    expect(JSON.parse(JSON.stringify(frame))).toEqual({
+      type: 'next_lesson_index',
+    });
+  });
+});
+

@@ -17,7 +17,7 @@ export default defineConfig({
       '/cdn': {
         target: cdnProxyTarget,
         changeOrigin: true,
-        rewrite: isLocalBackend ? undefined : (path) => path.replace(/^\/cdn/, ''),
+        rewrite: isLocalBackend ? undefined : (path) => path.replace(/^(\/cdn)+/, ''),
       },
       '/stt': {
         target: 'https://mini-3000.bcserver.xyz',

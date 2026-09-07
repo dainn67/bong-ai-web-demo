@@ -142,6 +142,7 @@ export class OpusPlayer {
 
   private ensureContext(): void {
     if (this.context) return;
+    if (typeof AudioContext === 'undefined') return;
     // Deliberately not pinned to the negotiated rate. Opus always decodes to
     // 48 kHz whatever rate the decoder is configured with, so pinning the
     // context to 16000 would downsample every buffer on the way out for no
@@ -155,6 +156,7 @@ export class OpusPlayer {
 
   private ensureDecoder(): AudioDecoder | null {
     if (this.decoder && this.decoder.state !== 'closed') return this.decoder;
+    if (typeof AudioDecoder === 'undefined') return null;
     try {
       this.decoder = new AudioDecoder({
         output: (data) => this.schedule(data),

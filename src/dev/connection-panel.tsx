@@ -13,6 +13,7 @@ export function ConnectionPanel() {
   const status = useSimulatorStore((state) => state.status);
   const sessionId = useSimulatorStore((state) => state.sessionId);
   const updateConfig = useSimulatorStore((state) => state.updateConfig);
+  const resetConfig = useSimulatorStore((state) => state.resetConfig);
   const connect = useSimulatorStore((state) => state.connect);
   const disconnect = useSimulatorStore((state) => state.disconnect);
 
@@ -58,15 +59,27 @@ export function ConnectionPanel() {
         <p className="truncate font-mono text-xs text-ink-300">phiên {sessionId}</p>
       )}
 
-      <button
-        type="button"
-        onClick={isOffline ? connect : disconnect}
-        className={`rounded-blob px-4 py-2.5 text-sm font-bold text-white transition active:scale-95 ${
-          isOffline ? 'bg-coral-500 hover:bg-coral-400' : 'bg-berry-500 hover:opacity-90'
-        }`}
-      >
-        {isOffline ? 'Kết nối' : 'Ngắt kết nối'}
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={isOffline ? connect : disconnect}
+          className={`flex-1 rounded-blob px-4 py-2.5 text-sm font-bold text-white transition active:scale-95 ${
+            isOffline ? 'bg-coral-500 hover:bg-coral-400' : 'bg-berry-500 hover:opacity-90'
+          }`}
+        >
+          {isOffline ? 'Kết nối' : 'Ngắt kết nối'}
+        </button>
+        {isOffline && (
+          <button
+            type="button"
+            onClick={resetConfig}
+            title="Khôi phục địa chỉ OTA/WebSocket mặc định"
+            className="rounded-blob bg-cream-200 px-3 py-2.5 text-xs font-semibold text-ink-700 hover:bg-cream-300 transition active:scale-95"
+          >
+            Khôi phục mặc định
+          </button>
+        )}
+      </div>
     </Panel>
   );
 }

@@ -4,23 +4,20 @@ import { BongBubble } from './screen/speech-bubble';
 import { TalkBar } from './dev/talk-bar';
 import { DevDrawer } from './dev/dev-drawer';
 import { QrPairingModal } from './dev/qr-pairing-modal';
+import { LessonStudioPanel } from './dev/lesson-studio/lesson-studio-panel';
 import { useSimulatorStore } from './store/simulator-store';
 import { fetchProfile, hasStoredSession, type Account } from './api/auth-client';
 
 /**
- * The badge, centre stage.
+ * The badge, centre stage or studio mode.
  *
- * Everything that is not the device lives behind the Dev button. What is being
- * demonstrated here is a toy a small child talks to, and it should look like
- * one — the packet log is for the person building it, not the person seeing it.
- *
- * When the drawer is open on a wide screen the whole page is padded by its
- * width instead of being covered by it. The drawer is `fixed`, so it takes no
- * room in the flow and only this padding keeps the badge — and the header's own
- * buttons — out from under it.
+ * When studio mode is active on wide screens, presents a 2-column studio layout:
+ * Left column displays the physical round screen, right column displays the
+ * lesson selector, index table, active inspector and playback controls.
  */
 export default function App() {
   const [devOpen, setDevOpen] = useState(false);
+  const studioMode = useSimulatorStore((state) => state.studioMode);
   const setLoginOpen = useSimulatorStore((state) => state.setLoginModalOpen);
 
   return (
@@ -35,11 +32,29 @@ export default function App() {
         onOpenLogin={() => setLoginOpen(true)}
       />
 
-      <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-12">
-        <RoundScreen />
-        <BongBubble />
-        <TalkBar />
-      </div>
+      {studioMode === 'studio' ? (
+        <div className="flex flex-1 flex-col lg:flex-row gap-8 px-6 pb-12 max-w-7xl mx-auto w-full">
+          {/* Left Column: Device Screen */}
+          <div className="flex flex-col items-center justify-start gap-6 lg:w-[400px] shrink-0">
+            <div className="sticky top-6 flex flex-col items-center gap-6">
+              <RoundScreen />
+              <BongBubble />
+              <TalkBar />
+            </div>
+          </div>
+
+          {/* Right Column: Studio Panel */}
+          <div className="flex-1 min-w-0">
+            <LessonStudioPanel />
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-12">
+          <RoundScreen />
+          <BongBubble />
+          <TalkBar />
+        </div>
+      )}
 
       <DevDrawer open={devOpen} onClose={() => setDevOpen(false)} />
       <QrPairingModal />
@@ -58,6 +73,8 @@ function Header({
 }) {
   const [account, setAccount] = useState<Account | null>(null);
   const loginModalOpen = useSimulatorStore((state) => state.loginModalOpen);
+  const studioMode = useSimulatorStore((state) => state.studioMode);
+  const setStudioMode = useSimulatorStore((state) => state.setStudioMode);
 
   useEffect(() => {
     if (hasStoredSession()) {
@@ -101,6 +118,32 @@ function Header({
               : 'Mã QR & Đăng nhập'}
           </span>
         </button>
+
+        {/* View Mode Toggle: Device vs Studio */}
+        <div className="hidden sm:flex items-center rounded-blob bg-cream-200/80 p-1 text-xs font-bold shadow-xs border border-cream-300">
+          <button
+            type="button"
+            onClick={() => setStudioMode('device')}
+            className={`rounded-blob px-3 py-1.5 transition ${
+              studioMode === 'device'
+                ? 'bg-white text-ink-900 shadow-sm'
+                : 'text-ink-600 hover:text-ink-900'
+            }`}
+          >
+            📱 Thiết bị
+          </button>
+          <button
+            type="button"
+            onClick={() => setStudioMode('studio')}
+            className={`rounded-blob px-3 py-1.5 transition ${
+              studioMode === 'studio'
+                ? 'bg-mint-500 text-white shadow-sm'
+                : 'text-ink-600 hover:text-ink-900'
+            }`}
+          >
+            🎛 Studio Bài học
+          </button>
+        </div>
 
         <StatusPill />
         {/* A toggle, not an opener. The drawer no longer covers this button,

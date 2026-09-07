@@ -28,6 +28,7 @@ export interface WsClientHandlers {
 
 const HEARTBEAT_MS = 30_000;
 const MAX_BACKOFF_MS = 10_000;
+export const MAX_RECONNECT_ATTEMPTS = 3;
 
 export class WsClient {
   private socket: WebSocket | null = null;
@@ -51,9 +52,12 @@ export class WsClient {
     return this.sessionId;
   }
 
-  async connect(): Promise<void> {
+  async connect(isRetry = false): Promise<void> {
     this.stopped = false;
     this.clearReconnect();
+    if (!isRetry) {
+      this.reconnectAttempts = 0;
+    }
     this.handlers.onStatus('connecting');
 
     let wsUrl = this.config.fallbackWsUrl;
@@ -74,7 +78,15 @@ export class WsClient {
   }
 
   private openSocket(url: string, token: string): void {
-    const socket = new WebSocket(url);
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(url);
+    } catch (error) {
+      this.handlers.onLog('in', 'socket_error', { error: String(error) });
+      this.handlers.onStatus('disconnected');
+      this.scheduleReconnect();
+      return;
+    }
     socket.binaryType = 'arraybuffer';
     this.socket = socket;
 
@@ -165,8 +177,12 @@ export class WsClient {
   }
 
   /** Start a lesson session via server streaming. */
-  startLesson(lessonId: string): void {
-    this.sendRaw({ type: 'start_lesson', lesson_id: lessonId });
+  startLesson(lessonId: string, order?: string): void {
+    const payload: { type: string } & Record<string, unknown> = { type: 'start_lesson', lesson_id: lessonId };
+    if (order) {
+      payload.order = String(order);
+    }
+    this.sendRaw(payload);
   }
 
   /** Pause active lesson session. */
@@ -183,6 +199,28 @@ export class WsClient {
   stopLesson(): void {
     this.sendRaw({ type: 'stop_lesson' });
   }
+
+  /** Jump directly to a lesson node index during active lesson. */
+  jumpLessonIndex(order: string, lessonId?: string): void {
+    const payload: { type: string } & Record<string, unknown> = { type: 'jump_lesson_index', order: String(order) };
+    if (lessonId) {
+      payload.lesson_id = lessonId;
+    }
+    this.sendRaw(payload);
+  }
+
+  /** Advance to next lesson node index during active lesson. */
+  nextLessonIndex(lessonId?: string, order?: string): void {
+    const payload: { type: string } & Record<string, unknown> = { type: 'next_lesson_index' };
+    if (lessonId) {
+      payload.lesson_id = lessonId;
+    }
+    if (order) {
+      payload.order = order;
+    }
+    this.sendRaw(payload);
+  }
+
 
   /** Start a story session via server streaming. */
   startStory(storyId: string): void {
@@ -288,6 +326,7 @@ export class WsClient {
 
   disconnect(): void {
     this.stopped = true;
+    this.reconnectAttempts = 0;
     this.clearReconnect();
     this.stopHeartbeat();
     this.socket?.close();
@@ -309,13 +348,21 @@ export class WsClient {
   /** Exponential backoff, capped so a long outage still retries twice a minute. */
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer) return;
+    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      this.clearReconnect();
+      this.handlers.onStatus('disconnected');
+      this.handlers.onLog('in', 'reconnect_stopped', {
+        reason: `Đã thử kết nối lại ${MAX_RECONNECT_ATTEMPTS} lần thất bại. Đã dừng thử lại để tránh nghẽn mạng.`,
+      });
+      return;
+    }
     const delay = Math.min(1000 * 2 ** this.reconnectAttempts, MAX_BACKOFF_MS);
     this.reconnectAttempts += 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       // Reconnecting re-runs the OTA handshake and re-sends `hello`, which is
       // what the backend expects — it treats the new socket as a new session.
-      void this.connect();
+      void this.connect(true);
     }, delay);
   }
 

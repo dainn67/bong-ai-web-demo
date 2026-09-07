@@ -9,6 +9,19 @@
 /** Where the proxy puts the static CDN. See the `/cdn` route in vite.config. */
 export const CDN_BASE = '/cdn';
 
+/**
+ * Fetches the public catalog directly from the static CDN via the dev proxy
+ * (/cdn/lessions/lessions.json), bypassing esp32-server completely.
+ */
+export async function fetchCdnCatalog(): Promise<LessonSummary[]> {
+  const res = await fetch(`${CDN_BASE}/lessions/lessions.json`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch catalog from CDN: HTTP ${res.status}`);
+  }
+  const json = await res.json();
+  return parseCatalog(json);
+}
+
 export type LessonCategory = 'stories' | 'learning' | 'topics';
 
 export interface LessonSummary {
@@ -117,8 +130,13 @@ function toSummary(row: unknown, category: LessonCategory): LessonSummary | null
  * add a hop.
  */
 export function cdnUrl(path: string): string {
+  if (!path) return '';
   if (/^https?:\/\//i.test(path)) return rehostKnownCdn(path);
-  return `${CDN_BASE}/${path.replace(/^\/+/, '')}`;
+  const clean = path.replace(/^\/+/, '');
+  if (clean.startsWith('cdn/')) {
+    return `/${clean}`;
+  }
+  return `${CDN_BASE}/${clean}`;
 }
 
 const CDN_ORIGIN = 'https://static-bongai.bcserver.xyz';

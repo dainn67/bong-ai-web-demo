@@ -403,5 +403,23 @@ export interface LessonTouchOut {
   duration_ms?: number;
 }
 
-export type OutgoingMessage = HelloOut | ListenOut | AbortOut | PingOut | LessonTouchOut | TouchOut;
+export interface JumpLessonIndexOut {
+  type: 'jump_lesson_index';
+  order: string;
+}
+
+export interface NextLessonIndexOut {
+  type: 'next_lesson_index';
+}
+
+export type OutgoingMessage =
+  | HelloOut
+  | ListenOut
+  | AbortOut
+  | PingOut
+  | LessonTouchOut
+  | TouchOut
+  | JumpLessonIndexOut
+  | NextLessonIndexOut;
+
 

@@ -7,7 +7,7 @@
  */
 
 import { create } from 'zustand';
-import { loadConfig, saveConfig, type DeviceConfig } from '../config/device-config';
+import { loadConfig, saveConfig, DEFAULT_CONFIG, type DeviceConfig } from '../config/device-config';
 import { audioSupport } from '../audio/audio-format';
 import { clampBattery, drainBattery, LOW_BATTERY } from '../hardware/hardware-state';
 import { reportButtonPress, sendTelemetry } from '../protocol/telemetry-client';
@@ -52,9 +52,15 @@ import {
   type TouchWindow,
 } from '../screen/touch-layout';
 import { DEFAULT_TOUCH_TIMEOUT_MS } from '../lessons/lesson-v2-types';
-import { parseCatalog, type LessonSummary } from '../lessons/catalog';
+import { fetchCdnCatalog, parseCatalog, type LessonSummary } from '../lessons/catalog';
 import { StoryPlayer, loadStory } from '../content/story';
 import { LessonRunner } from '../lessons/lesson-runner';
+import {
+  DirectLessonPlayer,
+  type DirectLessonIndexItem,
+  type DirectPlaybackState,
+} from '../lessons/direct-lesson-player';
+
 
 
 export interface PacketLogEntry {
@@ -164,6 +170,7 @@ interface SimulatorState {
 
 
   updateConfig: (patch: Partial<DeviceConfig>) => void;
+  resetConfig: () => void;
   connect: () => void;
   disconnect: () => void;
   sendText: (text: string) => void;
@@ -227,6 +234,37 @@ interface SimulatorState {
   skipLessonNode: () => void;
   /** The metadata the running lesson was built from, or null. */
   lessonMetadataUrl: () => string | null;
+
+  // Desktop Studio & Direct Index Player State
+  studioMode: 'device' | 'studio';
+  setStudioMode: (mode: 'device' | 'studio') => void;
+  lessonSourceMode: 'direct' | 'socket';
+  setLessonSourceMode: (mode: 'direct' | 'socket') => void;
+
+  directIndexes: DirectLessonIndexItem[];
+  directActiveIndex: DirectLessonIndexItem | null;
+  directPlaybackState: DirectPlaybackState;
+  directAutoNext: boolean;
+  directAutoNextDelayMs: number;
+  selectedLesson: LessonSummary | null;
+
+  loadCdnCatalog: () => Promise<void>;
+  selectLesson: (lesson: LessonSummary) => Promise<void>;
+  playDirectIndex: (order: string) => Promise<void>;
+  playDirectNext: () => Promise<void>;
+  playDirectPrev: () => Promise<void>;
+  toggleDirectPause: () => void;
+  stopDirectLesson: () => void;
+  toggleDirectAutoNext: () => void;
+  setDirectAutoNextDelay: (ms: number) => void;
+
+  jumpSocketIndex: (order: string) => void;
+  nextSocketIndex: () => void;
+  playStudioIndex: (order: string) => Promise<void>;
+  playStudioNext: () => Promise<void>;
+  playStudioPrev: () => Promise<void>;
+  toggleStudioPause: () => void;
+  stopStudioLesson: () => void;
 }
 
 /**
@@ -237,8 +275,29 @@ interface SimulatorState {
  * objects are here for the same reason: they own hardware, not data.
  */
 let client: WsClient | null = null;
+let directPlayer: DirectLessonPlayer | null = null;
 let player: OpusPlayer | null = null;
 let mic: MicCapture | null = null;
+let socketAutoNextTimer: ReturnType<typeof setTimeout> | null = null;
+let ttsDone = false;
+
+function clearSocketAutoNextTimer(): void {
+  if (socketAutoNextTimer) {
+    clearTimeout(socketAutoNextTimer);
+    socketAutoNextTimer = null;
+  }
+}
+
+function scheduleSocketAutoNext(get: Getter, delayMs?: number): void {
+  clearSocketAutoNextTimer();
+  const delay = delayMs !== undefined ? Math.max(0, delayMs) : get().directAutoNextDelayMs;
+  socketAutoNextTimer = setTimeout(() => {
+    socketAutoNextTimer = null;
+    if (get().lessonSourceMode === 'socket' && get().directAutoNext) {
+      get().nextSocketIndex();
+    }
+  }, delay);
+}
 /** Whichever activity owns the speaker. Only ever one — see `stopActivity`. */
 let story: StoryPlayer | null = null;
 let lesson: LessonRunner | null = null;
@@ -350,6 +409,29 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   catalog: [],
   catalogLoading: false,
   catalogError: null,
+
+  studioMode: 'studio',
+  setStudioMode: (studioMode) => set({ studioMode }),
+  lessonSourceMode: 'socket',
+  setLessonSourceMode: (lessonSourceMode) => {
+    if (lessonSourceMode === 'direct') {
+      get().disconnect();
+      set({ lessonSourceMode, status: 'connected' });
+    } else {
+      directPlayer?.stop();
+      set({ lessonSourceMode });
+      if (get().status !== 'connected') {
+        get().connect();
+      }
+    }
+  },
+
+  directIndexes: [],
+  directActiveIndex: null,
+  directPlaybackState: 'idle',
+  directAutoNext: false,
+  directAutoNextDelayMs: 1500,
+  selectedLesson: null,
   activity: IDLE_ACTIVITY,
   lessonDebug: null,
   lessonPosition: null,
@@ -374,13 +456,27 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     set({ config });
   },
 
+  resetConfig: () => {
+    const persistentMac = get().config.macAddress;
+    const config: DeviceConfig = { ...DEFAULT_CONFIG, macAddress: persistentMac };
+    saveConfig(config);
+    set({ config });
+  },
+
   connect: () => {
     // Tear down any previous client first, or its reconnect timer keeps firing
     // in the background and fights the new connection for the session.
     client?.disconnect();
 
     client = new WsClient(get().config, {
-      onStatus: (status) => set({ status, sessionId: client?.currentSessionId ?? null }),
+      onStatus: (status) => {
+        set({ status, sessionId: client?.currentSessionId ?? null });
+        if (status === 'disconnected') {
+          stopHardwareTimers();
+        } else if (status === 'connected') {
+          startHardwareTimers(set, get);
+        }
+      },
       onMessage: (message) => handleMessage(set, get, message),
       onAudio: (frame) => {
         set({ framesIn: get().framesIn + 1 });
@@ -398,10 +494,11 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       },
     });
     void client.connect();
-    startHardwareTimers(set, get);
   },
 
   disconnect: () => {
+    clearSocketAutoNextTimer();
+    ttsDone = false;
     client?.disconnect();
     client = null;
     get().stopListening();
@@ -495,7 +592,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
    * come from what the device is currently doing.
    */
   tapScreen: () => {
-    const { status, connect, toggleListening } = get();
+    const { status, connect, toggleListening, lessonSourceMode } = get();
+    if (lessonSourceMode === 'direct') {
+      if (status === 'disconnected') {
+        set({ status: 'connected' });
+      }
+      return;
+    }
     if (status === 'disconnected') connect();
     else if (status === 'connected') toggleListening();
     // Mid-connection a tap is ignored rather than queued: the wake is already
@@ -525,6 +628,9 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       // reach nothing — §4 of the touch protocol has it go out immediately.
       const closed = closeWaitWindow(get().activity, 'touch', 'touching');
       if (closed) get().setActivity(closed);
+    } else if (get().activity.kind === 'lesson') {
+      const layout = get().activity.touchLayout ?? 'tap2_trai_phai';
+      client?.sendTouchEvent(layout, result, detail);
     }
 
     lesson?.dispatchTouch(result);
@@ -576,6 +682,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
     const action: ButtonAction = classifyPress(heldMs, awake);
     if (action === 'wake_up') {
+      if (get().lessonSourceMode === 'direct') {
+        set({ status: 'connected' });
+        return;
+      }
       get().connect();
       return;
     }
@@ -584,6 +694,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   reportCondition: () => {
+    if (get().status !== 'connected') return;
     const { config, hardware } = get();
     const reading = {
       battery_level: hardware.battery,
@@ -763,6 +874,240 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       );
     }
   },
+
+  loadCdnCatalog: async () => {
+    if (get().catalogLoading) return;
+    set({ catalogLoading: true, catalogError: null });
+    try {
+      const items = await fetchCdnCatalog();
+      set({ catalog: items, catalogLoading: false });
+      if (!get().selectedLesson && items.length > 0) {
+        const first = items.find((it) => it.category === 'learning') || items[0];
+        if (first) {
+          void get().selectLesson(first);
+        }
+      }
+    } catch (err) {
+      set({ catalogError: String(err), catalogLoading: false });
+    }
+  },
+
+  selectLesson: async (lessonEntry: LessonSummary) => {
+    set({ selectedLesson: lessonEntry });
+    if (!lessonEntry.metadataUrl) return;
+
+    if (!directPlayer) {
+      directPlayer = new DirectLessonPlayer({
+        onIndexChange: (idx) => {
+          set({ directActiveIndex: idx });
+          if (idx) {
+            set({
+              lessonPosition: `${idx.order}/${get().directIndexes.length}`,
+              lessonDebug: `Index ${idx.order}`,
+            });
+          }
+        },
+        onPlaybackStateChange: (state) => set({ directPlaybackState: state }),
+        onVisualChange: (url) => {
+          set({
+            activity: {
+              ...get().activity,
+              imageUrl: url,
+            },
+          });
+        },
+        onError: (err) => {
+          set({
+            activity: {
+              ...get().activity,
+              phase: 'error',
+              error: err,
+            },
+          });
+        },
+      });
+    }
+
+    try {
+      const indexes = await directPlayer.loadLessonFromMetadata(lessonEntry.metadataUrl);
+      set({
+        directIndexes: indexes,
+        directActiveIndex: null,
+        directPlaybackState: 'idle',
+      });
+    } catch (e) {
+      console.error('[simulator-store] Failed to load direct lesson indexes:', e);
+    }
+  },
+
+  playDirectIndex: async (order: string) => {
+    stopActivity(set, get);
+    const lessonEntry = get().selectedLesson;
+    set({
+      activity: {
+        ...IDLE_ACTIVITY,
+        kind: 'lesson',
+        title: lessonEntry?.title || 'Bài học Bống',
+        phase: 'playing',
+      },
+    });
+    if (directPlayer) {
+      directPlayer.setVolume(get().volume);
+      await directPlayer.playIndex(order);
+    }
+  },
+
+  playDirectNext: async () => {
+    if (directPlayer) {
+      await directPlayer.playNext();
+    }
+  },
+
+  playDirectPrev: async () => {
+    if (directPlayer) {
+      await directPlayer.playPrev();
+    }
+  },
+
+  toggleDirectPause: () => {
+    directPlayer?.togglePause();
+  },
+
+  stopDirectLesson: () => {
+    directPlayer?.stop();
+    stopActivity(set, get);
+  },
+
+  toggleDirectAutoNext: () => {
+    const next = !get().directAutoNext;
+    set({ directAutoNext: next });
+    directPlayer?.setAutoNext(next, get().directAutoNextDelayMs);
+    if (!next) {
+      clearSocketAutoNextTimer();
+    } else if (get().lessonSourceMode === 'socket' && get().directPlaybackState === 'idle') {
+      scheduleSocketAutoNext(get, get().directAutoNextDelayMs);
+    }
+  },
+
+  setDirectAutoNextDelay: (ms: number) => {
+    set({ directAutoNextDelayMs: ms });
+    directPlayer?.setAutoNext(get().directAutoNext, ms);
+  },
+
+  jumpSocketIndex: (order: string) => {
+    const selected = get().selectedLesson;
+    if (get().status !== 'connected') {
+      get().connect();
+    }
+    clearSocketAutoNextTimer();
+    ttsDone = false;
+    client?.jumpLessonIndex(order, selected?.id);
+
+    const matched = get().directIndexes.find((idx) => idx.order === order);
+    if (matched) {
+      const visualUrl = matched.visuals?.[0]?.url;
+      set({
+        directActiveIndex: matched,
+        directPlaybackState: 'playing',
+        lessonPosition: `${matched.order}/${get().directIndexes.length}`,
+        lessonDebug: `Index ${matched.order}`,
+        activity: {
+          ...get().activity,
+          kind: 'lesson',
+          title: selected?.title || 'Bài học Bống',
+          phase: 'playing',
+          imageUrl: visualUrl || null,
+        },
+      });
+
+      // If index has NO audio (visual-only node), schedule auto-next after dwell time
+      const hasAudio = matched.audios && matched.audios.length > 0 && Boolean(matched.audios[0].url);
+      if (!hasAudio) {
+        if (get().directAutoNext && get().lessonSourceMode === 'socket') {
+          const dwell = Math.max(get().directAutoNextDelayMs, 2000);
+          scheduleSocketAutoNext(get, dwell);
+        }
+      }
+    }
+  },
+
+  nextSocketIndex: () => {
+    const currentIndex = get().directActiveIndex;
+    const indexes = get().directIndexes;
+    if (currentIndex && indexes.length > 0) {
+      const currPos = indexes.findIndex((idx) => idx.order === currentIndex.order);
+      if (currPos >= 0 && currPos < indexes.length - 1) {
+        const nextItem = indexes[currPos + 1];
+        get().jumpSocketIndex(nextItem.order);
+        return;
+      }
+    } else if (indexes.length > 0) {
+      get().jumpSocketIndex(indexes[0].order);
+      return;
+    }
+    // Reached end of lesson
+    set({ directPlaybackState: 'idle' });
+  },
+
+  playStudioIndex: async (order: string) => {
+    if (get().lessonSourceMode === 'socket') {
+      get().jumpSocketIndex(order);
+    } else {
+      await get().playDirectIndex(order);
+    }
+  },
+
+  playStudioNext: async () => {
+    if (get().lessonSourceMode === 'socket') {
+      get().nextSocketIndex();
+    } else {
+      await get().playDirectNext();
+    }
+  },
+
+  playStudioPrev: async () => {
+    if (get().lessonSourceMode === 'socket') {
+      const currentIndex = get().directActiveIndex;
+      const indexes = get().directIndexes;
+      if (currentIndex && indexes.length > 0) {
+        const currPos = indexes.findIndex((idx) => idx.order === currentIndex.order);
+        if (currPos > 0) {
+          const prevItem = indexes[currPos - 1];
+          get().jumpSocketIndex(prevItem.order);
+        }
+      }
+    } else {
+      await get().playDirectPrev();
+    }
+  },
+
+  toggleStudioPause: () => {
+    if (get().lessonSourceMode === 'socket') {
+      const isPaused = get().directPlaybackState === 'paused' || get().activity.phase === 'paused';
+      if (isPaused) {
+        set({ directPlaybackState: 'playing' });
+        get().toggleActivityPause();
+      } else {
+        clearSocketAutoNextTimer();
+        set({ directPlaybackState: 'paused' });
+        get().toggleActivityPause();
+      }
+    } else {
+      get().toggleDirectPause();
+    }
+  },
+
+  stopStudioLesson: () => {
+    clearSocketAutoNextTimer();
+    ttsDone = false;
+    if (get().lessonSourceMode === 'socket') {
+      client?.stopLesson();
+      get().exitActivity();
+      set({ directActiveIndex: null, directPlaybackState: 'idle' });
+    } else {
+      get().stopDirectLesson();
+    }
+  },
 }));
 
 type Setter = (partial: Partial<SimulatorState>) => void;
@@ -779,6 +1124,9 @@ type Getter = () => SimulatorState;
 function stopActivity(set: Setter, get: Getter): void {
   activityFetch?.abort();
   activityFetch = null;
+  clearSocketAutoNextTimer();
+  ttsDone = false;
+  directPlayer?.stop();
   story?.stop();
   story = null;
   lesson?.dispose();
@@ -876,6 +1224,14 @@ function ensurePlayer(set: Setter, get: Getter): OpusPlayer {
       } else {
         clearUnmuteTimer();
         unmuteTimer = setTimeout(() => mic?.setMuted(false), ECHO_HANGOVER_MS);
+
+        // When audio finishes playing in socket mode with auto-next enabled
+        if (get().lessonSourceMode === 'socket' && get().directAutoNext) {
+          if (ttsDone || get().directPlaybackState === 'playing') {
+            set({ directPlaybackState: 'idle' });
+            scheduleSocketAutoNext(get, get().directAutoNextDelayMs);
+          }
+        }
       }
     },
     onError: (message) => set({ audioError: message }),
@@ -959,6 +1315,17 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
         imageSeq: (previous.imageSeq ?? 0) + 1,
       },
     });
+
+    // In socket mode, match displayed image URL with index list to keep Studio table in sync
+    if (get().lessonSourceMode === 'socket' && get().directIndexes.length > 0 && displayCmd.url) {
+      const url = displayCmd.url;
+      const matched = get().directIndexes.find((idx) =>
+        idx.visuals.some((v) => v.url === url || (v.fileName && url.includes(v.fileName)))
+      );
+      if (matched) {
+        set({ directActiveIndex: matched, directPlaybackState: 'playing' });
+      }
+    }
   } else if (displayCmd?.kind === 'clear' || displayCmd?.kind === 'expression') {
     set({ activity: { ...get().activity, imageUrl: null } });
   }
@@ -983,19 +1350,35 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
 
 
 
-  if (message.type === 'tts' && message.state === 'sentence_start') {
-    // The decoder's synthesised timestamps restart with every sentence, or a
-    // long reply drifts out of sync and goes silent partway through.
-    player?.startSentence();
+  if (message.type === 'tts') {
+    if (message.state === 'start') {
+      ttsDone = false;
+      clearSocketAutoNextTimer();
+    } else if (message.state === 'sentence_start') {
+      ttsDone = false;
+      // The decoder's synthesised timestamps restart with every sentence, or a
+      // long reply drifts out of sync and goes silent partway through.
+      player?.startSentence();
+    } else if (message.state === 'stop') {
+      ttsDone = true;
+      clearIdleTimer();
+      idleTimer = setTimeout(() => set({ face: toIdle(get().face) }), IDLE_DELAY_MS);
+
+      // Auto next in socket mode if enabled
+      if (get().lessonSourceMode === 'socket' && get().directAutoNext) {
+        if (!get().speaking) {
+          set({ directPlaybackState: 'idle' });
+          scheduleSocketAutoNext(get, get().directAutoNextDelayMs);
+        } else {
+          // Audio is still actively speaking through OpusPlayer.
+          // onPlayingChange(false) will schedule auto-next when silence is reached,
+          // but we also arm a safety fallback timer just in case.
+          scheduleSocketAutoNext(get, get().directAutoNextDelayMs + 3000);
+        }
+      }
+    }
   }
 
-  // `tts.stop` is the one transition that needs a clock: the face holds its
-  // expression briefly, then settles.
-  if (message.type !== 'tts') return;
-  clearIdleTimer();
-  if (message.state === 'stop') {
-    idleTimer = setTimeout(() => set({ face: toIdle(get().face) }), IDLE_DELAY_MS);
-  }
 }
 
 /**
