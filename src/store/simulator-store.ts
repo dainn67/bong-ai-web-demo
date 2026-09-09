@@ -1323,6 +1323,7 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
     set({
       activity: {
         ...previous,
+        kind: previous.kind ?? 'lesson',
         imageUrl: displayCmd.url,
         imageSeq: (previous.imageSeq ?? 0) + 1,
       },
@@ -1332,7 +1333,7 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
     if (get().lessonSourceMode === 'socket' && get().directIndexes.length > 0 && displayCmd.url) {
       const url = displayCmd.url;
       const matched = get().directIndexes.find((idx) =>
-        idx.visuals.some((v) => v.url === url || (v.fileName && url.includes(v.fileName)))
+        idx.visuals.some((v) => v.url === url || (v.fileName && url.includes(v.fileName)) || (v.url && url.endsWith(v.url.split('/').pop() || '')))
       );
       if (matched) {
         const current = get().directActiveIndex;
