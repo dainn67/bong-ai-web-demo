@@ -89,7 +89,17 @@ export function resolveAccountPlaceholders(
   account: { phone?: string | null; voiceId?: string | null },
 ): string {
   let out = input;
-  if (account.phone) out = out.replaceAll('{userPhone}', account.phone);
+  if (account.phone) {
+    let p = account.phone.trim().replace(/^\+/, '');
+    if (p.startsWith('84') && p.length >= 11) {
+      p = '0' + p.slice(2);
+    }
+    out = out
+      .replaceAll('{userPhone}', p)
+      .replaceAll('{user_phone}', p)
+      .replaceAll('{phone}', p)
+      .replaceAll('{userphone}', p);
+  }
   if (account.voiceId) out = out.replaceAll('{voiceID}', account.voiceId);
   return out;
 }

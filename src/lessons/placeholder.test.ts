@@ -86,6 +86,20 @@ describe('resolveAccountPlaceholders', () => {
     ).toBe('090/v1/a.mp3');
   });
 
+  it('normalizes +84 and 84 Vietnamese phone to 0...', () => {
+    expect(
+      resolveAccountPlaceholders('https://cdn.com/{userPhone}/v.mp3', {
+        phone: '+84365297987',
+      }),
+    ).toBe('https://cdn.com/0365297987/v.mp3');
+
+    expect(
+      resolveAccountPlaceholders('https://cdn.com/{user_phone}/v.mp3', {
+        phone: '84365297987',
+      }),
+    ).toBe('https://cdn.com/0365297987/v.mp3');
+  });
+
   // Unlike the runtime tokens, these are left in place so a missing account is
   // visible in a log rather than becoming a silent null two layers away.
   it('leaves the token when the account lacks the value', () => {
