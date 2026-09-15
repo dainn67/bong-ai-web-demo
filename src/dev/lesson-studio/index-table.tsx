@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { cdnUrl } from '../../lessons/catalog';
 import { useSimulatorStore } from '../../store/simulator-store';
+import { isEafUrl, EafThumbnail } from '../../screen/eaf-view';
 
 export function IndexTable() {
   const indexes = useSimulatorStore((state) => state.directIndexes);
@@ -156,12 +157,20 @@ export function IndexTable() {
                   {/* Visual Thumbnail */}
                   <td className="py-2 px-2 text-center">
                     {visUrl ? (
-                      <img
-                        src={visUrl}
-                        alt=""
-                        loading="lazy"
-                        className="h-9 w-9 rounded-md object-cover border border-cream-200 shadow-xs inline-block bg-white"
-                      />
+                      isEafUrl(visUrl) || isEafUrl(primaryVis?.fileName) ? (
+                        <EafThumbnail
+                          url={visUrl}
+                          fileName={primaryVis?.fileName}
+                          size="sm"
+                        />
+                      ) : (
+                        <img
+                          src={visUrl}
+                          alt=""
+                          loading="lazy"
+                          className="h-9 w-9 rounded-md object-cover border border-cream-200 shadow-xs inline-block bg-white"
+                        />
+                      )
                     ) : (
                       <span
                         className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-ink-900/10 text-[9px] font-bold text-ink-400"

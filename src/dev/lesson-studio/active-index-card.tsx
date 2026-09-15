@@ -1,5 +1,6 @@
 import { cdnUrl } from '../../lessons/catalog';
 import { useSimulatorStore } from '../../store/simulator-store';
+import { isEafUrl, EafThumbnail } from '../../screen/eaf-view';
 
 export function ActiveIndexCard() {
   const activeIndex = useSimulatorStore((state) => state.directActiveIndex);
@@ -77,22 +78,30 @@ export function ActiveIndexCard() {
         {/* Visual Info */}
         <div className="flex items-start gap-2.5 rounded-xl bg-cream-100 p-2.5 border border-cream-200">
           {visualUrl ? (
-            <div className="relative group shrink-0">
-              <img
-                src={visualUrl}
-                alt={`Visual ${activeIndex.order}`}
-                className="h-14 w-14 rounded-lg object-cover border border-cream-300 shadow-sm bg-white"
+            isEafUrl(visualUrl) || isEafUrl(primaryVisual?.fileName) ? (
+              <EafThumbnail
+                url={visualUrl}
+                fileName={primaryVisual?.fileName}
+                size="md"
               />
-              <a
-                href={visualUrl}
-                target="_blank"
-                rel="noreferrer"
-                title="Mở ảnh gốc trong tab mới"
-                className="absolute inset-0 flex items-center justify-center rounded-lg bg-ink-900/60 opacity-0 group-hover:opacity-100 text-white text-[10px] font-bold transition"
-              >
-                Xem ↗
-              </a>
-            </div>
+            ) : (
+              <div className="relative group shrink-0">
+                <img
+                  src={visualUrl}
+                  alt={`Visual ${activeIndex.order}`}
+                  className="h-14 w-14 rounded-lg object-cover border border-cream-300 shadow-sm bg-white"
+                />
+                <a
+                  href={visualUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Mở ảnh gốc trong tab mới"
+                  className="absolute inset-0 flex items-center justify-center rounded-lg bg-ink-900/60 opacity-0 group-hover:opacity-100 text-white text-[10px] font-bold transition"
+                >
+                  Xem ↗
+                </a>
+              </div>
+            )
           ) : (
             <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-ink-900 text-cream-200 text-xs font-bold shadow-inner">
               Tối đen

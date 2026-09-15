@@ -26,6 +26,7 @@ import { useSimulatorStore } from '../store/simulator-store';
 import { canPause, phaseLabel } from './activity-state';
 import { classifyGesture, type TouchGestureSample } from './touch-layout';
 import { toDevicePoint } from './touch-input';
+import { isEafUrl, EafScreenView } from './eaf-view';
 
 const TEXT_BOX = 'pointer-events-none relative z-10 flex w-[76%] flex-col items-center gap-1.5';
 
@@ -93,18 +94,18 @@ export function ActivityView() {
       } ${waitingForTouch ? 'cursor-crosshair' : ''}`}
     >
       {hasImage ? (
-        // Nothing over the artwork. A lesson's picture is the question — a
-        // caption across it hides the very thing the child is choosing between,
-        // and on a 360px circle any text box big enough to read covers a zone.
-        // The status line and the controls live in the drawer, beside the badge
-        // rather than on top of it.
-        <img
-          // Keyed on the sequence too, so showing the same GIF twice restarts it.
-          key={`${effectiveImageUrl}-${effectiveImageSeq ?? 0}`}
-          src={effectiveImageUrl!}
-          alt=""
-          className="pointer-events-none absolute inset-0 h-full w-full object-cover"
-        />
+        // Check if image is an Espressif Animation Format (.eaf)
+        isEafUrl(effectiveImageUrl) ? (
+          <EafScreenView url={effectiveImageUrl!} />
+        ) : (
+          <img
+            // Keyed on the sequence too, so showing the same GIF twice restarts it.
+            key={`${effectiveImageUrl}-${effectiveImageSeq ?? 0}`}
+            src={effectiveImageUrl!}
+            alt=""
+            className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+          />
+        )
       ) : (
 
         <div className={TEXT_BOX}>
