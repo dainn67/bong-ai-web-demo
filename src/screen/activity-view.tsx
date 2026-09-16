@@ -41,15 +41,8 @@ export function ActivityView() {
 
   const downPoint = useRef<TouchGestureSample | null>(null);
 
-  if (!activity.kind) return null;
-
-  const status = phaseLabel(activity);
-  const listening = activity.phase === 'listening';
-  const waitingForTouch = activity.waitingFor === 'touch' && Boolean(activity.touchLayout);
   const effectiveImageUrl = activity.imageUrl || face.imageUrl;
   const effectiveImageSeq = activity.imageSeq || face.imageSeq;
-  const hasImage = Boolean(effectiveImageUrl);
-
   const [imgSrc, setImgSrc] = useState<string>('');
 
   useEffect(() => {
@@ -65,6 +58,13 @@ export function ActivityView() {
       setImgSrc(imgSrc.replace('.360.png', ''));
     }
   };
+
+  if (!activity.kind) return null;
+
+  const status = phaseLabel(activity);
+  const listening = activity.phase === 'listening';
+  const waitingForTouch = activity.waitingFor === 'touch' && Boolean(activity.touchLayout);
+  const hasImage = Boolean(effectiveImageUrl);
 
 
   const sampleAt = (event: ReactPointerEvent<HTMLDivElement>): TouchGestureSample => ({
