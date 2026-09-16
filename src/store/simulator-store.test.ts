@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { useSimulatorStore, handleMessage } from './simulator-store';
 import { DEFAULT_CONFIG } from '../config/device-config';
 import type { IncomingMessage } from '../protocol/message-types';
+import { INITIAL_FACE_STATE } from '../screen/face-state-machine';
 
 describe('simulatorStore direct mode and resetConfig', () => {
   beforeEach(() => {
@@ -129,7 +130,7 @@ describe('simulatorStore direct mode and resetConfig', () => {
   it('updates both activity.imageUrl and face.imageUrl on display show_image command', () => {
     useSimulatorStore.setState({
       activity: { kind: 'lesson', phase: 'playing', title: 'Test', imageUrl: null, error: null, waitingFor: null, touchLayout: null, caption: '', notice: '', imageSeq: 0, hint: null },
-      face: { emotion: 'neutral', expression: null, mode: 'idle', imageUrl: null, imageSeq: 0 },
+      face: { ...INITIAL_FACE_STATE },
     });
 
     const set = useSimulatorStore.setState;
@@ -195,7 +196,7 @@ describe('simulatorStore direct mode and resetConfig', () => {
         imageSeq: 1,
         hint: null,
       },
-      face: { emotion: 'neutral', expression: null, mode: 'idle', imageUrl: 'some-image.png', imageSeq: 1 },
+      face: { ...INITIAL_FACE_STATE, imageUrl: 'some-image.png', imageSeq: 1 },
     });
 
     const set = useSimulatorStore.setState;

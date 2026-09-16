@@ -99,7 +99,7 @@ export function toExpression(value: unknown): Expression | null {
  */
 export interface DisplayIn {
   type: 'display';
-  action: 'expression' | 'show_image' | 'set_touch_zones' | 'clear_touch_zones';
+  action: 'expression' | 'show_image' | 'set_touch_zones' | 'clear_touch_zones' | 'clear' | 'clear_image';
   name?: string;
   url?: string;
   width?: number;
