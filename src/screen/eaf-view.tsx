@@ -9,18 +9,32 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { cdnUrl } from '../lessons/catalog';
 
 export function isEafUrl(url?: string | null): boolean {
   if (!url) return false;
   const clean = url.split('?')[0].trim().toLowerCase();
-  return clean.endsWith('.eaf');
+  return clean.endsWith('.eaf') || clean.includes('.eaf.') || clean.includes('.eaf');
+}
+
+export function normalizeEafUrl(url?: string | null): string {
+  if (!url) return '';
+  // Strip .360.png or other unwanted suffixes that might be appended
+  if (url.includes('.eaf.')) {
+    return url.replace(/\.eaf\..*$/i, '.eaf');
+  }
+  return url;
 }
 
 export function extractEmoteName(urlOrFileName?: string | null): string {
   if (!urlOrFileName) return 'neutral';
-  const clean = urlOrFileName.split('?')[0].trim();
+  const normalized = normalizeEafUrl(urlOrFileName);
+  const clean = normalized.split('?')[0].trim();
   const base = clean.split('/').pop() || clean;
   const withoutExt = base.replace(/\.eaf$/i, '');
+  if (withoutExt.toLowerCase().startsWith('ezgif')) {
+    return 'robot';
+  }
   // Clean order prefixes like "order_1_happy" -> "happy" if recognizable
   const parts = withoutExt.split(/[_\-\s]+/);
   for (const part of parts.reverse()) {
@@ -38,6 +52,8 @@ export interface EmoteMeta {
 }
 
 export const EMOTE_MAP: Record<string, EmoteMeta> = {
+  robot: { emoji: '🤖', label: 'Robot Bống (.EAF)', bgGradient: 'from-blue-500/25 to-indigo-600/35', glowColor: 'rgba(99, 102, 241, 0.45)' },
+  ezgif: { emoji: '🤖', label: 'Robot Bống (.EAF)', bgGradient: 'from-blue-500/25 to-indigo-600/35', glowColor: 'rgba(99, 102, 241, 0.45)' },
   happy: { emoji: '😊', label: 'Vui vẻ', bgGradient: 'from-amber-400/25 to-orange-500/35', glowColor: 'rgba(251, 191, 36, 0.45)' },
   crying: { emoji: '😭', label: 'Khóc nhè', bgGradient: 'from-sky-400/25 to-blue-600/35', glowColor: 'rgba(56, 189, 248, 0.45)' },
   sad: { emoji: '😢', label: 'Buồn bã', bgGradient: 'from-indigo-400/25 to-slate-600/35', glowColor: 'rgba(129, 140, 248, 0.45)' },
@@ -89,7 +105,9 @@ function useEafCanvasPlayer(url: string, canvasRef: React.RefObject<HTMLCanvasEl
 
     async function loadAndPlay() {
       try {
-        const resp = await fetch(url);
+        const normalized = normalizeEafUrl(url);
+        const targetUrl = cdnUrl(normalized);
+        const resp = await fetch(targetUrl);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const buf = await resp.arrayBuffer();
         if (!isMounted) return;

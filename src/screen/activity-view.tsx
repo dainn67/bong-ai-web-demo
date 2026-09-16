@@ -96,7 +96,10 @@ export function ActivityView() {
       {hasImage ? (
         // Check if image is an Espressif Animation Format (.eaf)
         isEafUrl(effectiveImageUrl) ? (
-          <EafScreenView url={effectiveImageUrl!} />
+          <EafScreenView
+            key={`${effectiveImageUrl}-${effectiveImageSeq ?? 0}`}
+            url={effectiveImageUrl!}
+          />
         ) : (
           <img
             // Keyed on the sequence too, so showing the same GIF twice restarts it.

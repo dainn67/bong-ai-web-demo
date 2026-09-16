@@ -8,6 +8,7 @@ export function ActiveIndexCard() {
   const playbackState = useSimulatorStore((state) => state.directPlaybackState);
   const playStudioIndex = useSimulatorStore((state) => state.playStudioIndex);
   const dispatchTouch = useSimulatorStore((state) => state.dispatchTouch);
+  const updateIndexVisual = useSimulatorStore((state) => state.updateIndexVisual);
 
   if (!activeIndex) {
     return (
@@ -131,6 +132,23 @@ export function ActiveIndexCard() {
                 {visualUrl.split('/').pop()}
               </p>
             )}
+            <div className="mt-2 flex items-center gap-2">
+              <label className="inline-flex items-center gap-1 rounded-lg bg-mint-500/15 hover:bg-mint-500/25 px-2.5 py-1 text-[10px] font-bold text-mint-800 cursor-pointer transition shadow-2xs border border-mint-300">
+                <span>📤 Upload Visual (.eaf / .gif / .png)</span>
+                <input
+                  type="file"
+                  accept="image/*,image/gif,.eaf"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f && activeIndex) {
+                      e.target.value = '';
+                      updateIndexVisual(activeIndex.order, f);
+                    }
+                  }}
+                />
+              </label>
+            </div>
           </div>
         </div>
 

@@ -14,12 +14,18 @@ export const CDN_BASE = '/cdn';
  * (/cdn/lessions/lessions.json), bypassing esp32-server completely.
  */
 export async function fetchCdnCatalog(): Promise<LessonSummary[]> {
-  const res = await fetch(`${CDN_BASE}/lessions/lessions.json`);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch catalog from CDN: HTTP ${res.status}`);
+  try {
+    const res = await fetch(`${CDN_BASE}/lessions/lessions.json`);
+    if (!res.ok) {
+      console.warn(`[catalog] CDN catalog response HTTP ${res.status}`);
+      return [];
+    }
+    const json = await res.json();
+    return parseCatalog(json);
+  } catch (err) {
+    console.warn('[catalog] Failed to fetch catalog from CDN:', err);
+    return [];
   }
-  const json = await res.json();
-  return parseCatalog(json);
 }
 
 export type LessonCategory = 'stories' | 'learning' | 'topics';
@@ -131,9 +137,14 @@ function toSummary(row: unknown, category: LessonCategory): LessonSummary | null
  */
 export function cdnUrl(path: string): string {
   if (!path) return '';
-  if (/^https?:\/\//i.test(path)) return rehostKnownCdn(path);
-  const clean = path.replace(/^\/+/, '');
+  const cleanPath = path.trim().replace(/ /g, '%20');
+  if (/^https?:\/\//i.test(cleanPath)) return rehostKnownCdn(cleanPath);
+  const clean = cleanPath.replace(/^\/+/, '');
   if (clean.startsWith('cdn/')) {
+    return `/${clean}`;
+  }
+  // Local static public assets in Vite (e.g. /emotes/*.eaf, /lessons/*, /sounds/*) should be served directly
+  if (clean.startsWith('emotes/') || clean.startsWith('lessons/') || clean.startsWith('sounds/')) {
     return `/${clean}`;
   }
   return `${CDN_BASE}/${clean}`;

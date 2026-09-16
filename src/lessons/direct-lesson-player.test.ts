@@ -123,4 +123,34 @@ describe('DirectLessonPlayer', () => {
     expect(player.isAutoNextEnabled).toBe(true);
     expect(player.autoNextDelay).toBe(2000);
   });
+
+  it('correctly parses lesson with .eaf visual assets', async () => {
+    const eafMetadata = {
+      version: '2',
+      id: 'lesson_eaf_test',
+      title: 'Bài Học Biểu Cảm Cùng Bống (.eaf Test)',
+      indexes: [
+        {
+          order: '1',
+          audio: [{ url: '/sounds/chime.wav', fileName: 'chime_01.wav' }],
+          visual: [{ url: '/emotes/happy.eaf', fileName: 'happy.eaf', stop: 'giu' }],
+          next: '2',
+        },
+        {
+          order: '2',
+          audio: [{ url: '/sounds/chime.wav', fileName: 'chime_02.wav' }],
+          visual: [{ url: '/emotes/thinking.eaf', fileName: 'thinking.eaf', stop: 'giu' }],
+          next: 'end',
+        },
+      ],
+    };
+
+    const items = player.parseAndSetIndexes(eafMetadata);
+    expect(items).toHaveLength(2);
+    expect(items[0].visuals[0].url).toBe('/emotes/happy.eaf');
+    expect(items[1].visuals[0].url).toBe('/emotes/thinking.eaf');
+
+    await player.playIndex('1');
+    expect(handlers.onVisualChange).toHaveBeenCalledWith('/emotes/happy.eaf', 'giu');
+  });
 });

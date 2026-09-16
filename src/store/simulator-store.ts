@@ -265,6 +265,7 @@ interface SimulatorState {
   playStudioPrev: () => Promise<void>;
   toggleStudioPause: () => void;
   stopStudioLesson: () => void;
+  updateIndexVisual: (order: string, file: File) => void;
 }
 
 /**
@@ -913,6 +914,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
             activity: {
               ...get().activity,
               imageUrl: url,
+              imageSeq: (get().activity.imageSeq ?? 0) + 1,
             },
           });
         },
@@ -1017,6 +1019,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           title: selected?.title || 'Bài học Bống',
           phase: 'playing',
           imageUrl: visualUrl || null,
+          imageSeq: (get().activity.imageSeq ?? 0) + 1,
         },
       });
 
@@ -1107,6 +1110,49 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     } else {
       get().stopDirectLesson();
     }
+  },
+
+  updateIndexVisual: (order: string, file: File) => {
+    const url = URL.createObjectURL(file);
+    const fileName = file.name;
+    const isEaf = fileName.toLowerCase().endsWith('.eaf');
+    const updatedIndexes = get().directIndexes.map((item) => {
+      if (item.order === order) {
+        return {
+          ...item,
+          visuals: [
+            {
+              url,
+              fileName,
+              nodeType: isEaf ? 'eaf' : 'image',
+              stop: 'giu' as const,
+            },
+          ],
+        };
+      }
+      return item;
+    });
+
+    const currentActive = get().directActiveIndex;
+    const patch: Partial<SimulatorState> = { directIndexes: updatedIndexes };
+    if (currentActive && currentActive.order === order) {
+      patch.directActiveIndex = {
+        ...currentActive,
+        visuals: [
+          {
+            url,
+            fileName,
+            nodeType: isEaf ? 'eaf' : 'image',
+            stop: 'giu',
+          },
+        ],
+      };
+      patch.activity = {
+        ...get().activity,
+        imageUrl: url,
+      };
+    }
+    set(patch);
   },
 }));
 
@@ -1285,19 +1331,28 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
       player?.stop();
       set({ activity: { ...get().activity, phase: 'paused' } });
     } else if (actState === 'playing') {
-      set({ activity: { ...get().activity, kind: get().activity.kind ?? 'lesson', phase: 'playing' } });
       const order = (message as { order?: string }).order;
       if (order && get().directIndexes.length > 0) {
         const matched = get().directIndexes.find((idx) => idx.order === String(order));
         if (matched) {
+          const visUrl = matched.visuals?.[0]?.url;
           set({
             directActiveIndex: matched,
             directPlaybackState: 'playing',
             lessonPosition: `${matched.order}/${get().directIndexes.length}`,
             lessonDebug: `Index ${matched.order}`,
+            activity: {
+              ...get().activity,
+              kind: get().activity.kind ?? 'lesson',
+              phase: 'playing',
+              imageUrl: visUrl || get().activity.imageUrl,
+              imageSeq: (get().activity.imageSeq ?? 0) + 1,
+            },
           });
+          return;
         }
       }
+      set({ activity: { ...get().activity, kind: get().activity.kind ?? 'lesson', phase: 'playing' } });
     } else if (actState === 'idle') {
       stopActivity(set, get);
       set({
@@ -1336,14 +1391,21 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
         idx.visuals.some((v) => v.url === url || (v.fileName && url.includes(v.fileName)) || (v.url && url.endsWith(v.url.split('/').pop() || '')))
       );
       if (matched) {
-        const current = get().directActiveIndex;
-        if (!current || current.order === matched.order || get().directPlaybackState !== 'playing') {
-          set({ directActiveIndex: matched, directPlaybackState: 'playing' });
-        }
+        set({
+          directActiveIndex: matched,
+          directPlaybackState: 'playing',
+          lessonPosition: `${matched.order}/${get().directIndexes.length}`,
+          lessonDebug: `Index ${matched.order}`,
+        });
       }
     }
-  } else if (displayCmd?.kind === 'clear' || displayCmd?.kind === 'expression') {
+  } else if (displayCmd?.kind === 'clear') {
     set({ activity: { ...get().activity, imageUrl: null } });
+  } else if (displayCmd?.kind === 'expression') {
+    // Only clear visual when not in active lesson activity
+    if (get().activity.kind !== 'lesson' || !get().activity.imageUrl) {
+      set({ activity: { ...get().activity, imageUrl: null } });
+    }
   }
 
   if (activity.kind) {
