@@ -21,12 +21,13 @@
  * inscribed in gets clipped away by the curve.
  */
 
-import { useRef, type PointerEvent as ReactPointerEvent } from 'react';
+import { useState, useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import { useSimulatorStore } from '../store/simulator-store';
 import { canPause, phaseLabel } from './activity-state';
 import { classifyGesture, type TouchGestureSample } from './touch-layout';
 import { toDevicePoint } from './touch-input';
 import { isEafUrl, EafScreenView } from './eaf-view';
+import { cdnUrl } from '../lessons/catalog';
 
 const TEXT_BOX = 'pointer-events-none relative z-10 flex w-[76%] flex-col items-center gap-1.5';
 
@@ -48,6 +49,22 @@ export function ActivityView() {
   const effectiveImageUrl = activity.imageUrl || face.imageUrl;
   const effectiveImageSeq = activity.imageSeq || face.imageSeq;
   const hasImage = Boolean(effectiveImageUrl);
+
+  const [imgSrc, setImgSrc] = useState<string>('');
+
+  useEffect(() => {
+    if (effectiveImageUrl && !isEafUrl(effectiveImageUrl)) {
+      setImgSrc(cdnUrl(effectiveImageUrl));
+    } else {
+      setImgSrc('');
+    }
+  }, [effectiveImageUrl, effectiveImageSeq]);
+
+  const handleImageError = () => {
+    if (imgSrc && imgSrc.includes('.360.png')) {
+      setImgSrc(imgSrc.replace('.360.png', ''));
+    }
+  };
 
 
   const sampleAt = (event: ReactPointerEvent<HTMLDivElement>): TouchGestureSample => ({
@@ -103,8 +120,9 @@ export function ActivityView() {
         ) : (
           <img
             // Keyed on the sequence too, so showing the same GIF twice restarts it.
-            key={`${effectiveImageUrl}-${effectiveImageSeq ?? 0}`}
-            src={effectiveImageUrl!}
+            key={`${imgSrc || effectiveImageUrl}-${effectiveImageSeq ?? 0}`}
+            src={imgSrc || cdnUrl(effectiveImageUrl!)}
+            onError={handleImageError}
             alt=""
             className="pointer-events-none absolute inset-0 h-full w-full object-cover"
           />

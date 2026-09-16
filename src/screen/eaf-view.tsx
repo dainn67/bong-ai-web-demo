@@ -73,6 +73,12 @@ export const EMOTE_MAP: Record<string, EmoteMeta> = {
   shy: { emoji: '🥺', label: 'E thẹn', bgGradient: 'from-pink-300/25 to-rose-400/35', glowColor: 'rgba(253, 164, 175, 0.45)' },
   sleepy: { emoji: '😴', label: 'Buồn ngủ', bgGradient: 'from-indigo-400/25 to-blue-900/35', glowColor: 'rgba(129, 140, 248, 0.45)' },
   wink: { emoji: '😉', label: 'Nháy mắt', bgGradient: 'from-yellow-400/25 to-amber-500/35', glowColor: 'rgba(250, 204, 21, 0.45)' },
+  winking: { emoji: '😉', label: 'Nháy mắt', bgGradient: 'from-yellow-400/25 to-amber-500/35', glowColor: 'rgba(250, 204, 21, 0.45)' },
+  loving: { emoji: '🥰', label: 'Yêu thương', bgGradient: 'from-rose-400/25 to-pink-600/35', glowColor: 'rgba(244, 63, 94, 0.45)' },
+  laughing: { emoji: '😆', label: 'Cười lớn', bgGradient: 'from-amber-400/25 to-yellow-500/35', glowColor: 'rgba(251, 191, 36, 0.45)' },
+  relaxed: { emoji: '😌', label: 'Thư giãn', bgGradient: 'from-emerald-400/25 to-teal-600/35', glowColor: 'rgba(52, 211, 153, 0.45)' },
+  kissy: { emoji: '😘', label: 'Hôn gió', bgGradient: 'from-pink-400/25 to-rose-500/35', glowColor: 'rgba(244, 114, 182, 0.45)' },
+  silly: { emoji: '😜', label: 'Nghịch ngợm', bgGradient: 'from-lime-400/25 to-green-500/35', glowColor: 'rgba(163, 230, 53, 0.45)' },
 };
 
 function getEmoteMeta(emoteKey: string): EmoteMeta {

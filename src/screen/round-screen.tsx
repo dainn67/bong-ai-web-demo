@@ -28,6 +28,8 @@ import { ScreenMenu } from './menu';
 import { ActivityView } from './activity-view';
 import { TouchZonesOverlay } from './touch-zones-overlay';
 import { isOpen } from './menu-state';
+import { isEafUrl, EafScreenView } from './eaf-view';
+import { cdnUrl } from '../lessons/catalog';
 
 
 /**
@@ -126,12 +128,19 @@ export function RoundScreen() {
             {isAwake && face.imageUrl ? (
               // Fills the circle edge to edge. The parent clips it, which is
               // what the real display does — nothing exists outside the circle.
-              <img
-                key={`${face.imageUrl}-${face.imageSeq ?? 0}`}
-                src={face.imageUrl}
-                alt=""
-                className="h-full w-full object-cover"
-              />
+              isEafUrl(face.imageUrl) ? (
+                <EafScreenView
+                  key={`${face.imageUrl}-${face.imageSeq ?? 0}`}
+                  url={face.imageUrl}
+                />
+              ) : (
+                <img
+                  key={`${face.imageUrl}-${face.imageSeq ?? 0}`}
+                  src={cdnUrl(face.imageUrl)}
+                  alt=""
+                  className="h-full w-full object-cover"
+                />
+              )
             ) : (
               <div className="flex flex-col items-center gap-4 px-10 text-center">
                 <span

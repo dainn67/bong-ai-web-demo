@@ -215,6 +215,7 @@ function fromParts(
     return expression ? { kind: 'expression', name: expression } : null;
   }
   if (action === 'show_image') return url ? { kind: 'image', url } : { kind: 'clear' };
+  if (action === 'clear' || action === 'clear_image') return { kind: 'clear' };
   return null;
 }
 

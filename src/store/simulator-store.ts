@@ -1305,7 +1305,7 @@ function handleLevel(set: Setter, get: Getter, level: number): void {
   set({ speaking: false });
 }
 
-function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void {
+export function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void {
   const face = reduceFace(get().face, message);
   set({ face, sessionId: client?.currentSessionId ?? null });
 
@@ -1335,7 +1335,9 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
       if (order && get().directIndexes.length > 0) {
         const matched = get().directIndexes.find((idx) => idx.order === String(order));
         if (matched) {
-          const visUrl = matched.visuals?.[0]?.url;
+          const visUrl = matched.visuals?.[0]?.url || null;
+          const isSameOrder = get().directActiveIndex?.order === String(order);
+          const effectiveVis = isSameOrder ? (get().activity.imageUrl || visUrl) : (visUrl || null);
           set({
             directActiveIndex: matched,
             directPlaybackState: 'playing',
@@ -1345,8 +1347,13 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
               ...get().activity,
               kind: get().activity.kind ?? 'lesson',
               phase: 'playing',
-              imageUrl: visUrl || get().activity.imageUrl,
+              imageUrl: effectiveVis,
               imageSeq: (get().activity.imageSeq ?? 0) + 1,
+            },
+            face: {
+              ...get().face,
+              imageUrl: effectiveVis ?? get().face.imageUrl,
+              imageSeq: (get().face.imageSeq ?? 0) + 1,
             },
           });
           return;
@@ -1372,7 +1379,6 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
   }
 
   // Update activity state based on server events during streaming
-  const { activity } = get();
   if (displayCmd?.kind === 'image') {
     const previous = get().activity;
     set({
@@ -1381,6 +1387,11 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
         kind: previous.kind ?? 'lesson',
         imageUrl: displayCmd.url,
         imageSeq: (previous.imageSeq ?? 0) + 1,
+      },
+      face: {
+        ...get().face,
+        imageUrl: displayCmd.url,
+        imageSeq: (get().face.imageSeq ?? 0) + 1,
       },
     });
 
@@ -1400,28 +1411,35 @@ function handleMessage(set: Setter, get: Getter, message: IncomingMessage): void
       }
     }
   } else if (displayCmd?.kind === 'clear') {
-    set({ activity: { ...get().activity, imageUrl: null } });
+    set({
+      activity: { ...get().activity, imageUrl: null },
+      face: { ...get().face, imageUrl: null },
+    });
   } else if (displayCmd?.kind === 'expression') {
     // Only clear visual when not in active lesson activity
     if (get().activity.kind !== 'lesson' || !get().activity.imageUrl) {
-      set({ activity: { ...get().activity, imageUrl: null } });
+      set({
+        activity: { ...get().activity, imageUrl: null },
+        face: { ...get().face, imageUrl: null },
+      });
     }
   }
 
-  if (activity.kind) {
+  const currentActivity = get().activity;
+  if (currentActivity.kind) {
     if (message.type === 'tts' && message.text) {
       set({
-        activity: { ...activity, caption: message.text, phase: 'playing' },
+        activity: { ...currentActivity, caption: message.text, phase: 'playing' },
       });
     } else if (message.type === 'stt' && message.text) {
       set({
-        activity: { ...activity, notice: `Bé: "${message.text}"` },
+        activity: { ...currentActivity, notice: `Bé: "${message.text}"` },
       });
     } else if (message.type === 'listen') {
       if (message.state === 'start') {
-        set({ activity: { ...activity, phase: 'listening' } });
+        set({ activity: { ...currentActivity, phase: 'listening' } });
       } else if (message.state === 'stop') {
-        set({ activity: { ...activity, phase: 'evaluating' } });
+        set({ activity: { ...currentActivity, phase: 'evaluating' } });
       }
     }
   }

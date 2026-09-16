@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { useSimulatorStore } from './simulator-store';
+import { useSimulatorStore, handleMessage } from './simulator-store';
 import { DEFAULT_CONFIG } from '../config/device-config';
+import type { IncomingMessage } from '../protocol/message-types';
 
 describe('simulatorStore direct mode and resetConfig', () => {
   beforeEach(() => {
@@ -123,5 +124,91 @@ describe('simulatorStore direct mode and resetConfig', () => {
 
     store.toggleStudioPause();
     expect(useSimulatorStore.getState().directPlaybackState).toBe('playing');
+  });
+
+  it('updates both activity.imageUrl and face.imageUrl on display show_image command', () => {
+    useSimulatorStore.setState({
+      activity: { kind: 'lesson', phase: 'playing', title: 'Test', imageUrl: null, error: null, waitingFor: null, touchLayout: null, caption: '', notice: '', imageSeq: 0, hint: null },
+      face: { emotion: 'neutral', expression: null, mode: 'idle', imageUrl: null, imageSeq: 0 },
+    });
+
+    const set = useSimulatorStore.setState;
+    const get = useSimulatorStore.getState;
+
+    const imgMsg: IncomingMessage = {
+      type: 'display',
+      action: 'show_image',
+      url: 'https://static-bongai.bcserver.xyz/lessions/lesson-eaf-ezgif/ezgif.eaf',
+    } as IncomingMessage;
+
+    handleMessage(set, get, imgMsg);
+
+    expect(useSimulatorStore.getState().activity.imageUrl).toBe('https://static-bongai.bcserver.xyz/lessions/lesson-eaf-ezgif/ezgif.eaf');
+    expect(useSimulatorStore.getState().face.imageUrl).toBe('https://static-bongai.bcserver.xyz/lessions/lesson-eaf-ezgif/ezgif.eaf');
+  });
+
+  it('preserves activity.imageUrl when subsequent tts message arrives', () => {
+    useSimulatorStore.setState({
+      activity: {
+        kind: 'lesson',
+        phase: 'playing',
+        title: 'Test',
+        imageUrl: 'https://static-bongai.bcserver.xyz/lessions/lesson-eaf-ezgif/ezgif.eaf',
+        error: null,
+        waitingFor: null,
+        touchLayout: null,
+        caption: '',
+        notice: '',
+        imageSeq: 1,
+        hint: null,
+      },
+    });
+
+    const set = useSimulatorStore.setState;
+    const get = useSimulatorStore.getState;
+
+    const ttsMsg: IncomingMessage = {
+      type: 'tts',
+      state: 'sentence_start',
+      text: 'Bống xin chào bé!',
+    } as IncomingMessage;
+
+    handleMessage(set, get, ttsMsg);
+
+    const state = useSimulatorStore.getState();
+    expect(state.activity.caption).toBe('Bống xin chào bé!');
+    expect(state.activity.imageUrl).toBe('https://static-bongai.bcserver.xyz/lessions/lesson-eaf-ezgif/ezgif.eaf');
+  });
+
+  it('clears both activity.imageUrl and face.imageUrl on clear command', () => {
+    useSimulatorStore.setState({
+      activity: {
+        kind: 'lesson',
+        phase: 'playing',
+        title: 'Test',
+        imageUrl: 'some-image.png',
+        error: null,
+        waitingFor: null,
+        touchLayout: null,
+        caption: '',
+        notice: '',
+        imageSeq: 1,
+        hint: null,
+      },
+      face: { emotion: 'neutral', expression: null, mode: 'idle', imageUrl: 'some-image.png', imageSeq: 1 },
+    });
+
+    const set = useSimulatorStore.setState;
+    const get = useSimulatorStore.getState;
+
+    const clearMsg: IncomingMessage = {
+      type: 'display',
+      action: 'clear',
+    } as IncomingMessage;
+
+    handleMessage(set, get, clearMsg);
+
+    expect(useSimulatorStore.getState().activity.imageUrl).toBeNull();
+    expect(useSimulatorStore.getState().face.imageUrl).toBeNull();
   });
 });
