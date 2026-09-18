@@ -21,6 +21,7 @@ export function TalkBar() {
   const abort = useSimulatorStore((state) => state.abort);
   const connect = useSimulatorStore((state) => state.connect);
   const toggleListening = useSimulatorStore((state) => state.toggleListening);
+  const latencyTelemetry = useSimulatorStore((state) => state.latencyTelemetry);
 
   const connected = status === 'connected';
   const listening = micState === 'listening';
@@ -68,6 +69,20 @@ export function TalkBar() {
       </div>
 
       <HeardBubble />
+
+      {latencyTelemetry && (
+        <div className="flex flex-wrap items-center justify-center gap-2 rounded-2xl bg-slate-900/90 px-4 py-2 text-xs font-mono text-white shadow-lg border border-slate-700/80 backdrop-blur">
+          <span className="font-bold text-emerald-400">⚡ Turnaround: {latencyTelemetry.total_turnaround_ms ?? '-'}ms</span>
+          <span className="text-slate-500">•</span>
+          <span className="text-sky-300">STT: {latencyTelemetry.vad_to_stt_ms ?? '-'}ms</span>
+          <span className="text-slate-500">•</span>
+          <span className="text-amber-300">LLM TTFT: {latencyTelemetry.stt_to_llm_ttft_ms ?? '-'}ms</span>
+          <span className="text-slate-500">•</span>
+          <span className="text-purple-300">TTS Chunk: {latencyTelemetry.llm_to_tts_chunk_ms ?? '-'}ms</span>
+          <span className="text-slate-500">•</span>
+          <span className="text-pink-300">Audio Out: {latencyTelemetry.tts_to_audio_sent_ms ?? '-'}ms</span>
+        </div>
+      )}
 
       <div className="flex w-full items-center gap-2 rounded-blob bg-white p-2 shadow-[0_8px_24px_-12px_rgba(61,44,36,0.3)]">
         <input

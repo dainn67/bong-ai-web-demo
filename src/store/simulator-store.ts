@@ -137,6 +137,14 @@ interface SimulatorState {
   framesIn: number;
   framesOut: number;
 
+  latencyTelemetry: {
+    vad_to_stt_ms?: number;
+    stt_to_llm_ttft_ms?: number;
+    llm_to_tts_chunk_ms?: number;
+    tts_to_audio_sent_ms?: number;
+    total_turnaround_ms?: number;
+  } | null;
+
   hardware: HardwareState;
 
   /** The mode picker on the glass. Test instrumentation — see `menu-state.ts`. */
@@ -394,6 +402,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   audioError: null,
   framesIn: 0,
   framesOut: 0,
+  latencyTelemetry: null,
 
   hardware: {
     battery: 82,
@@ -1317,6 +1326,11 @@ export function handleMessage(set: Setter, get: Getter, message: IncomingMessage
       catalogError: null,
       childName: message.child_name || get().childName,
     });
+    return;
+  }
+
+  if (message.type === 'latency_telemetry') {
+    set({ latencyTelemetry: message.metrics });
     return;
   }
 

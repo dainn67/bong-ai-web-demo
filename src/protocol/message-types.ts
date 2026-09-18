@@ -289,6 +289,17 @@ export interface LessonQuestionIn {
   image_url?: string;
 }
 
+export interface LatencyTelemetryIn {
+  type: 'latency_telemetry';
+  metrics: {
+    vad_to_stt_ms?: number;
+    stt_to_llm_ttft_ms?: number;
+    llm_to_tts_chunk_ms?: number;
+    tts_to_audio_sent_ms?: number;
+    total_turnaround_ms?: number;
+  };
+}
+
 export type IncomingMessage =
   | HelloIn
   | SttIn
@@ -307,7 +318,8 @@ export type IncomingMessage =
   | McpIn
   | ServerIn
   | PongIn
-  | ContentCatalogIn;
+  | ContentCatalogIn
+  | LatencyTelemetryIn;
 
 /**
  * Parses a JSON text frame into a typed message.
