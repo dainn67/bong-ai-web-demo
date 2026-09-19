@@ -73,6 +73,26 @@ function getPersistentMac(): string {
   return newMac;
 }
 
+/**
+ * Explicitly regenerates a fresh random MAC address and persists it.
+ * Used when the user wants to simulate a brand-new pristine unlinked hardware device.
+ */
+export function generateNewMac(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  bytes[0] = (bytes[0] & 0xfe) | 0x02;
+  const newMac = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(':').toLowerCase();
+  try {
+    localStorage.setItem(STABLE_MAC_KEY, newMac);
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<DeviceConfig>;
+      parsed.macAddress = newMac;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+    }
+  } catch {}
+  return newMac;
+}
+
 export const DEFAULT_CONFIG: DeviceConfig = {
   otaUrl: import.meta.env.VITE_OTA_URL ?? 'https://bong-ai-esp.bcserver.xyz/xiaozhi/ota/',
   fallbackWsUrl:

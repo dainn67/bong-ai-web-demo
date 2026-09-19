@@ -7,7 +7,7 @@
  */
 
 import { create } from 'zustand';
-import { loadConfig, saveConfig, DEFAULT_CONFIG, type DeviceConfig } from '../config/device-config';
+import { loadConfig, saveConfig, DEFAULT_CONFIG, generateNewMac, type DeviceConfig } from '../config/device-config';
 import { audioSupport } from '../audio/audio-format';
 import { clampBattery, drainBattery, LOW_BATTERY } from '../hardware/hardware-state';
 import { reportButtonPress, sendTelemetry } from '../protocol/telemetry-client';
@@ -179,6 +179,7 @@ interface SimulatorState {
 
   updateConfig: (patch: Partial<DeviceConfig>) => void;
   resetConfig: () => void;
+  regenerateMac: () => void;
   connect: () => void;
   disconnect: () => void;
   sendText: (text: string) => void;
@@ -471,6 +472,14 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     const config: DeviceConfig = { ...DEFAULT_CONFIG, macAddress: persistentMac };
     saveConfig(config);
     set({ config });
+  },
+
+  regenerateMac: () => {
+    const newMac = generateNewMac();
+    const config: DeviceConfig = { ...get().config, macAddress: newMac };
+    saveConfig(config);
+    set({ config });
+    get().connect();
   },
 
   connect: () => {

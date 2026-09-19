@@ -17,6 +17,7 @@ export function QrPairingModal() {
   const setOpen = useSimulatorStore((state) => state.setLoginModalOpen);
   const config = useSimulatorStore((state) => state.config);
   const connect = useSimulatorStore((state) => state.connect);
+  const regenerateMac = useSimulatorStore((state) => state.regenerateMac);
 
   const [activeTab, setActiveTab] = useState<'qr' | 'login'>('qr');
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
@@ -157,8 +158,8 @@ export function QrPairingModal() {
     logout();
     setAccount(null);
     setChildren([]);
-    setMessage({ type: 'success', text: 'Đã đăng xuất tài khoản.' });
-    connect();
+    regenerateMac();
+    setMessage({ type: 'success', text: 'Đã đăng xuất và reset thiết bị về mặc định (chưa liên kết).' });
   };
 
   return (
@@ -183,9 +184,20 @@ export function QrPairingModal() {
         <div className="space-y-1">
           <span className="inline-block text-3xl">🧸</span>
           <h2 className="text-lg font-black text-ink-900">Kết Nối & Gán Thiết Bị</h2>
-          <p className="text-xs text-ink-500">
-            Trình giả lập thiết bị Robot Bống ({config.macAddress})
-          </p>
+          <div className="flex items-center justify-center gap-2 text-xs text-ink-500">
+            <span>MAC: <code className="bg-cream-200 px-1.5 py-0.5 rounded font-mono text-ink-700">{config.macAddress}</code></span>
+            <button
+              type="button"
+              onClick={() => {
+                regenerateMac();
+                setMessage({ type: 'success', text: 'Đã tạo địa chỉ MAC mới (thiết bị về trạng thái mặc định chưa liên kết).' });
+              }}
+              title="Tạo địa chỉ MAC mới (trở về thiết bị mặc định chưa liên kết)"
+              className="text-xs text-coral-600 hover:text-coral-700 font-semibold underline underline-offset-2 transition cursor-pointer"
+            >
+              🔄 Đổi MAC mới
+            </button>
+          </div>
         </div>
 
         {/* Tab Navigation */}
