@@ -197,6 +197,9 @@ interface SimulatorState {
   startListening: () => Promise<void>;
   stopListening: () => void;
   toggleListening: () => void;
+  autoMic: boolean;
+  toggleAutoMic: () => void;
+  setAutoMic: (enabled: boolean) => void;
   /** What a tap on the glass does, which depends on whether the badge is awake. */
   tapScreen: () => void;
   /**
@@ -321,6 +324,69 @@ function scheduleSocketAutoNext(get: Getter, delayMs?: number): void {
     }
   }, delay);
 }
+
+const AUTO_MIC_STORAGE_KEY = 'bong_auto_mic';
+
+function getStoredAutoMic(): boolean {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const stored = localStorage.getItem(AUTO_MIC_STORAGE_KEY);
+      return stored !== 'false';
+    }
+  } catch {
+    // ignore
+  }
+  return true;
+}
+
+function setStoredAutoMic(enabled: boolean): void {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem(AUTO_MIC_STORAGE_KEY, String(enabled));
+    }
+  } catch {
+    // ignore
+  }
+}
+
+let autoMicTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearAutoMicTimer(): void {
+  if (autoMicTimer) {
+    clearTimeout(autoMicTimer);
+    autoMicTimer = null;
+  }
+}
+
+function scheduleAutoMicStart(get: Getter, delayMs = ECHO_HANGOVER_MS): void {
+  clearAutoMicTimer();
+  if (!get().autoMic || get().status !== 'connected') return;
+  // If in lesson and waiting for touch, do not auto open mic!
+  if (get().activity.waitingFor === 'touch' || get().touchZones !== null) return;
+  if (get().speaking) return;
+
+  autoMicTimer = setTimeout(async () => {
+    autoMicTimer = null;
+    if (!get().autoMic || get().status !== 'connected' || get().speaking) return;
+    if (get().activity.waitingFor === 'touch' || get().touchZones !== null) return;
+
+    if (get().micState !== 'listening') {
+      await get().startListening();
+    } else if (mic) {
+      mic.setMuted(false);
+    }
+  }, Math.max(0, delayMs));
+}
+
+function pauseListeningForAiTurn(set: Setter, get: Getter): void {
+  clearAutoMicTimer();
+  if (get().micState === 'listening') {
+    client?.send({ type: 'listen', state: 'stop' });
+  }
+  mic?.setMuted(true);
+  set({ micState: 'off', micLevel: 0 });
+}
+
 /** Whichever activity owns the speaker. Only ever one — see `stopActivity`. */
 let story: StoryPlayer | null = null;
 let lesson: LessonRunner | null = null;
@@ -546,8 +612,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         set({ status, sessionId: client?.currentSessionId ?? null });
         if (status === 'disconnected') {
           stopHardwareTimers();
+          clearAutoMicTimer();
         } else if (status === 'connected') {
           startHardwareTimers(set, get);
+          if (get().autoMic) {
+            scheduleAutoMicStart(get, 800);
+          }
         }
       },
       onMessage: (message) => handleMessage(set, get, message),
@@ -571,6 +641,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
   disconnect: () => {
     clearSocketAutoNextTimer();
+    clearAutoMicTimer();
     ttsDone = false;
     client?.disconnect();
     client = null;
@@ -596,6 +667,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   abort: () => {
+    clearAutoMicTimer();
     player?.stop();
     set({ speaking: false });
     client?.abort();
@@ -616,6 +688,11 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       return;
     }
 
+    // Never start listening while AI is currently playing speech
+    if (get().speaking) {
+      return;
+    }
+
     // Opening the speaker here rides the click that started the mic. Deferring
     // it to the first arriving frame means no gesture is in progress and the
     // AudioContext stays suspended, playing nothing.
@@ -630,6 +707,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       onError: (message) => set({ audioError: message }),
     });
 
+    mic.setMuted(false);
     const started = await mic.start();
     if (!started) return;
 
@@ -638,6 +716,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   stopListening: () => {
+    clearAutoMicTimer();
     if (get().micState === 'listening') client?.send({ type: 'listen', state: 'stop' });
     void mic?.stop();
     mic = null;
@@ -655,6 +734,27 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     const { micState, startListening, stopListening } = get();
     if (micState === 'listening') stopListening();
     else void startListening();
+  },
+
+  autoMic: getStoredAutoMic(),
+  toggleAutoMic: () => {
+    const next = !get().autoMic;
+    setStoredAutoMic(next);
+    set({ autoMic: next });
+    if (!next) {
+      clearAutoMicTimer();
+    } else if (get().status === 'connected' && !get().speaking && get().micState !== 'listening') {
+      scheduleAutoMicStart(get, 200);
+    }
+  },
+  setAutoMic: (enabled: boolean) => {
+    setStoredAutoMic(enabled);
+    set({ autoMic: enabled });
+    if (!enabled) {
+      clearAutoMicTimer();
+    } else if (get().status === 'connected' && !get().speaking && get().micState !== 'listening') {
+      scheduleAutoMicStart(get, 200);
+    }
   },
 
   /**
@@ -1338,7 +1438,11 @@ function ensurePlayer(set: Setter, get: Getter): OpusPlayer {
       // Mute on the way up, release on a delay on the way down.
       if (speaking) {
         clearUnmuteTimer();
+        clearAutoMicTimer();
         mic?.setMuted(true);
+        if (get().autoMic && get().micState === 'listening') {
+          pauseListeningForAiTurn(set, get);
+        }
       } else {
         clearUnmuteTimer();
         unmuteTimer = setTimeout(() => mic?.setMuted(false), ECHO_HANGOVER_MS);
@@ -1349,6 +1453,11 @@ function ensurePlayer(set: Setter, get: Getter): OpusPlayer {
             set({ directPlaybackState: 'idle' });
             scheduleSocketAutoNext(get, get().directAutoNextDelayMs);
           }
+        }
+
+        // Auto mic turn-taking: when AI finishes speaking, wait for hangover and auto open mic
+        if (get().autoMic) {
+          scheduleAutoMicStart(get, ECHO_HANGOVER_MS);
         }
       }
     },
@@ -1523,15 +1632,44 @@ export function handleMessage(set: Setter, get: Getter, message: IncomingMessage
 
 
 
+  // Auto-mic: mute uplink as soon as child finishes speaking or server starts thinking
+  if (message.type === 'stt') {
+    if (get().autoMic && get().micState === 'listening') {
+      pauseListeningForAiTurn(set, get);
+    }
+  }
+
+  if (message.type === 'display' && (message as { name?: string }).name === 'thinking') {
+    if (get().autoMic && get().micState === 'listening') {
+      pauseListeningForAiTurn(set, get);
+    }
+  }
+
+  if (message.type === 'listen') {
+    if (message.state === 'stop') {
+      if (get().autoMic && get().micState === 'listening') {
+        pauseListeningForAiTurn(set, get);
+      }
+    } else if (message.state === 'start') {
+      if (get().autoMic && !get().speaking && get().micState !== 'listening') {
+        void get().startListening();
+      }
+    }
+  }
+
   if (message.type === 'tts') {
-    if (message.state === 'start') {
+    if (message.state === 'start' || message.state === 'sentence_start') {
       ttsDone = false;
       clearSocketAutoNextTimer();
-    } else if (message.state === 'sentence_start') {
-      ttsDone = false;
-      // The decoder's synthesised timestamps restart with every sentence, or a
-      // long reply drifts out of sync and goes silent partway through.
-      player?.startSentence();
+      clearAutoMicTimer();
+      if (get().autoMic && get().micState === 'listening') {
+        pauseListeningForAiTurn(set, get);
+      }
+      if (message.state === 'sentence_start') {
+        // The decoder's synthesised timestamps restart with every sentence, or a
+        // long reply drifts out of sync and goes silent partway through.
+        player?.startSentence();
+      }
     } else if (message.state === 'stop') {
       ttsDone = true;
       clearIdleTimer();
@@ -1548,6 +1686,11 @@ export function handleMessage(set: Setter, get: Getter, message: IncomingMessage
           // but we also arm a safety fallback timer just in case.
           scheduleSocketAutoNext(get, get().directAutoNextDelayMs + 3000);
         }
+      }
+
+      // Auto mic turn-taking: when TTS stops, if audio already finished or not speaking
+      if (get().autoMic && !get().speaking) {
+        scheduleAutoMicStart(get, ECHO_HANGOVER_MS);
       }
     }
   }

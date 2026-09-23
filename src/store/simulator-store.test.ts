@@ -212,4 +212,81 @@ describe('simulatorStore direct mode and resetConfig', () => {
     expect(useSimulatorStore.getState().activity.imageUrl).toBeNull();
     expect(useSimulatorStore.getState().face.imageUrl).toBeNull();
   });
+
+  it('toggles and sets autoMic state properly', () => {
+    const store = useSimulatorStore.getState();
+    const initial = store.autoMic;
+
+    store.toggleAutoMic();
+    expect(useSimulatorStore.getState().autoMic).toBe(!initial);
+
+    store.setAutoMic(false);
+    expect(useSimulatorStore.getState().autoMic).toBe(false);
+
+    store.setAutoMic(true);
+    expect(useSimulatorStore.getState().autoMic).toBe(true);
+  });
+
+  it('auto mutes mic when receiving STT while listening', () => {
+    useSimulatorStore.setState({
+      autoMic: true,
+      micState: 'listening',
+      micLevel: 0.5,
+    });
+
+    const set = useSimulatorStore.setState;
+    const get = useSimulatorStore.getState;
+
+    const sttMsg: IncomingMessage = {
+      type: 'stt',
+      text: 'Bống ơi',
+    } as IncomingMessage;
+
+    handleMessage(set, get, sttMsg);
+
+    expect(useSimulatorStore.getState().micState).toBe('off');
+    expect(useSimulatorStore.getState().micLevel).toBe(0);
+  });
+
+  it('auto mutes mic when receiving thinking display command', () => {
+    useSimulatorStore.setState({
+      autoMic: true,
+      micState: 'listening',
+      micLevel: 0.5,
+    });
+
+    const set = useSimulatorStore.setState;
+    const get = useSimulatorStore.getState;
+
+    const thinkingMsg: IncomingMessage = {
+      type: 'display',
+      name: 'thinking',
+    } as unknown as IncomingMessage;
+
+    handleMessage(set, get, thinkingMsg);
+
+    expect(useSimulatorStore.getState().micState).toBe('off');
+    expect(useSimulatorStore.getState().micLevel).toBe(0);
+  });
+
+  it('auto mutes mic when receiving tts start command', () => {
+    useSimulatorStore.setState({
+      autoMic: true,
+      micState: 'listening',
+      micLevel: 0.5,
+    });
+
+    const set = useSimulatorStore.setState;
+    const get = useSimulatorStore.getState;
+
+    const ttsStartMsg: IncomingMessage = {
+      type: 'tts',
+      state: 'start',
+    } as IncomingMessage;
+
+    handleMessage(set, get, ttsStartMsg);
+
+    expect(useSimulatorStore.getState().micState).toBe('off');
+    expect(useSimulatorStore.getState().micLevel).toBe(0);
+  });
 });

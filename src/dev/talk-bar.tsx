@@ -16,6 +16,9 @@ export function TalkBar() {
   const micState = useSimulatorStore((state) => state.micState);
   const micLevel = useSimulatorStore((state) => state.micLevel);
   const speaking = useSimulatorStore((state) => state.speaking);
+  const face = useSimulatorStore((state) => state.face);
+  const autoMic = useSimulatorStore((state) => state.autoMic);
+  const toggleAutoMic = useSimulatorStore((state) => state.toggleAutoMic);
   const audioError = useSimulatorStore((state) => state.audioError);
   const sendText = useSimulatorStore((state) => state.sendText);
   const abort = useSimulatorStore((state) => state.abort);
@@ -50,22 +53,66 @@ export function TalkBar() {
 
   return (
     <div className="flex w-full max-w-xl flex-col items-center gap-4">
-      <div className="flex items-center gap-4">
-        <MicButton
-          listening={listening}
-          level={micLevel}
-          muted={speaking}
-          onClick={toggleListening}
-        />
-        {speaking && (
+      <div className="flex flex-col items-center gap-2">
+        <div className="flex items-center gap-4">
+          <MicButton
+            listening={listening}
+            level={micLevel}
+            muted={speaking}
+            onClick={toggleListening}
+          />
+          {speaking && (
+            <button
+              type="button"
+              onClick={abort}
+              className="rounded-blob bg-white px-5 py-3 text-sm font-semibold text-ink-700 shadow-[0_6px_16px_-8px_rgba(61,44,36,0.4)] transition hover:bg-cream-100 active:scale-95"
+            >
+              Suỵt, Bống dừng nói nhé
+            </button>
+          )}
+        </div>
+
+        {/* Turn status indicator & auto-mic toggle */}
+        <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
           <button
             type="button"
-            onClick={abort}
-            className="rounded-blob bg-white px-5 py-3 text-sm font-semibold text-ink-700 shadow-[0_6px_16px_-8px_rgba(61,44,36,0.4)] transition hover:bg-cream-100 active:scale-95"
+            onClick={toggleAutoMic}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition active:scale-95 ${
+              autoMic
+                ? 'bg-emerald-50 text-emerald-700 border border-emerald-300 shadow-sm'
+                : 'bg-stone-100 text-stone-500 border border-stone-200'
+            }`}
+            title={
+              autoMic
+                ? 'Chế độ rảnh tay đang BẬT: Mic tự động mở khi Bống nói xong'
+                : 'Chế độ rảnh tay đang TẮT: Bấm mic thủ công'
+            }
           >
-            Suỵt, Bống dừng nói nhé
+            <span>{autoMic ? '🎙️ Auto Mic: BẬT' : '🎙️ Auto Mic: TẮT'}</span>
           </button>
-        )}
+
+          {speaking ? (
+            <span className="flex items-center gap-1.5 rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-600 border border-rose-200 animate-pulse">
+              <span className="h-2 w-2 rounded-full bg-rose-500" />
+              Bống đang nói (Mic tắt)
+            </span>
+          ) : face.heard && !listening ? (
+            <span className="flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 border border-amber-200">
+              <span className="h-2 w-2 rounded-full bg-amber-500 animate-ping" />
+              Bống đang suy nghĩ…
+            </span>
+          ) : listening ? (
+            <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-600 border border-emerald-300">
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-bounce" />
+              Tới lượt bé nói (Mic đang mở)
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 rounded-full bg-stone-50 px-3 py-1 text-xs font-medium text-stone-500 border border-stone-200">
+              <span className="h-2 w-2 rounded-full bg-stone-400" />
+              Chờ lượt nói
+            </span>
+          )}
+        </div>
       </div>
 
       <HeardBubble />

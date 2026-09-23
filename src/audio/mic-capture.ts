@@ -53,6 +53,9 @@ export class MicCapture {
 
   setMuted(muted: boolean): void {
     this.muted = muted;
+    if (muted) {
+      this.handlers.onLevel(0);
+    }
   }
 
   async start(): Promise<boolean> {
@@ -136,6 +139,11 @@ export class MicCapture {
   }
 
   private handleFrame(samples: Float32Array<ArrayBuffer>): void {
+    if (this.muted) {
+      this.handlers.onLevel(0);
+      return;
+    }
+
     this.handlers.onLevel(rms(samples));
 
     const encoder = this.encoder;
