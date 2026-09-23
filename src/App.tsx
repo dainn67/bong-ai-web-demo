@@ -5,6 +5,7 @@ import { TalkBar } from './dev/talk-bar';
 import { DevDrawer } from './dev/dev-drawer';
 import { QrPairingModal } from './dev/qr-pairing-modal';
 import { LessonStudioPanel } from './dev/lesson-studio/lesson-studio-panel';
+import { ScriptEnginePanel } from './v3/script-engine-panel';
 import { useSimulatorStore } from './store/simulator-store';
 import { fetchProfile, hasStoredSession, type Account } from './api/auth-client';
 
@@ -17,7 +18,10 @@ import { fetchProfile, hasStoredSession, type Account } from './api/auth-client'
  */
 export default function App() {
   const [devOpen, setDevOpen] = useState(false);
-  const studioMode = useSimulatorStore((state) => state.studioMode);
+  const showLessonPanel = useSimulatorStore((state) => state.showLessonPanel);
+  const setShowLessonPanel = useSimulatorStore((state) => state.setShowLessonPanel);
+  const lessonEngineType = useSimulatorStore((state) => state.lessonEngineType);
+  const setLessonEngineType = useSimulatorStore((state) => state.setLessonEngineType);
   const setLoginOpen = useSimulatorStore((state) => state.setLoginModalOpen);
 
   return (
@@ -32,7 +36,7 @@ export default function App() {
         onOpenLogin={() => setLoginOpen(true)}
       />
 
-      {studioMode === 'studio' ? (
+      {showLessonPanel ? (
         <div className="flex flex-1 flex-col lg:flex-row gap-8 px-6 pb-12 max-w-7xl mx-auto w-full">
           {/* Left Column: Device Screen */}
           <div className="flex flex-col items-center justify-start gap-6 lg:w-[400px] shrink-0">
@@ -45,7 +49,43 @@ export default function App() {
 
           {/* Right Column: Studio Panel */}
           <div className="flex-1 min-w-0">
-            <LessonStudioPanel />
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-1 p-1 bg-cream-200/80 rounded-xl text-xs font-bold border border-cream-300">
+                <button
+                  type="button"
+                  onClick={() => setLessonEngineType('v2')}
+                  className={`rounded-lg px-3 py-1 transition ${
+                    lessonEngineType === 'v2'
+                      ? 'bg-mint-500 text-white shadow-sm'
+                      : 'text-ink-600 hover:text-ink-900'
+                  }`}
+                >
+                  📚 Kịch bản bài học (FSM)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLessonEngineType('v3')}
+                  className={`rounded-lg px-3 py-1 transition ${
+                    lessonEngineType === 'v3'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-ink-600 hover:text-ink-900'
+                  }`}
+                >
+                  ⚡ Script Engine v3 (Offline)
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowLessonPanel(false)}
+                className="flex items-center gap-1 text-xs text-ink-500 hover:text-ink-800 font-bold px-2.5 py-1 rounded-lg hover:bg-cream-200 transition"
+                title="Ẩn bảng kiểm thử bài học"
+              >
+                ✕ Ẩn bảng
+              </button>
+            </div>
+
+            {lessonEngineType === 'v2' ? <LessonStudioPanel /> : <ScriptEnginePanel />}
           </div>
         </div>
       ) : (
@@ -53,6 +93,15 @@ export default function App() {
           <RoundScreen />
           <BongBubble />
           <TalkBar />
+          <button
+            type="button"
+            onClick={() => setShowLessonPanel(true)}
+            className="flex items-center gap-2 rounded-full bg-cream-200/90 hover:bg-cream-300 text-ink-700 px-4 py-2 text-xs font-bold transition shadow-sm border border-cream-300 active:scale-95"
+            title="Mở bảng kiểm thử bài học bên cạnh thiết bị"
+          >
+            <span>🎛</span>
+            <span>Mở bảng kiểm thử bài học</span>
+          </button>
         </div>
       )}
 
@@ -73,8 +122,8 @@ function Header({
 }) {
   const [account, setAccount] = useState<Account | null>(null);
   const loginModalOpen = useSimulatorStore((state) => state.loginModalOpen);
-  const studioMode = useSimulatorStore((state) => state.studioMode);
-  const setStudioMode = useSimulatorStore((state) => state.setStudioMode);
+  const showLessonPanel = useSimulatorStore((state) => state.showLessonPanel);
+  const toggleLessonPanel = useSimulatorStore((state) => state.toggleLessonPanel);
 
   useEffect(() => {
     if (hasStoredSession()) {
@@ -119,31 +168,20 @@ function Header({
           </span>
         </button>
 
-        {/* View Mode Toggle: Device vs Studio */}
-        <div className="hidden sm:flex items-center rounded-blob bg-cream-200/80 p-1 text-xs font-bold shadow-xs border border-cream-300">
-          <button
-            type="button"
-            onClick={() => setStudioMode('device')}
-            className={`rounded-blob px-3 py-1.5 transition ${
-              studioMode === 'device'
-                ? 'bg-white text-ink-900 shadow-sm'
-                : 'text-ink-600 hover:text-ink-900'
-            }`}
-          >
-            📱 Thiết bị
-          </button>
-          <button
-            type="button"
-            onClick={() => setStudioMode('studio')}
-            className={`rounded-blob px-3 py-1.5 transition ${
-              studioMode === 'studio'
-                ? 'bg-mint-500 text-white shadow-sm'
-                : 'text-ink-600 hover:text-ink-900'
-            }`}
-          >
-            🎛 Studio Bài học
-          </button>
-        </div>
+        {/* Toggle option for Lesson Testing */}
+        <button
+          type="button"
+          onClick={toggleLessonPanel}
+          className={`flex items-center gap-1.5 rounded-blob px-3.5 py-1.5 text-xs font-bold transition shadow-sm ${
+            showLessonPanel
+              ? 'bg-mint-500 text-white shadow-[0_4px_12px_-4px_rgba(46,189,133,0.7)] hover:bg-mint-600'
+              : 'bg-cream-200/90 text-ink-700 hover:bg-cream-300 border border-cream-300'
+          }`}
+          title="Bật/tắt kiểm thử bài học bên cạnh thiết bị"
+        >
+          <span>{showLessonPanel ? '📖' : '📚'}</span>
+          <span>{showLessonPanel ? 'Ẩn kiểm thử' : 'Hiện kiểm thử bài học'}</span>
+        </button>
 
         <StatusPill />
         {/* A toggle, not an opener. The drawer no longer covers this button,

@@ -175,7 +175,15 @@ interface SimulatorState {
    * known here, so the caller cannot pair a result with the wrong grid.
    */
   sendTouchEvent: (result: TouchClassificationResult, detail?: TouchDetail) => void;
-
+  v3TouchHandler: ((result: TouchClassificationResult, detail?: TouchDetail) => void) | null;
+  setV3TouchHandler: (handler: ((result: TouchClassificationResult, detail?: TouchDetail) => void) | null) => void;
+  setV3ScreenState: (params: {
+    expression?: string;
+    mode?: 'idle' | 'emotion' | 'speaking';
+    waitingFor?: 'touch' | 'speech' | null;
+    touchLayout?: TouchLayoutType | null;
+    caption?: string | null;
+  }) => void;
 
   updateConfig: (patch: Partial<DeviceConfig>) => void;
   resetConfig: () => void;
@@ -245,8 +253,13 @@ interface SimulatorState {
   lessonMetadataUrl: () => string | null;
 
   // Desktop Studio & Direct Index Player State
-  studioMode: 'device' | 'studio';
-  setStudioMode: (mode: 'device' | 'studio') => void;
+  studioMode: 'device' | 'studio' | 'v3';
+  setStudioMode: (mode: 'device' | 'studio' | 'v3') => void;
+  showLessonPanel: boolean;
+  setShowLessonPanel: (show: boolean) => void;
+  toggleLessonPanel: () => void;
+  lessonEngineType: 'v2' | 'v3';
+  setLessonEngineType: (type: 'v2' | 'v3') => void;
   lessonSourceMode: 'direct' | 'socket';
   setLessonSourceMode: (mode: 'direct' | 'socket') => void;
 
@@ -423,6 +436,22 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
   studioMode: 'studio',
   setStudioMode: (studioMode) => set({ studioMode }),
+  showLessonPanel: true,
+  setShowLessonPanel: (showLessonPanel) =>
+    set({
+      showLessonPanel,
+      studioMode: showLessonPanel ? 'studio' : 'device',
+    }),
+  toggleLessonPanel: () =>
+    set((state) => {
+      const next = !state.showLessonPanel;
+      return {
+        showLessonPanel: next,
+        studioMode: next ? 'studio' : 'device',
+      };
+    }),
+  lessonEngineType: 'v2',
+  setLessonEngineType: (lessonEngineType) => set({ lessonEngineType }),
   lessonSourceMode: 'socket',
   setLessonSourceMode: (lessonSourceMode) => {
     if (lessonSourceMode === 'direct') {
@@ -450,12 +479,37 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   childName: null,
   loginModalOpen: false,
   setLoginModalOpen: (open) => set({ loginModalOpen: open }),
+  v3TouchHandler: null,
+  setV3TouchHandler: (v3TouchHandler) => set({ v3TouchHandler }),
+  setV3ScreenState: ({ expression, mode, waitingFor, touchLayout, caption }) => {
+    const curFace = get().face;
+    const curActivity = get().activity;
+    set({
+      status: 'connected',
+      face: {
+        ...curFace,
+        ...(expression !== undefined ? { expression: expression as any } : {}),
+        ...(mode !== undefined ? { mode } : {}),
+      },
+      activity: {
+        ...curActivity,
+        kind: 'lesson',
+        ...(waitingFor !== undefined ? { waitingFor } : {}),
+        ...(caption !== undefined ? { caption: caption ?? undefined } : {}),
+      },
+      touchZones: touchLayout ? { layout: touchLayout, timeoutMs: 15000 } : null,
+    });
+  },
   touchZones: null,
-  sendTouchEvent: (result, detail) => {
+  sendTouchEvent: (result: TouchClassificationResult, detail?: TouchDetail) => {
     const window = get().touchZones;
     if (!window) return;
     clearTouchWindow(set);
-    client?.sendTouchEvent(window.layout, result, detail);
+    if (get().v3TouchHandler) {
+      get().v3TouchHandler!(result, detail);
+    } else {
+      client?.sendTouchEvent(window.layout, result, detail);
+    }
     set({ lastTouch: { result, at: Date.now(), ...detail } });
   },
 
@@ -611,8 +665,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
    * come from what the device is currently doing.
    */
   tapScreen: () => {
-    const { status, connect, toggleListening, lessonSourceMode } = get();
-    if (lessonSourceMode === 'direct') {
+    const { status, connect, toggleListening, lessonSourceMode, lessonEngineType } = get();
+    if (lessonEngineType === 'v3' || lessonSourceMode === 'direct') {
       if (status === 'disconnected') {
         set({ status: 'connected' });
       }

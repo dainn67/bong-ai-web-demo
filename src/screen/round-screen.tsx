@@ -54,16 +54,23 @@ const SPEAKING_FACE = '😄';
  * Same placeholder-until-artwork deal as `FACES`, and the same promise: the
  * rest of the app never learns how a face is drawn.
  */
-const EXPRESSION_FACES: Record<Expression, string> = {
+const EXPRESSION_FACES: Record<Expression | string, string> = {
   ...FACES,
   thinking: '🤔',
   excited: '🤩',
   sleeping: '😴',
+  sleepy: '😴',
   listening: '👂',
   talking: '😄',
   confused: '😕',
   waving: '👋',
   offline: '🔌',
+  cool: '😎',
+  delicious: '😋',
+  crying: '😭',
+  winking: '😉',
+  loving: '😍',
+  idle: '🙂',
 };
 
 /** The glow behind the face. Colour carries the mode, so it reads at a glance. */
@@ -105,11 +112,11 @@ export function RoundScreen() {
 
   // Precedence, strongest first: artwork the backend sent, a face it named,
   // the talking face, then the mood we inferred from the reply.
-  const glyph = face.expression
+  const glyph = (face.expression && EXPRESSION_FACES[face.expression])
     ? EXPRESSION_FACES[face.expression]
     : face.mode === 'speaking'
       ? SPEAKING_FACE
-      : FACES[face.emotion];
+      : (FACES[face.emotion] ?? '🙂');
 
   return (
     <div className={`relative ${isAwake ? 'animate-bob' : ''}`}>

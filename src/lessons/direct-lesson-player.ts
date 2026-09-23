@@ -6,6 +6,8 @@
  */
 
 import { cdnUrl } from './catalog';
+import { VirtualSdCard } from '../v3/virtual-sd-card';
+import { isBongEncrypted, decryptBongAsset, SimulatedDeviceSecurity } from '../v3/crypto-client';
 
 export interface DirectAudioNode {
   fileName?: string;
@@ -117,17 +119,38 @@ export class DirectLessonPlayer {
     this.stop();
     this.setState('loading');
 
-    const url = cdnUrl(metadataUrl);
-    const res = await fetch(url);
-    if (!res.ok) {
-      const err = `Failed to load lesson metadata: HTTP ${res.status}`;
-      this.handlers.onError?.(err);
-      this.setState('idle');
-      throw new Error(err);
+    const cleanLessonId = metadataUrl
+      .replace(/.*\/lessions\//, '')
+      .replace(/\/metadata\.json.*/, '')
+      .replace(/\.json.*/, '');
+
+    try {
+      const url = cdnUrl(metadataUrl);
+      const res = await fetch(url);
+      if (res.ok) {
+        const raw = await res.json();
+        return this.parseAndSetIndexes(raw);
+      }
+    } catch {
+      // Network failed or offline, try reading from Virtual SD Card below
     }
 
-    const raw = await res.json();
-    return this.parseAndSetIndexes(raw);
+    // Offline fallback: check Virtual SD Card storage
+    try {
+      const rawMetaBytes = await VirtualSdCard.readFile(`/sdcard/metadata/${cleanLessonId}.json`);
+      if (rawMetaBytes) {
+        const jsonStr = new TextDecoder().decode(rawMetaBytes);
+        const raw = JSON.parse(jsonStr);
+        return this.parseAndSetIndexes(raw);
+      }
+    } catch (e) {
+      console.warn('[DirectLessonPlayer] Offline metadata load failed:', e);
+    }
+
+    const err = `Failed to load lesson metadata: ${metadataUrl}`;
+    this.handlers.onError?.(err);
+    this.setState('idle');
+    throw new Error(err);
   }
 
   parseAndSetIndexes(raw: unknown): DirectLessonIndexItem[] {
@@ -143,6 +166,19 @@ export class DirectLessonPlayer {
       ? rec.indexes
       : Array.isArray(rec.nodes)
       ? rec.nodes
+      : Array.isArray(rec.parts)
+      ? (rec.parts as any[]).map((p, idx, arr) => ({
+          order: String(p.id ?? idx),
+          type: p.type || 'play',
+          content: p.description || '',
+          audio: p.audio_url ? [{ url: p.audio_url }] : [],
+          visual: p.image_url ? [{ url: p.image_url, stop: 'giu' }] : [],
+          question: p.type === 'question' || p.expected_answer
+            ? { type: 'choice', text: p.description, options: p.expected_answer ? [p.expected_answer] : [] }
+            : null,
+          next: idx + 1 < arr.length ? String(arr[idx + 1].id ?? idx + 1) : undefined,
+          waitMs: p.sleep || 0,
+        }))
       : [];
 
     this.indexes = rawIndexes.map((item: unknown): DirectLessonIndexItem => {
@@ -354,7 +390,36 @@ export class DirectLessonPlayer {
     }
 
     const audioNode = item.audios[0];
-    const audioUrl = cdnUrl(audioNode.url);
+    let audioUrl = cdnUrl(audioNode.url);
+
+    // Check if Virtual SD Card has this audio file offline
+    try {
+      const parts = audioNode.url.split('/');
+      const fileName = parts[parts.length - 1];
+      const possiblePaths = [
+        audioNode.url,
+        `/sdcard/assets/audio/${fileName}`,
+        `/sdcard/assets/audio/${fileName.replace(/\.[^/.]+$/, '')}`,
+        `/sdcard/assets/audio/welcome.opus`,
+      ];
+      for (const p of possiblePaths) {
+        const buf = await VirtualSdCard.readFile(p);
+        if (buf && buf.byteLength > 0) {
+          let plainBuf = buf;
+          if (isBongEncrypted(buf)) {
+            const key = SimulatedDeviceSecurity.getStoredContentKey();
+            if (key) {
+              plainBuf = await decryptBongAsset(buf, key.rawKeyBase64);
+            }
+          }
+          const blob = new Blob([plainBuf], { type: 'audio/wav' });
+          audioUrl = URL.createObjectURL(blob);
+          break;
+        }
+      }
+    } catch {
+      // continue with cdnUrl
+    }
 
     try {
       this.setState('loading');

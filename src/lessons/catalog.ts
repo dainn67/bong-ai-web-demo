@@ -7,25 +7,40 @@
  */
 
 /** Where the proxy puts the static CDN. See the `/cdn` route in vite.config. */
+import { VirtualSdCard } from '../v3/virtual-sd-card';
+
 export const CDN_BASE = '/cdn';
 
 /**
  * Fetches the public catalog directly from the static CDN via the dev proxy
  * (/cdn/lessions/lessions.json), bypassing esp32-server completely.
+ * Automatically caches to Virtual SD Card and falls back to offline cache when offline.
  */
 export async function fetchCdnCatalog(): Promise<LessonSummary[]> {
   try {
     const res = await fetch(`${CDN_BASE}/lessions/lessions.json`);
-    if (!res.ok) {
-      console.warn(`[catalog] CDN catalog response HTTP ${res.status}`);
-      return [];
+    if (res.ok) {
+      const json = await res.json();
+      void VirtualSdCard.saveCatalogCache(json);
+      return parseCatalog(json);
     }
-    const json = await res.json();
-    return parseCatalog(json);
+    console.warn(`[catalog] CDN catalog response HTTP ${res.status}, checking offline SD card cache`);
   } catch (err) {
-    console.warn('[catalog] Failed to fetch catalog from CDN:', err);
-    return [];
+    console.warn('[catalog] Failed to fetch catalog from CDN (offline mode), falling back to SD card cache:', err);
   }
+
+  // Offline fallback: try reading from Virtual SD Card
+  try {
+    const cached = await VirtualSdCard.loadCatalogCache();
+    if (cached) {
+      console.info('[catalog] Successfully loaded catalog from Virtual SD Card cache');
+      return parseCatalog(cached);
+    }
+  } catch (cacheErr) {
+    console.warn('[catalog] Failed to read catalog from Virtual SD Card cache:', cacheErr);
+  }
+
+  return [];
 }
 
 export type LessonCategory = 'stories' | 'learning' | 'topics';

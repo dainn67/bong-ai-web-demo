@@ -17,8 +17,8 @@ export interface MicHandlers {
   onError: (message: string) => void;
 }
 
-/** Encoder target. Speech at 16 kHz mono needs far less than music would. */
-const BITRATE = 24_000;
+/** Encoder target: 48 kbps provides high-fidelity speech encoding with accurate tones. */
+const BITRATE = 48_000;
 
 export class MicCapture {
   private context: AudioContext | null = null;
