@@ -448,7 +448,7 @@ export const ScriptEnginePanel: React.FC = () => {
         if (isBongEncrypted(rawBytes)) {
           const key = SimulatedDeviceSecurity.getStoredContentKey();
           if (key) {
-            plainBytes = await decryptBongAsset(rawBytes, key.rawKeyBase64);
+            plainBytes = new Uint8Array(await decryptBongAsset(rawBytes, key.rawKeyBase64));
           }
         }
         const text = new TextDecoder().decode(plainBytes);
@@ -502,7 +502,7 @@ export const ScriptEnginePanel: React.FC = () => {
         const rawBytes = new Uint8Array(await res.arrayBuffer());
         let plainBytes = rawBytes;
         if (isBongEncrypted(rawBytes)) {
-          plainBytes = await decryptBongAsset(rawBytes, keyBase64);
+          plainBytes = new Uint8Array(await decryptBongAsset(rawBytes, keyBase64));
         }
         await VirtualSdCard.writeBlob(manifestScene.hash, rawBytes, 'application/json');
         await VirtualSdCard.writeFile(`/sdcard/scenes/${selectedLessonId}.json`, plainBytes, 'application/json');

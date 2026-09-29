@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { VirtualSdCard, generateSyntheticWav } from './virtual-sd-card';
 import { uint8ArrayToBase64, decryptBongAsset, isBongEncrypted } from './crypto-client';
-import { V3DeviceManifest } from './types';
+import type { V3DeviceManifest } from './types';
 
 describe('Virtual microSD Card Storage Engine', () => {
   const sampleKey = new Uint8Array(32);

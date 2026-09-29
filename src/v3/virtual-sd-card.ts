@@ -415,7 +415,8 @@ export class VirtualSdCard {
    */
   public static async readBlob(hash: string): Promise<Uint8Array | null> {
     const cleanHash = hash.trim().toLowerCase();
-    return this.readFile(`/sdcard/blobs/${cleanHash}`);
+    const buf = await this.readFile(`/sdcard/blobs/${cleanHash}`);
+    return buf ? new Uint8Array(buf) : null;
   }
 
   /**
@@ -577,7 +578,7 @@ export class VirtualSdCard {
         let plainBytes = rawBytes;
         if (isBongEncrypted(rawBytes)) {
           if (activeKeyBase64) {
-            plainBytes = await decryptBongAsset(rawBytes, activeKeyBase64);
+            plainBytes = new Uint8Array(await decryptBongAsset(rawBytes, activeKeyBase64));
           } else {
             throw new Error(`Kịch bản ${sc.id} bị mã hóa nhưng chưa có activeKey`);
           }
