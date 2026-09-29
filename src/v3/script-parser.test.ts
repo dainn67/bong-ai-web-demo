@@ -50,6 +50,98 @@ describe('v3 script parser and validator', () => {
     expect(res.issues.some((i) => i.message.includes('{nbest}'))).toBe(true);
   });
 
+  it('flags infinite still visual that is not the last node (step_03 bug)', () => {
+    const res = validateV3Scene({
+      id: 'TEST_VIS',
+      entry: 's1',
+      steps: [
+        {
+          id: 's1',
+          audio: [{ src: 'a', url: 'https://x/a.mp3' }],
+          visual: [
+            { src: 'img_a', url: 'https://x/a.png' },
+            { src: 'img_b', url: 'https://x/b.png' },
+            { src: 'img_c', url: 'https://x/c.png' },
+          ],
+          next: 's2',
+        },
+        { id: 's2', next: 'END#finished' },
+      ],
+    });
+    expect(res.valid).toBe(false);
+    expect(res.issues.filter((i) => i.rule === 5)).toHaveLength(2);
+  });
+
+  it('passes when only the last visual is an infinite still', () => {
+    const res = validateV3Scene({
+      id: 'TEST_VIS_OK',
+      entry: 's1',
+      steps: [
+        {
+          id: 's1',
+          visual: [
+            { src: 'img_a', url: 'https://x/a.png', duration: 1500 },
+            { src: 'img_b', url: 'https://x/b.png' },
+          ],
+          next: 'END#finished',
+        },
+      ],
+    });
+    expect(res.valid).toBe(true);
+  });
+
+  it('flags banned reply tokens and replies out of layout', () => {
+    const res = validateV3Scene({
+      id: 'TEST_TOUCH',
+      entry: 's1',
+      steps: [
+        {
+          id: 's1',
+          listen: { mode: 'touch', touch: { layout: 'pie4' } },
+          branches: [
+            { when: { reply: 'zone1' }, go: 's2' },
+            { when: { reply: 'zone5' }, go: 's2' },
+            { when: { reply: 'cham_khac' }, go: 's2' },
+            { when: 'default', go: 's2' },
+          ],
+        },
+        { id: 's2', next: 'END#finished' },
+      ],
+    });
+    expect(res.valid).toBe(false);
+    const r6 = res.issues.filter((i) => i.rule === 6);
+    expect(r6).toHaveLength(2); // zone5 + cham_khac
+  });
+
+  it('flags unreplaced placeholder and missing-transcript prompt', () => {
+    const res = validateV3Scene({
+      id: 'TEST_URL',
+      entry: 's1',
+      prompts: { p1: 'Phân loại câu nói.' },
+      steps: [
+        {
+          id: 's1',
+          audio: [{ src: 'a', url: 'https://x/{voiceID}/a.mp3' }],
+          listen: { mode: 'voice', voice: { options: ['cat'], prompt_ref: 'p1' } },
+          branches: [{ when: 'default', go: 'END#finished' }],
+        },
+      ],
+    });
+    expect(res.valid).toBe(false);
+    expect(res.issues.some((i) => i.rule === 4)).toBe(true); // placeholder url
+    expect(res.issues.some((i) => i.rule === 7 && i.message.includes('{transcript}'))).toBe(true);
+  });
+
+  it('flags save writing into read-only scopes', () => {
+    const res = validateV3Scene({
+      id: 'TEST_SAVE',
+      entry: 's1',
+      steps: [{ id: 's1', save: { 'sys.attempt': 0 }, next: 'END#finished' }],
+    });
+    expect(res.valid).toBe(false);
+    expect(res.issues.some((i) => i.rule === 8)).toBe(true);
+  });
+
   it('resolves placeholders from memory spaces correctly', () => {
     const memory: MemorySpaces = {
       sys: {

@@ -37,6 +37,31 @@ interface RawPart {
   expected_answer?: string;
 }
 
+// Reply names reserved by the firmware/backend pipeline — never emitted as options.
+const SYSTEM_REPLY_NAMES = new Set([
+  'silent',
+  'other',
+  'unclear',
+  'spoke',
+  'default',
+  'miss',
+]);
+
+/**
+ * Build the standard classification prompt for converted question steps.
+ */
+function buildClassifyPrompt(questionText?: string): string {
+  const ctx = questionText ? `Ngữ cảnh: ${questionText}\n` : '';
+  return (
+    'Bạn là bộ phân loại câu trả lời của trẻ 4-6 tuổi.\n' +
+    ctx +
+    'Bé nói: "{transcript}"\n' +
+    'Các lựa chọn:\n{options}\n' +
+    'Chỉ trả về một JSON object: {"option": "<tên option>", "match": true|false, ' +
+    '"value": <giá trị hoặc null>, "confidence": <0.0-1.0>}'
+  );
+}
+
 /**
  * Maps raw metadata type/content to an Orb expression.
  */
@@ -87,22 +112,23 @@ export function convertMetadataToV3Scene(
       const node = rawNodes[i];
       const stepId = String(node.order ?? node.id ?? i + 1);
 
-      // Collect audio
+      // Collect audio — emit both src (simulator fetches it) and url (firmware contract)
       const audioNodes: V3AudioNode[] = [];
       if (Array.isArray(node.audio)) {
         for (const a of node.audio) {
           if (a?.url) {
             audioNodes.push({
               src: a.url,
+              url: a.url,
               wait: a.waitMs,
               volume: a.volume,
             });
           }
         }
       } else if (typeof node.audio === 'string' && node.audio) {
-        audioNodes.push({ src: node.audio });
+        audioNodes.push({ src: node.audio, url: node.audio });
       } else if (node.audio_url) {
-        audioNodes.push({ src: node.audio_url });
+        audioNodes.push({ src: node.audio_url, url: node.audio_url });
       }
 
       // Collect visuals
@@ -112,13 +138,14 @@ export function convertMetadataToV3Scene(
           if (v?.url) {
             visualNodes.push({
               src: v.url,
+              url: v.url,
               hold: v.stop !== 'tat',
             });
           }
         }
       } else if (node.image_url || node.gif_url) {
         const url = node.image_url || node.gif_url;
-        if (url) visualNodes.push({ src: url, hold: true });
+        if (url) visualNodes.push({ src: url, url, hold: true });
       }
 
       // Interaction mode
@@ -142,17 +169,31 @@ export function convertMetadataToV3Scene(
       };
 
       if (isQuestion && Array.isArray(node.branches) && node.branches.length > 0) {
+        // Emit real option list from branch types so replies can actually match.
+        // branchType strings become option names (system replies excluded).
+        const optionNames: string[] = [];
+        const branches = node.branches.map((b: any) => {
+          const name = String(b.branchType || b.name || b.expected_answer || '').trim();
+          if (name && !SYSTEM_REPLY_NAMES.has(name.toLowerCase()) && !optionNames.includes(name)) {
+            optionNames.push(name);
+          }
+          return {
+            when: b.when || { reply: name || 'other' },
+            go: b.next ? String(b.next) : nextStepId,
+          };
+        });
         step.listen = {
           mode: 'voice',
-          voice: {
-            options: 'any',
-          },
+          voice:
+            optionNames.length > 0
+              ? {
+                  options: optionNames,
+                  hints: optionNames,
+                  prompt: buildClassifyPrompt(node.content),
+                }
+              : { options: 'any' },
         };
         // Format branches, ensure last branch is default
-        const branches = node.branches.map((b: any) => ({
-          when: b.when || { reply: b.branchType || b.name || b.expected_answer },
-          go: b.next ? String(b.next) : nextStepId,
-        }));
 
         const hasDefault = branches.some((b: any) => b.when === 'default' || !b.when);
         if (!hasDefault) {
@@ -183,28 +224,36 @@ export function convertMetadataToV3Scene(
       const step: V3Step = {
         id: stepId,
         orb: inferOrbExpression(part.type, part.description),
-        audio: part.audio_url ? [{ src: part.audio_url }] : undefined,
-        visual: part.image_url ? [{ src: part.image_url, hold: true }] : undefined,
+        audio: part.audio_url
+          ? [{ src: part.audio_url, url: part.audio_url }]
+          : undefined,
+        visual: part.image_url
+          ? [{ src: part.image_url, url: part.image_url, hold: true }]
+          : undefined,
       };
 
       if (isQuestion) {
+        const expected = part.expected_answer?.trim();
         step.listen = {
           mode: 'voice',
-          voice: {
-            options: 'any',
-            expect: part.expected_answer ? [part.expected_answer] : undefined,
-          },
+          voice: expected
+            ? {
+                options: ['match', 'other'],
+                hints: [expected],
+                prompt: buildClassifyPrompt(part.description),
+              }
+            : { options: 'any' },
         };
-        step.branches = [
-          {
-            when: { reply: part.expected_answer || 'đúng' },
-            go: nextPartId,
-          },
-          {
-            when: 'default',
-            go: nextPartId,
-          },
-        ];
+        // 'any' mode only emits spoke/silent — dead reply names removed.
+        step.branches = expected
+          ? [
+              { when: { reply: 'match' }, go: nextPartId },
+              { when: 'default', go: nextPartId },
+            ]
+          : [
+              { when: { reply: 'spoke' }, go: nextPartId },
+              { when: 'default', go: nextPartId },
+            ];
       } else {
         step.next = nextPartId;
       }
@@ -218,8 +267,12 @@ export function convertMetadataToV3Scene(
     steps.push({
       id: 'step_1',
       orb: 'happy',
-      audio: rawMetadata.audio_url ? [{ src: rawMetadata.audio_url }] : undefined,
-      visual: rawMetadata.image_url ? [{ src: rawMetadata.image_url }] : undefined,
+      audio: rawMetadata.audio_url
+        ? [{ src: rawMetadata.audio_url, url: rawMetadata.audio_url }]
+        : undefined,
+      visual: rawMetadata.image_url
+        ? [{ src: rawMetadata.image_url, url: rawMetadata.image_url }]
+        : undefined,
     });
   }
 
@@ -232,6 +285,7 @@ export function convertMetadataToV3Scene(
       base: 'orb',
       orb: steps[0].orb || 'happy',
     },
+    volume: 80,
     steps,
   };
 }

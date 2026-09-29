@@ -11,7 +11,7 @@ import {
   SAMPLE_START_SCENE,
   SAMPLE_END_SCENE,
 } from './sample-scenes';
-import type { V3Scene } from './types';
+import type { V3Scene, V3DeviceManifest } from './types';
 import { useSimulatorStore } from '../store/simulator-store';
 import type { TouchLayoutType } from '../screen/touch-layout';
 import {
@@ -48,8 +48,13 @@ export const ScriptEnginePanel: React.FC = () => {
   const [testSpeechText, setTestSpeechText] = useState('cat');
   const [isCallingBackend, setIsCallingBackend] = useState(false);
   const [backendListenResult, setBackendListenResult] = useState<any>(null);
-  const [backendManifest, setBackendManifest] = useState<any>(null);
+  const [backendManifest, setBackendManifest] = useState<V3DeviceManifest | null>(null);
+  const [manifestError, setManifestError] = useState<string | null>(null);
   const [isFetchingManifest, setIsFetchingManifest] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<string | null>(null);
+  const [isCheckingBlobs, setIsCheckingBlobs] = useState(false);
+  const [blobCheckResult, setBlobCheckResult] = useState<{ missing: string[]; checkedCount: number } | null>(null);
+  const [showRawManifestJson, setShowRawManifestJson] = useState(false);
 
   // Security & 2-tier Key Management state
   const [key0Hex, setKey0Hex] = useState(() => SimulatedDeviceSecurity.getDeviceRootKey0Hex());
@@ -72,6 +77,16 @@ export const ScriptEnginePanel: React.FC = () => {
   const [isDownloadingLesson, setIsDownloadingLesson] = useState(false);
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
   const [syncedSceneIds, setSyncedSceneIds] = useState<Set<string>>(new Set());
+
+  // Load cached manifest on mount
+  useEffect(() => {
+    void (async () => {
+      const cached = await VirtualSdCard.loadManifestCache();
+      if (cached) {
+        setBackendManifest(cached);
+      }
+    })();
+  }, []);
 
   // Initialize with sample scene if none loaded
   useEffect(() => {
@@ -160,19 +175,83 @@ export const ScriptEnginePanel: React.FC = () => {
 
   const fetchManifestFromBackend = async () => {
     setIsFetchingManifest(true);
+    setManifestError(null);
     setActiveTab('manifest');
     try {
       const res = await fetch('http://localhost:8000/api/v1/device/manifest?device_id=simulator_v3_dev');
       if (res.ok) {
-        const data = await res.json();
+        const data: V3DeviceManifest = await res.json();
         setBackendManifest(data);
+        await VirtualSdCard.saveManifestCache(data);
+        if (data.prompts) {
+          await VirtualSdCard.savePromptsCache(data.prompts);
+        }
+        if (data.cfg) {
+          await VirtualSdCard.saveConfigCache(data.cfg);
+        }
       } else {
-        setBackendManifest({ error: `Backend returned ${res.status}: ${res.statusText}` });
+        setManifestError(`Backend returned ${res.status}: ${res.statusText}`);
       }
     } catch (err: any) {
-      setBackendManifest({ error: `Không thể kết nối Backend (port 8000): ${err.message}` });
+      setManifestError(`Không thể kết nối Backend (port 8000): ${err.message}`);
     } finally {
       setIsFetchingManifest(false);
+    }
+  };
+
+  const handleCheckBlobs = async () => {
+    if (!backendManifest) return;
+    setIsCheckingBlobs(true);
+    try {
+      const hashes = (backendManifest.files || []).map((f) => f.hash).filter(Boolean);
+      const sceneHashes = (backendManifest.scenes || []).map((s) => s.hash).filter(Boolean);
+      const allHashes = Array.from(new Set([...hashes, ...sceneHashes]));
+      if (allHashes.length === 0) {
+        alert('Manifest không có hash blob nào để kiểm tra.');
+        return;
+      }
+      const result = await VirtualSdCard.checkBackendBlobs(allHashes, 'http://localhost:8000/api/v1');
+      setBlobCheckResult({
+        missing: result.missing,
+        checkedCount: allHashes.length,
+      });
+    } catch (err: any) {
+      alert(`Lỗi kiểm tra blobs: ${err?.message || err}`);
+    } finally {
+      setIsCheckingBlobs(false);
+    }
+  };
+
+  const handleSyncFromManifest = async () => {
+    if (!backendManifest) {
+      alert('Vui lòng tải Manifest từ Backend trước khi đồng bộ!');
+      return;
+    }
+    if (isSimulatingOffline) {
+      alert('Đang ở chế độ Offline mô phỏng! Hãy bật Online để tải blobs từ server.');
+      return;
+    }
+    setIsSyncingSd(true);
+    setSyncProgress('Bắt đầu đồng bộ...');
+    try {
+      const activeKey = SimulatedDeviceSecurity.getStoredContentKey();
+      const res = await VirtualSdCard.syncFromManifest(
+        backendManifest,
+        'http://localhost:8000/api/v1',
+        activeKey?.rawKeyBase64,
+        (msg) => {
+          setSyncProgress(msg);
+        }
+      );
+      await refreshSdStats();
+      await refreshCatalogAndSd();
+      setSyncProgress(null);
+      alert(`Đồng bộ Manifest hoàn tất!\n- Kịch bản: ${res.syncedScenes} kịch bản\n- Assets: ${res.syncedFiles} files${res.errors.length > 0 ? `\n- Lỗi (${res.errors.length}): ${res.errors.slice(0, 3).join(', ')}...` : ''}`);
+    } catch (err: any) {
+      setSyncProgress(null);
+      alert(`Lỗi đồng bộ Manifest: ${err?.message || err}`);
+    } finally {
+      setIsSyncingSd(false);
     }
   };
 
@@ -311,21 +390,7 @@ export const ScriptEnginePanel: React.FC = () => {
     setSelectedLessonId(id);
     setDownloadNotice(null);
 
-    // 1. Built-in sample scenes
-    if (id === 'LESSON_TEST') {
-      loadScene(SAMPLE_LESSON_TEST);
-      return;
-    }
-    if (id === 'START') {
-      loadScene(SAMPLE_START_SCENE);
-      return;
-    }
-    if (id === 'END') {
-      loadScene(SAMPLE_END_SCENE);
-      return;
-    }
-
-    // 2. Check if already on SD card (Offline first!)
+    // 1. Check if already on SD card (Offline first!)
     const existsOnSd = await VirtualSdCard.hasSceneOnSdCard(id);
     if (existsOnSd) {
       try {
@@ -341,7 +406,7 @@ export const ScriptEnginePanel: React.FC = () => {
           const text = new TextDecoder().decode(plainBytes);
           const parsed = JSON.parse(text) as V3Scene;
           loadScene(parsed);
-          setDownloadNotice(`✅ Đang phát kịch bản từ Thẻ SD ảo (Trạng thái mạng: ${isSimulatingOffline ? '📴 Offline' : '📡 Online'})`);
+          setDownloadNotice(`✅ Đang phát kịch bản "${id}" từ Thẻ SD ảo (Trạng thái mạng: ${isSimulatingOffline ? '📴 Offline' : '📡 Online'})`);
           return;
         }
       } catch (err) {
@@ -349,13 +414,55 @@ export const ScriptEnginePanel: React.FC = () => {
       }
     }
 
-    // 3. Not on SD card
+    // 2. Built-in sample scenes
+    if (id === 'LESSON_TEST') {
+      loadScene(SAMPLE_LESSON_TEST);
+      return;
+    }
+    if (id === 'START') {
+      loadScene(SAMPLE_START_SCENE);
+      return;
+    }
+    if (id === 'END') {
+      loadScene(SAMPLE_END_SCENE);
+      return;
+    }
+
+    // 3. Not on SD card - check offline mode
     if (isSimulatingOffline) {
       setDownloadNotice(`⚠️ Bài học "${id}" chưa được tải về Thẻ SD! Hãy bật Online để tải về thẻ trước.`);
       return;
     }
 
-    // Online fetch from database via backend API
+    // 4. Check if it's a Manifest scene available via Backend Blob Store
+    const manifestScene = backendManifest?.scenes?.find((s) => s.id === id);
+    if (manifestScene) {
+      try {
+        setDownloadNotice(`⏳ Đang tải kịch bản "${id}" từ Blob Store Backend...`);
+        const baseClean = 'http://localhost:8000/api/v1';
+        const blobBase = backendManifest?.blob_base ? backendManifest.blob_base.replace(/\/$/, '') : `${baseClean}/o`;
+        const res = await fetch(`${blobBase}/${manifestScene.hash}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        const rawBytes = new Uint8Array(await res.arrayBuffer());
+        let plainBytes = rawBytes;
+        if (isBongEncrypted(rawBytes)) {
+          const key = SimulatedDeviceSecurity.getStoredContentKey();
+          if (key) {
+            plainBytes = await decryptBongAsset(rawBytes, key.rawKeyBase64);
+          }
+        }
+        const text = new TextDecoder().decode(plainBytes);
+        const parsed = JSON.parse(text) as V3Scene;
+        loadScene(parsed);
+        setDownloadNotice(`☁️ Đã nạp kịch bản "${id}" từ Backend Blob Store. Bấm "Tải về Thẻ SD" để lưu offline.`);
+        return;
+      } catch (err: any) {
+        setDownloadNotice(`❌ Lỗi tải blob kịch bản từ Backend: ${err?.message || err}`);
+        return;
+      }
+    }
+
+    // 5. Online fetch from database catalog via backend API
     const item = catalog.find((c) => c.id === id);
     const metaUrl = item?.metadataUrl || `/cdn/lessions/${id}/metadata.json`;
     try {
@@ -384,6 +491,26 @@ export const ScriptEnginePanel: React.FC = () => {
         keyBase64 = uint8ArrayToBase64(fallbackBytes);
       }
       const keyVer = activeKey?.version || 1;
+
+      // Check if it's a Manifest scene
+      const manifestScene = backendManifest?.scenes?.find((s) => s.id === selectedLessonId);
+      if (manifestScene) {
+        const baseClean = 'http://localhost:8000/api/v1';
+        const blobBase = backendManifest?.blob_base ? backendManifest.blob_base.replace(/\/$/, '') : `${baseClean}/o`;
+        const res = await fetch(`${blobBase}/${manifestScene.hash}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status} tải blob scene ${manifestScene.hash}`);
+        const rawBytes = new Uint8Array(await res.arrayBuffer());
+        let plainBytes = rawBytes;
+        if (isBongEncrypted(rawBytes)) {
+          plainBytes = await decryptBongAsset(rawBytes, keyBase64);
+        }
+        await VirtualSdCard.writeBlob(manifestScene.hash, rawBytes, 'application/json');
+        await VirtualSdCard.writeFile(`/sdcard/scenes/${selectedLessonId}.json`, plainBytes, 'application/json');
+        await refreshSdStats();
+        await refreshCatalogAndSd();
+        setDownloadNotice(`✅ Đã tải về và lưu kịch bản "${selectedLessonId}" vào Thẻ SD!`);
+        return;
+      }
 
       // Built-in scenes
       if (selectedLessonId === 'LESSON_TEST' || selectedLessonId === 'START' || selectedLessonId === 'END') {
@@ -472,12 +599,11 @@ export const ScriptEnginePanel: React.FC = () => {
         const manData = await manRes.json();
         setBackendManifest(manData);
 
-        // Pre-save manifest scenes & default assets if not present
-        if (activeKeyBase64) {
-          await VirtualSdCard.loadFactoryDefaultPack(activeKeyBase64, manData.key_version || 1);
-        }
+        // Pre-save manifest scenes & blobs
+        await VirtualSdCard.syncFromManifest(manData, 'http://localhost:8000/api/v1', activeKeyBase64);
         await refreshSdStats();
-        alert(`Đồng bộ thành công! Thẻ nhớ SD ảo đã cập nhật bài học cho Manifest v${manData.ver}.`);
+        await refreshCatalogAndSd();
+        alert(`Đồng bộ thành công! Thẻ nhớ SD ảo đã cập nhật bài học & blobs cho Manifest v${manData.ver}.`);
       } else {
         alert(`Lỗi Backend: ${manRes.statusText}`);
       }
@@ -508,12 +634,27 @@ export const ScriptEnginePanel: React.FC = () => {
       formData.append('device_id', 'simulator_v3_dev');
       formData.append('scene', scene?.id || 'LESSON_TEST');
       formData.append('step', currentStep.id);
-      formData.append(
-        'prompt',
-        currentStep.listen.voice.prompt ||
-          scene?.prompts?.[currentStep.listen.voice.prompt_ref || ''] ||
-          `Phân loại: "{transcript}"`,
-      );
+
+      // Resolve prompt:
+      // 1. Direct prompt
+      // 2. prompt_ref from backendManifest.prompts (or scene.prompts)
+      let resolvedPrompt = currentStep.listen.voice.prompt;
+      if (!resolvedPrompt && currentStep.listen.voice.prompt_ref) {
+        const ref = currentStep.listen.voice.prompt_ref;
+        resolvedPrompt = backendManifest?.prompts?.[ref] || scene?.prompts?.[ref];
+      }
+      if (!resolvedPrompt) {
+        resolvedPrompt = `Phân loại: "{transcript}"`;
+      }
+
+      // Substitute {child_name} and {bong_name} from backendManifest.profile
+      const childName = backendManifest?.profile?.child_name || 'Bé';
+      const bongName = backendManifest?.profile?.bong_name || 'Bống';
+      resolvedPrompt = resolvedPrompt
+        .replace(/\{child_name\}/g, childName)
+        .replace(/\{bong_name\}/g, bongName);
+
+      formData.append('prompt', resolvedPrompt);
       formData.append('clip', blob, 'test.wav');
       formData.append('option_names', JSON.stringify(currentStep.listen.voice.options));
       formData.append('hints', JSON.stringify(currentStep.listen.voice.hints || []));
@@ -576,6 +717,15 @@ export const ScriptEnginePanel: React.FC = () => {
                       {syncedSceneIds.has(it.id) ? '💾 ' : '☁️ '} {it.title} ({it.id})
                     </option>
                   ))}
+              </optgroup>
+            )}
+            {backendManifest?.scenes && backendManifest.scenes.length > 0 && (
+              <optgroup label="📦 Kịch bản từ Manifest v3">
+                {backendManifest.scenes.map((s) => (
+                  <option key={`manifest_${s.id}`} value={s.id}>
+                    {syncedSceneIds.has(s.id) ? '💾 ' : '☁️ '} {s.id} (v{s.ver}{s.pin ? ' 📌' : ''})
+                  </option>
+                ))}
               </optgroup>
             )}
             <optgroup label="⚡ Kịch bản mẫu v3">
@@ -1035,24 +1185,371 @@ export const ScriptEnginePanel: React.FC = () => {
 
       {/* 4. Tab 4: Manifest v3 */}
       {activeTab === 'manifest' && (
-        <div className="flex flex-col gap-2 p-3 bg-slate-950 rounded-xl border border-slate-800">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-xs">
-            <span className="font-bold text-slate-300">
-              API: <code>GET /api/v1/device/manifest?device_id=simulator_v3_dev</code>
-            </span>
-            <button
-              type="button"
-              onClick={fetchManifestFromBackend}
-              className="px-2.5 py-1 text-xs font-bold rounded bg-indigo-600 hover:bg-indigo-500 text-white"
-            >
-              Làm mới
-            </button>
+        <div className="flex flex-col gap-3 p-4 bg-slate-950 rounded-xl border border-indigo-500/30 overflow-y-auto max-h-[500px]">
+          {/* Header Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
+            <div>
+              <h3 className="text-xs font-black text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                <span>📦</span> Manifest Hợp Đồng Thiết Bị v3 (Phase 1 Content Sync Contract)
+              </h3>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                API: <code className="text-slate-300 font-mono">GET /api/v1/device/manifest?device_id=simulator_v3_dev</code>
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={fetchManifestFromBackend}
+                disabled={isFetchingManifest}
+                className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition disabled:opacity-50 shadow-sm"
+              >
+                <span>🔄</span>
+                <span>{isFetchingManifest ? 'Đang tải...' : 'Làm mới'}</span>
+              </button>
+              {backendManifest && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleSyncFromManifest}
+                    disabled={isSyncingSd}
+                    className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition disabled:opacity-50 shadow-sm"
+                    title="Đồng bộ toàn bộ kịch bản và assets trong manifest vào SD Card ảo"
+                  >
+                    <span>📥</span>
+                    <span>{isSyncingSd ? 'Đang tải...' : 'Đồng bộ Blobs về SD'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCheckBlobs}
+                    disabled={isCheckingBlobs}
+                    className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition disabled:opacity-50 shadow-sm"
+                    title="Kiểm tra xem hash nào còn thiếu trên backend (/api/v1/o/check)"
+                  >
+                    <span>🔍</span>
+                    <span>{isCheckingBlobs ? 'Đang check...' : 'Kiểm tra Blobs (/o/check)'}</span>
+                  </button>
+                </>
+              )}
+            </div>
           </div>
-          <pre className="font-mono text-[11px] text-emerald-400 whitespace-pre-wrap overflow-y-auto max-h-[340px]">
-            {backendManifest
-              ? JSON.stringify(backendManifest, null, 2)
-              : 'Nhấn nút "Manifest Backend" ở trên để tải manifest từ Backend (port 8000)...'}
-          </pre>
+
+          {/* Sync Progress Notification */}
+          {syncProgress && (
+            <div className="p-2.5 bg-emerald-950/60 border border-emerald-500/40 rounded-lg text-xs text-emerald-300 font-mono flex items-center gap-2 animate-pulse">
+              <span>⏳</span>
+              <span>{syncProgress}</span>
+            </div>
+          )}
+
+          {/* Error Banner */}
+          {manifestError && (
+            <div className="p-3 bg-rose-950/60 border border-rose-500/50 rounded-lg text-xs text-rose-300 flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <span>⚠️</span>
+                <span>{manifestError}</span>
+              </span>
+              <button
+                type="button"
+                onClick={fetchManifestFromBackend}
+                className="px-2 py-0.5 text-[11px] rounded bg-rose-800 hover:bg-rose-700 text-white font-bold"
+              >
+                Thử lại
+              </button>
+            </div>
+          )}
+
+          {/* Blob Check Result Notification */}
+          {blobCheckResult && (
+            <div className={`p-2.5 rounded-lg text-xs font-mono border flex items-center justify-between ${
+              blobCheckResult.missing.length === 0
+                ? 'bg-emerald-950/50 border-emerald-500/40 text-emerald-300'
+                : 'bg-amber-950/50 border-amber-500/40 text-amber-300'
+            }`}>
+              <span>
+                {blobCheckResult.missing.length === 0
+                  ? `✅ Tất cả ${blobCheckResult.checkedCount} blobs đều ĐÃ TỒN TẠI trên Backend Blob Store!`
+                  : `⚠️ Có ${blobCheckResult.missing.length}/${blobCheckResult.checkedCount} blobs CHƯA TỒN TẠI trên Backend: [${blobCheckResult.missing.slice(0, 3).join(', ')}${blobCheckResult.missing.length > 3 ? '...' : ''}]`}
+              </span>
+              <button
+                type="button"
+                onClick={() => setBlobCheckResult(null)}
+                className="text-[10px] opacity-70 hover:opacity-100"
+              >
+                ✕ Đóng
+              </button>
+            </div>
+          )}
+
+          {!backendManifest && !manifestError ? (
+            <div className="p-8 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+              <span className="text-3xl">📡</span>
+              <span>Chưa nạp Manifest từ Backend.</span>
+              <button
+                type="button"
+                onClick={fetchManifestFromBackend}
+                className="mt-2 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow"
+              >
+                Kết nối và Tải Manifest (port 8000)
+              </button>
+            </div>
+          ) : backendManifest && (
+            <>
+              {/* Manifest Overview Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="p-2.5 bg-slate-900/90 rounded-lg border border-slate-800 flex flex-col">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Phiên Bản Manifest</span>
+                  <span className="text-sm font-black text-indigo-400 font-mono mt-0.5">
+                    v{backendManifest.ver} <span className="text-[10px] text-slate-500 font-normal">(fmt {backendManifest.fmt})</span>
+                  </span>
+                </div>
+                <div className="p-2.5 bg-slate-900/90 rounded-lg border border-slate-800 flex flex-col">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Content Key Hoạt Động</span>
+                  <span className="text-sm font-black text-amber-400 font-mono mt-0.5">
+                    {backendManifest.key_alias} <span className="text-[10px] text-slate-500 font-normal">(v{backendManifest.key_version})</span>
+                  </span>
+                </div>
+                <div className="p-2.5 bg-slate-900/90 rounded-lg border border-slate-800 flex flex-col">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Blob Store Base</span>
+                  <span className="text-xs font-bold text-emerald-400 font-mono mt-0.5 truncate" title={backendManifest.blob_base || '/api/v1/o'}>
+                    {backendManifest.blob_base || '/api/v1/o'}
+                  </span>
+                </div>
+                <div className="p-2.5 bg-slate-900/90 rounded-lg border border-slate-800 flex flex-col">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Hồ Sơ Trẻ Em</span>
+                  <span className="text-xs font-bold text-sky-400 mt-0.5 truncate">
+                    {backendManifest.profile?.child_name || 'Bé'} ({backendManifest.profile?.bong_name || 'Bống'})
+                  </span>
+                </div>
+              </div>
+
+              {/* Timing & Limits Configuration (manifest.cfg) */}
+              {backendManifest.cfg && (
+                <div className="p-3 bg-slate-900/90 rounded-lg border border-slate-800 flex flex-col gap-2">
+                  <div className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                    <span>⏱️</span> Cấu Hình Thời Gian &amp; Giới Hạn (Timing &amp; Limits Config):
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
+                    <div className="p-2 bg-slate-950 rounded border border-slate-800">
+                      <div className="text-[10px] text-slate-500">listen_timeout</div>
+                      <div className="text-indigo-300 font-bold">{backendManifest.cfg.listen_timeout} ms</div>
+                    </div>
+                    <div className="p-2 bg-slate-950 rounded border border-slate-800">
+                      <div className="text-[10px] text-slate-500">touch_timeout</div>
+                      <div className="text-indigo-300 font-bold">{backendManifest.cfg.touch_timeout} ms</div>
+                    </div>
+                    <div className="p-2 bg-slate-950 rounded border border-slate-800">
+                      <div className="text-[10px] text-slate-500">vad_end</div>
+                      <div className="text-indigo-300 font-bold">{backendManifest.cfg.vad_end} ms</div>
+                    </div>
+                    <div className="p-2 bg-slate-950 rounded border border-slate-800">
+                      <div className="text-[10px] text-slate-500">silent_streak</div>
+                      <div className="text-indigo-300 font-bold">{backendManifest.cfg.silent_streak}</div>
+                    </div>
+                    <div className="p-2 bg-slate-950 rounded border border-slate-800">
+                      <div className="text-[10px] text-slate-500">no_reply_min</div>
+                      <div className="text-indigo-300 font-bold">{backendManifest.cfg.no_reply_min}</div>
+                    </div>
+                    <div className="p-2 bg-slate-950 rounded border border-slate-800">
+                      <div className="text-[10px] text-slate-500">loop_guard</div>
+                      <div className="text-indigo-300 font-bold">{backendManifest.cfg.loop_guard}</div>
+                    </div>
+                    <div className="p-2 bg-slate-950 rounded border border-slate-800">
+                      <div className="text-[10px] text-slate-500">think_ms</div>
+                      <div className="text-indigo-300 font-bold">{backendManifest.cfg.think_ms} ms</div>
+                    </div>
+                    <div className="p-2 bg-slate-950 rounded border border-slate-800">
+                      <div className="text-[10px] text-slate-500">server_timeout</div>
+                      <div className="text-indigo-300 font-bold">{backendManifest.cfg.server_timeout} ms</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Wanted Scenes Chips */}
+              {backendManifest.wanted && backendManifest.wanted.length > 0 && (
+                <div className="p-3 bg-slate-900/90 rounded-lg border border-slate-800 flex flex-col gap-2">
+                  <div className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                    <span>🎯</span> Kịch Bản Được Yêu Cầu (Wanted Scenes - {backendManifest.wanted.length}):
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {backendManifest.wanted.map((wid) => {
+                      const onSd = syncedSceneIds.has(wid);
+                      const isCurrent = scene?.id === wid;
+                      return (
+                        <button
+                          key={wid}
+                          type="button"
+                          onClick={() => handleSelectScene(wid)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-mono font-semibold border transition flex items-center gap-1.5 ${
+                            isCurrent
+                              ? 'bg-indigo-600 border-indigo-400 text-white shadow'
+                              : onSd
+                              ? 'bg-sky-950/70 border-sky-600/50 text-sky-200 hover:bg-sky-900/80'
+                              : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white'
+                          }`}
+                          title={`Click để nạp bài học ${wid}`}
+                        >
+                          <span>{onSd ? '💾' : '☁️'}</span>
+                          <span>{wid}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Scenes Table */}
+              <div className="p-3 bg-slate-900/90 rounded-lg border border-slate-800 flex flex-col gap-2">
+                <div className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <span>🎬</span> Danh Sách Kịch Bản ({backendManifest.scenes?.length || 0})
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-mono">/sdcard/scenes/{'{id}'}.json</span>
+                </div>
+                <div className="overflow-x-auto max-h-[220px]">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead className="bg-slate-950/80 text-slate-400 text-[10px] uppercase border-b border-slate-800">
+                      <tr>
+                        <th className="p-2">Scene ID</th>
+                        <th className="p-2">Ver</th>
+                        <th className="p-2">Hash (40 char)</th>
+                        <th className="p-2">Ghim</th>
+                        <th className="p-2">Thẻ SD</th>
+                        <th className="p-2 text-right">Hành động</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300 text-[11px]">
+                      {backendManifest.scenes?.map((sc) => {
+                        const onSd = syncedSceneIds.has(sc.id);
+                        const isCurrent = scene?.id === sc.id;
+                        return (
+                          <tr key={sc.id} className="hover:bg-slate-800/40 transition">
+                            <td className="p-2 font-bold text-slate-100 flex items-center gap-1">
+                              {isCurrent && <span className="text-emerald-400">▶</span>}
+                              <span>{sc.id}</span>
+                            </td>
+                            <td className="p-2 text-slate-400">v{sc.ver}</td>
+                            <td className="p-2 font-mono text-indigo-300 text-[10px]" title={sc.hash}>
+                              {sc.hash ? `${sc.hash.slice(0, 10)}...` : 'n/a'}
+                            </td>
+                            <td className="p-2">
+                              {sc.pin ? (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                  📌 PIN
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-slate-500">Auto</span>
+                              )}
+                            </td>
+                            <td className="p-2">
+                              {onSd ? (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                                  💾 Đã lưu
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400">
+                                  ☁️ Trên server
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-2 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleSelectScene(sc.id)}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold transition ${
+                                  isCurrent
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
+                                }`}
+                              >
+                                {isCurrent ? 'Đang phát' : '▶ Phát ngay'}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Files Table */}
+              <div className="p-3 bg-slate-900/90 rounded-lg border border-slate-800 flex flex-col gap-2">
+                <div className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <span>📁</span> Danh Sách Assets &amp; Files ({backendManifest.files?.length || 0})
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-mono">/sdcard/assets/{'{id}'}</span>
+                </div>
+                <div className="overflow-x-auto max-h-[200px]">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead className="bg-slate-950/80 text-slate-400 text-[10px] uppercase border-b border-slate-800">
+                      <tr>
+                        <th className="p-2">File ID</th>
+                        <th className="p-2">Loại</th>
+                        <th className="p-2">Kích thước</th>
+                        <th className="p-2">Hash (40 char)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300 text-[11px]">
+                      {backendManifest.files?.map((fl) => (
+                        <tr key={fl.id} className="hover:bg-slate-800/40 transition">
+                          <td className="p-2 font-bold text-slate-200">{fl.id}</td>
+                          <td className="p-2">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400">
+                              {fl.kind}
+                            </span>
+                          </td>
+                          <td className="p-2 text-slate-400">{fl.size} B</td>
+                          <td className="p-2 font-mono text-indigo-300 text-[10px]" title={fl.hash}>
+                            {fl.hash ? `${fl.hash.slice(0, 10)}...` : 'n/a'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Prompts Viewer */}
+              {backendManifest.prompts && Object.keys(backendManifest.prompts).length > 0 && (
+                <div className="p-3 bg-slate-900/90 rounded-lg border border-slate-800 flex flex-col gap-2">
+                  <div className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                    <span>💬</span> Mẫu Prompt STT/Nghiệp Vụ (Prompts Templates - {Object.keys(backendManifest.prompts).length}):
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    {Object.entries(backendManifest.prompts).map(([name, tmpl]) => (
+                      <div key={name} className="p-2.5 bg-slate-950 rounded-lg border border-slate-800 flex flex-col gap-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-bold text-indigo-400 font-mono">{name}</span>
+                          <span className="text-[10px] text-slate-500">prompt_ref</span>
+                        </div>
+                        <div className="text-[11px] text-slate-300 font-mono bg-slate-900/60 p-2 rounded border border-slate-800/80 whitespace-pre-wrap">
+                          {tmpl}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Raw JSON Toggle */}
+              <div className="pt-2 border-t border-slate-800 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRawManifestJson(!showRawManifestJson)}
+                  className="text-xs text-indigo-400 hover:text-indigo-300 font-bold self-start flex items-center gap-1"
+                >
+                  <span>{showRawManifestJson ? '▼ Ẩn' : '▶ Hiện'} Raw JSON Manifest Payload</span>
+                </button>
+                {showRawManifestJson && (
+                  <pre className="font-mono text-[11px] text-emerald-400 bg-slate-950 p-3 rounded-lg border border-slate-800 whitespace-pre-wrap overflow-y-auto max-h-[300px]">
+                    {JSON.stringify(backendManifest, null, 2)}
+                  </pre>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 

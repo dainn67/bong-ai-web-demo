@@ -6,9 +6,10 @@
  * Provides full offline persistence when internet/WiFi is disconnected.
  */
 
-import { encryptBongAsset, isBongEncrypted } from './crypto-client';
+import { decryptBongAsset, encryptBongAsset, isBongEncrypted } from './crypto-client';
 import { SAMPLE_LESSON_TEST, SAMPLE_START_SCENE, SAMPLE_END_SCENE } from './sample-scenes';
 import { convertMetadataToV3Scene } from './metadata-converter';
+import type { V3DeviceManifest } from './types';
 
 export interface SdFileInfo {
   path: string;
@@ -395,6 +396,229 @@ export class VirtualSdCard {
     }
 
     return { scenePath, audioCount };
+  }
+
+  /**
+   * Save a content-addressed binary blob into /sdcard/blobs/{hash}.
+   */
+  public static async writeBlob(
+    hash: string,
+    data: ArrayBuffer | Uint8Array,
+    mimeType: string = 'application/octet-stream'
+  ): Promise<void> {
+    const cleanHash = hash.trim().toLowerCase();
+    await this.writeFile(`/sdcard/blobs/${cleanHash}`, data, mimeType);
+  }
+
+  /**
+   * Read binary blob by its hash from /sdcard/blobs/{hash}.
+   */
+  public static async readBlob(hash: string): Promise<Uint8Array | null> {
+    const cleanHash = hash.trim().toLowerCase();
+    return this.readFile(`/sdcard/blobs/${cleanHash}`);
+  }
+
+  /**
+   * Check whether a blob exists on SD Card.
+   */
+  public static async hasBlob(hash: string): Promise<boolean> {
+    const cleanHash = hash.trim().toLowerCase();
+    return this.hasFile(`/sdcard/blobs/${cleanHash}`);
+  }
+
+  /**
+   * Caches the V3DeviceManifest JSON on SD Card.
+   */
+  public static async saveManifestCache(manifest: V3DeviceManifest): Promise<void> {
+    const jsonStr = JSON.stringify(manifest, null, 2);
+    const bytes = new TextEncoder().encode(jsonStr);
+    await this.writeFile('/sdcard/manifest.json', bytes, 'application/json');
+  }
+
+  /**
+   * Loads the cached V3DeviceManifest from SD Card when offline.
+   */
+  public static async loadManifestCache(): Promise<V3DeviceManifest | null> {
+    const bytes = await this.readFile('/sdcard/manifest.json');
+    if (!bytes) return null;
+    try {
+      const text = new TextDecoder().decode(bytes);
+      return JSON.parse(text) as V3DeviceManifest;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Caches the prompts dictionary on SD Card.
+   */
+  public static async savePromptsCache(prompts: Record<string, string>): Promise<void> {
+    const jsonStr = JSON.stringify(prompts, null, 2);
+    const bytes = new TextEncoder().encode(jsonStr);
+    await this.writeFile('/sdcard/prompts.json', bytes, 'application/json');
+  }
+
+  /**
+   * Loads cached prompts dictionary from SD Card.
+   */
+  public static async loadPromptsCache(): Promise<Record<string, string>> {
+    const bytes = await this.readFile('/sdcard/prompts.json');
+    if (!bytes) return {};
+    try {
+      const text = new TextDecoder().decode(bytes);
+      return JSON.parse(text);
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Caches runtime config on SD Card.
+   */
+  public static async saveConfigCache(cfg: any): Promise<void> {
+    const jsonStr = JSON.stringify(cfg, null, 2);
+    const bytes = new TextEncoder().encode(jsonStr);
+    await this.writeFile('/sdcard/config.json', bytes, 'application/json');
+  }
+
+  /**
+   * Loads cached runtime config from SD Card.
+   */
+  public static async loadConfigCache(): Promise<any | null> {
+    const bytes = await this.readFile('/sdcard/config.json');
+    if (!bytes) return null;
+    try {
+      const text = new TextDecoder().decode(bytes);
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Check which blobs are missing on Backend via POST /api/v1/o/check.
+   */
+  public static async checkBackendBlobs(
+    hashes: string[],
+    apiBase: string = 'http://localhost:8000/api/v1',
+    internalSecret?: string
+  ): Promise<{ missing: string[] }> {
+    const cleanHashes = hashes.map((h) => h.trim().toLowerCase()).filter(Boolean);
+    const fetchFn = typeof window !== 'undefined' && window.fetch ? window.fetch : globalThis.fetch;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (internalSecret) {
+      headers['X-Internal-Secret'] = internalSecret;
+    }
+    const resp = await fetchFn(`${apiBase.replace(/\/$/, '')}/o/check`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ hashes: cleanHashes }),
+    });
+    if (!resp.ok) {
+      throw new Error(`POST /o/check failed: HTTP ${resp.status} ${resp.statusText}`);
+    }
+    return (await resp.json()) as { missing: string[] };
+  }
+
+  /**
+   * Fully syncs scenes, assets, prompts, cfg and profile from a V3DeviceManifest into the Virtual SD Card.
+   * Downloads blobs directly from /api/v1/o/<hash> (or manifest.blob_base).
+   */
+  public static async syncFromManifest(
+    manifest: V3DeviceManifest,
+    apiBase: string = 'http://localhost:8000/api/v1',
+    activeKeyBase64?: string,
+    onProgress?: (msg: string) => void
+  ): Promise<{ syncedScenes: number; syncedFiles: number; errors: string[] }> {
+    const errors: string[] = [];
+    let syncedScenes = 0;
+    let syncedFiles = 0;
+
+    const baseClean = apiBase.replace(/\/$/, '');
+    const blobBase = manifest.blob_base ? manifest.blob_base.replace(/\/$/, '') : `${baseClean}/o`;
+    const fetchFn = typeof window !== 'undefined' && window.fetch ? window.fetch : globalThis.fetch;
+
+    onProgress?.(`Bắt đầu đồng bộ Manifest v${manifest.ver}...`);
+
+    // 1. Cache manifest, prompts, config, profile
+    await this.saveManifestCache(manifest);
+    if (manifest.prompts) {
+      await this.savePromptsCache(manifest.prompts);
+    }
+    if (manifest.cfg) {
+      await this.saveConfigCache(manifest.cfg);
+    }
+    if (manifest.profile) {
+      await this.writeFile(
+        '/sdcard/profile.json',
+        new TextEncoder().encode(JSON.stringify(manifest.profile, null, 2)),
+        'application/json'
+      );
+    }
+
+    // 2. Download and write all Scene blobs
+    const scenes = manifest.scenes || [];
+    for (let i = 0; i < scenes.length; i++) {
+      const sc = scenes[i];
+      onProgress?.(`Tải kịch bản ${sc.id} (${i + 1}/${scenes.length})...`);
+      try {
+        const blobUrl = `${blobBase}/${sc.hash}`;
+        const resp = await fetchFn(blobUrl);
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status} tải blob scene ${sc.id} (${sc.hash})`);
+        }
+        const arrayBuf = await resp.arrayBuffer();
+        const rawBytes = new Uint8Array(arrayBuf);
+
+        // Store raw blob
+        await this.writeBlob(sc.hash, rawBytes, 'application/json');
+
+        // Parse and save as /sdcard/scenes/{id}.json
+        let plainBytes = rawBytes;
+        if (isBongEncrypted(rawBytes)) {
+          if (activeKeyBase64) {
+            plainBytes = await decryptBongAsset(rawBytes, activeKeyBase64);
+          } else {
+            throw new Error(`Kịch bản ${sc.id} bị mã hóa nhưng chưa có activeKey`);
+          }
+        }
+
+        // Validate JSON
+        const text = new TextDecoder().decode(plainBytes);
+        JSON.parse(text); // verify valid json
+
+        await this.writeFile(`/sdcard/scenes/${sc.id}.json`, plainBytes, 'application/json');
+        syncedScenes++;
+      } catch (err: any) {
+        errors.push(`Scene ${sc.id}: ${err?.message || err}`);
+      }
+    }
+
+    // 3. Download and write all File assets
+    const files = manifest.files || [];
+    for (let i = 0; i < files.length; i++) {
+      const fl = files[i];
+      onProgress?.(`Tải asset ${fl.id} (${i + 1}/${files.length})...`);
+      try {
+        const blobUrl = `${blobBase}/${fl.hash}`;
+        const resp = await fetchFn(blobUrl);
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status} tải asset ${fl.id} (${fl.hash})`);
+        }
+        const arrayBuf = await resp.arrayBuffer();
+        const rawBytes = new Uint8Array(arrayBuf);
+
+        // Store by hash and by file ID path
+        await this.writeBlob(fl.hash, rawBytes, fl.kind === 'audio' ? 'audio/wav' : 'application/octet-stream');
+        await this.writeFile(`/sdcard/assets/${fl.id}`, rawBytes, fl.kind === 'audio' ? 'audio/wav' : 'application/octet-stream');
+        syncedFiles++;
+      } catch (err: any) {
+        errors.push(`File ${fl.id}: ${err?.message || err}`);
+      }
+    }
+
+    onProgress?.(`Đồng bộ hoàn tất: ${syncedScenes} kịch bản, ${syncedFiles} assets.`);
+    return { syncedScenes, syncedFiles, errors };
   }
 }
 

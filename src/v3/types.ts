@@ -17,12 +17,14 @@ export type OrbExpression =
 
 export interface V3AudioNode {
   src: string | string[]; // Single id or array for uniform random pick
+  url?: string; // Download URL — firmware contract (node without url is skipped on device)
   wait?: number; // Gap before playing in ms (0-60000)
   volume?: number; // 0-100 override
 }
 
 export interface V3VisualNode {
   src: string | string[];
+  url?: string; // Download URL — firmware contract
   duration?: number; // ms to display (for static images)
   repeat?: 'once' | 'loop' | number;
   hold?: boolean; // Keep last frame visible until next visual node
@@ -115,6 +117,7 @@ export interface MemorySpaces {
     time: string;
     battery: number;
     first_run: boolean;
+    cfg?: Partial<DeviceManifestConfig>;
   };
   profile: {
     child_name: string;
@@ -132,4 +135,56 @@ export interface MemorySpaces {
     [key: string]: any;
   };
   tmp: Record<string, any>; // Cleared when device sleeps
+}
+
+/**
+ * Device Runtime Config per Phase-1 sync contract.
+ * Contains 8 timing parameters and guard thresholds.
+ */
+export interface DeviceManifestConfig {
+  listen_timeout: number;
+  touch_timeout: number;
+  vad_end: number;
+  silent_streak: number;
+  no_reply_min: number;
+  loop_guard: number;
+  think_ms: number;
+  server_timeout: number;
+}
+
+export interface DeviceManifestProfile {
+  child_name: string;
+  bong_name: string;
+}
+
+export interface ManifestSceneItem {
+  id: string;
+  ver: number;
+  hash: string;
+  pin?: boolean;
+}
+
+export interface ManifestFileItem {
+  id: string;
+  hash: string;
+  size: number;
+  kind: 'audio' | 'image' | string;
+}
+
+/**
+ * Full device manifest response per Phase-1 sync contract.
+ * Corresponds to GET /api/v1/device/manifest.
+ */
+export interface V3DeviceManifest {
+  fmt: number;
+  ver: number;
+  key_version?: number | null;
+  key_alias?: string | null;
+  blob_base?: string | null;
+  cfg: DeviceManifestConfig;
+  profile: DeviceManifestProfile;
+  wanted: string[];
+  scenes: ManifestSceneItem[];
+  files: ManifestFileItem[];
+  prompts: Record<string, string>;
 }

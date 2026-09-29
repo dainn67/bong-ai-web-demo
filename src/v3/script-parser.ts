@@ -12,6 +12,32 @@ export interface ValidationIssue {
   message: string;
 }
 
+// Firmware 1.0.0 contract: replies a touch layout can actually emit.
+const TOUCH_ZONE_MAX: Record<string, number> = { tb2: 2, lr2: 2, pie3: 3, pie4: 4 };
+const TOUCH_BASE_REPLIES = new Set(['miss', 'silent']);
+const SWIPE_REPLIES = new Set([
+  'swipe_up',
+  'swipe_down',
+  'swipe_left',
+  'swipe_right',
+  'miss',
+  'silent',
+]);
+const VOICE_SYSTEM_REPLIES = new Set(['other', 'unclear', 'silent', 'spoke']);
+// Old authoring tokens the device never emits.
+const BANNED_REPLY_TOKENS = new Set([
+  'cham_khac',
+  'vuot_len',
+  'vuot_xuong',
+  'vuot_trai',
+  'vuot_phai',
+  'zone5',
+  'zone6',
+  'zone7',
+  'zone8',
+]);
+const PLACEHOLDER_RE = /\{[^{}]*\}/;
+
 export function validateV3Scene(scene: unknown): { valid: boolean; issues: ValidationIssue[] } {
   const issues: ValidationIssue[] = [];
 
@@ -55,14 +81,19 @@ export function validateV3Scene(scene: unknown): { valid: boolean; issues: Valid
 
   // Check each step
   for (const step of s.steps) {
-    validateStep(step, issues, stepIds);
+    validateStep(step, issues, stepIds, s.prompts);
   }
 
   const hasErrors = issues.some((i) => i.type === 'error');
   return { valid: !hasErrors, issues };
 }
 
-function validateStep(step: V3Step, issues: ValidationIssue[], allStepIds: Set<string>): void {
+function validateStep(
+  step: V3Step,
+  issues: ValidationIssue[],
+  allStepIds: Set<string>,
+  prompts?: Record<string, string>,
+): void {
   // Rule 2: Conflict between branches and next
   if (step.branches && step.next) {
     issues.push({
@@ -123,6 +154,201 @@ function validateStep(step: V3Step, issues: ValidationIssue[], allStepIds: Set<s
       stepId: step.id,
       message: `Phát hiện placeholder bị cấm "{nbest}" (đã bị khai tử trong chuẩn v3).`,
     });
+  }
+
+  // Step id charset: lowercase letters, digits, underscore only
+  if (step.id && !/^[a-z0-9_]+$/.test(step.id)) {
+    issues.push({
+      type: 'error',
+      rule: 2,
+      stepId: step.id,
+      message: `Step id "${step.id}" chỉ được chứa chữ thường, số và "_".`,
+    });
+  }
+
+  validateNodes(step, issues);
+  validateListen(step, issues, prompts);
+
+  // save write-guard: sys.*/profile.* are read-only
+  for (const key of Object.keys(step.save || {})) {
+    if (key.startsWith('sys.') || key.startsWith('profile.')) {
+      issues.push({
+        type: 'error',
+        rule: 8,
+        stepId: step.id,
+        message: `save ghi vào "${key}" — sys.*/profile.* là read-only.`,
+      });
+    }
+  }
+}
+
+/** Node url + visual timing rules (firmware 1.0.0). */
+function validateNodes(step: V3Step, issues: ValidationIssue[]): void {
+  const lanes: Array<'audio' | 'visual'> = ['audio', 'visual'];
+  const groups: Array<{ lane: 'audio' | 'visual'; nodes: Array<Record<string, any>> }> = lanes.map(
+    (lane) => ({ lane, nodes: (step[lane] || []) as Array<Record<string, any>> }),
+  );
+  // retry audio inside voice listen also needs valid urls
+  // (spec ambiguity: retry may live on listen.voice or listen — accept both)
+  const retry = (step.listen?.voice as any)?.retry ?? step.listen?.retry;
+  const retryList = Array.isArray(retry) ? retry : retry ? [retry] : [];
+  const retryAudio = retryList.flatMap(
+    (r: any) => (r?.audio || []) as Array<Record<string, any>>,
+  );
+  if (retryAudio.length) groups.push({ lane: 'audio', nodes: retryAudio });
+
+  for (const { lane, nodes } of groups) {
+    for (const node of nodes) {
+      const url = typeof node.url === 'string' ? node.url : undefined;
+      const label = String(node.src ?? `${lane} node`);
+      if (url === undefined || url.trim() === '') {
+        issues.push({
+          type: 'warning',
+          rule: 4,
+          stepId: step.id,
+          message: `Node "${label}" thiếu/trống "url" → firmware sẽ bỏ qua node.`,
+        });
+      } else if (PLACEHOLDER_RE.test(url)) {
+        issues.push({
+          type: 'error',
+          rule: 4,
+          stepId: step.id,
+          message: `Node "${label}" url còn placeholder chưa thay: ${url.slice(0, 100)}`,
+        });
+      } else if (lane === 'visual' && /\.(gif|webp|jpe?g)$/i.test(url)) {
+        issues.push({
+          type: 'warning',
+          rule: 10,
+          stepId: step.id,
+          message: `Visual "${label}" là ${url.split('.').pop()} → chỉ hiển thị tĩnh qua .360.png.`,
+        });
+      }
+    }
+  }
+
+  // Infinite visual (ảnh tĩnh không duration, hoặc repeat "loop") chỉ được ở node cuối.
+  const visuals = (step.visual || []) as Array<Record<string, any>>;
+  for (const [i, node] of visuals.slice(0, -1).entries()) {
+    const url = String(node.url || '').toLowerCase();
+    const isEaf = url.endsWith('.eaf');
+    const hasDuration = node.duration !== undefined && node.duration !== null;
+    const infinite = !hasDuration && (node.repeat === 'loop' || !isEaf);
+    if (infinite) {
+      issues.push({
+        type: 'error',
+        rule: 5,
+        stepId: step.id,
+        message: `Visual "${node.src}" (vị trí ${i}) vô hạn nhưng không phải node cuối → step sẽ đứng mãi.`,
+      });
+    }
+  }
+}
+
+/** Listen rules: touch reply whitelist per layout, voice prompt contract. */
+function validateListen(
+  step: V3Step,
+  issues: ValidationIssue[],
+  prompts?: Record<string, string>,
+): void {
+  const listen = step.listen;
+  if (!listen || listen.mode === 'none' || !listen.mode) return;
+
+  const branches = step.branches || [];
+  let valid: Set<string>;
+  if (listen.mode === 'touch') {
+    const layout = listen.touch?.layout || '';
+    valid = new Set(TOUCH_BASE_REPLIES);
+    const max = TOUCH_ZONE_MAX[layout];
+    if (max) {
+      for (let i = 1; i <= max; i++) valid.add(`zone${i}`);
+    } else if (layout === 'swipe') {
+      SWIPE_REPLIES.forEach((r) => valid.add(r));
+    } else if (layout) {
+      issues.push({
+        type: 'error',
+        rule: 6,
+        stepId: step.id,
+        message: `Layout touch "${layout}" không tồn tại (tb2/lr2/pie3/pie4/swipe).`,
+      });
+    }
+  } else {
+    // voice
+    const voice = listen.voice;
+    valid = new Set(VOICE_SYSTEM_REPLIES);
+    if (Array.isArray(voice?.options)) {
+      for (const opt of voice.options as any[]) {
+        if (typeof opt === 'string') valid.add(opt);
+        else if (opt && typeof opt === 'object' && opt.name) valid.add(String(opt.name));
+      }
+    }
+
+    if (voice && voice.options !== 'any') {
+      const prompt = voice.prompt;
+      const ref = voice.prompt_ref;
+      if (prompt && ref) {
+        issues.push({
+          type: 'error',
+          rule: 7,
+          stepId: step.id,
+          message: `Dùng cả "prompt" và "prompt_ref" — chỉ được một trong hai.`,
+        });
+      }
+      if (!prompt && !ref) {
+        issues.push({
+          type: 'error',
+          rule: 7,
+          stepId: step.id,
+          message: `Voice listen thiếu "prompt" hoặc "prompt_ref".`,
+        });
+      } else {
+        const text = prompt ?? (ref ? prompts?.[ref] : undefined);
+        if (ref && prompts && !(ref in prompts)) {
+          issues.push({
+            type: 'error',
+            rule: 7,
+            stepId: step.id,
+            message: `prompt_ref "${ref}" không tồn tại trong "prompts" của kịch bản.`,
+          });
+        }
+        if (text !== undefined && !text.includes('{transcript}')) {
+          issues.push({
+            type: 'error',
+            rule: 7,
+            stepId: step.id,
+            message: `Prompt thiếu placeholder "{transcript}".`,
+          });
+        } else if (text !== undefined && !text.includes('{options}')) {
+          issues.push({
+            type: 'warning',
+            rule: 7,
+            stepId: step.id,
+            message: `Prompt không có "{options}" — LLM không thấy danh sách lựa chọn.`,
+          });
+        }
+      }
+    }
+  }
+
+  for (const b of branches) {
+    const when = b.when;
+    if (typeof when !== 'object' || when === null) continue;
+    const reply = when.reply;
+    if (typeof reply !== 'string') continue;
+    if (BANNED_REPLY_TOKENS.has(reply)) {
+      issues.push({
+        type: 'error',
+        rule: 6,
+        stepId: step.id,
+        message: `Reply "${reply}" là token firmware không bao giờ trả về (dùng miss/swipe_*/zone1-4).`,
+      });
+    } else if (!valid.has(reply)) {
+      issues.push({
+        type: 'error',
+        rule: 6,
+        stepId: step.id,
+        message: `Reply "${reply}" không thuộc tập hợp lệ của layout/options.`,
+      });
+    }
   }
 }
 
