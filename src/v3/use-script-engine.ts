@@ -1,13 +1,30 @@
 /**
  * Script Engine React Hook.
- * Implements the 8-step lifecycle and 6 memory spaces from v3 spec.
+ * Implements the step lifecycle and six memory spaces — Oct-1 contract:
+ * Excel-style `when`, single-shot `retry`, `ignore_silence`, `silent_streak`,
+ * `hear` mode (local), `talk` sessions, device log schema {t,scene,step,mode,
+ * reply,retried,ms,seq}.
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import type { V3Scene, V3Step, MemorySpaces, OrbExpression } from './types';
+import type { V3Scene, V3Step, MemorySpaces, OrbExpression, DeviceLogEntry } from './types';
 import { resolvePlaceholders } from './script-parser';
+import { evalWhen, normalizeReply } from './when-expr';
 import { VirtualSdCard } from './virtual-sd-card';
 import { isBongEncrypted, decryptBongAsset, SimulatedDeviceSecurity } from './crypto-client';
+import {
+  SAMPLE_LESSON_TEST,
+  SAMPLE_TALK_SCENE,
+  SAMPLE_START_SCENE,
+  SAMPLE_END_SCENE,
+} from './sample-scenes';
+
+const BUILTIN_SCENES: Record<string, V3Scene> = {
+  LESSON_TEST: SAMPLE_LESSON_TEST,
+  TALK_DEMO: SAMPLE_TALK_SCENE,
+  START: SAMPLE_START_SCENE,
+  END: SAMPLE_END_SCENE,
+};
 
 const playAudioBuffer = async (
   audioContext: AudioContext,
@@ -62,8 +79,6 @@ const playSynthesizedTone = (
 const INITIAL_MEMORY: MemorySpaces = {
   sys: {
     rnd: 0,
-    attempt: 0,
-    match: null,
     silent_streak: 0,
     net: true,
     time: new Date().toLocaleTimeString(),
@@ -87,6 +102,8 @@ const INITIAL_MEMORY: MemorySpaces = {
   tmp: {},
 };
 
+const SILENT_STREAK_LIMIT = 4; // cfg.silent_streak default
+
 export function useScriptEngine() {
   const [scene, setScene] = useState<V3Scene | null>(null);
   const [currentStepId, setCurrentStepId] = useState<string | null>(null);
@@ -96,28 +113,58 @@ export function useScriptEngine() {
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [currentReply, setCurrentReply] = useState<string | null>(null);
   const [isAwaitingInput, setIsAwaitingInput] = useState(false);
+  const [retriedThisStep, setRetriedThisStep] = useState(false);
+  const [deviceLogs, setDeviceLogs] = useState<DeviceLogEntry[]>([]);
 
   const stepTimerRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const logSeqRef = useRef(0);
+  const stepEnteredAtRef = useRef(0);
+  const retriedRef = useRef(false);
 
   const logMessage = useCallback((msg: string) => {
     setExecutionLog((prev) => [...prev.slice(-30), `[${new Date().toLocaleTimeString()}] ${msg}`]);
   }, []);
 
-  const loadScene = useCallback((newScene: V3Scene) => {
-    setScene(newScene);
-    setCurrentStepId(newScene.entry);
-    setExecutionLog([]);
-    logMessage(`Đã nạp kịch bản: ${newScene.id}, bắt đầu từ step: ${newScene.entry}`);
+  /** Append a device log entry (new schema — seq monotonic, retried 0|1). */
+  const pushDeviceLog = useCallback(
+    (step: V3Step, mode: string, reply: string) => {
+      const entry: DeviceLogEntry = {
+        t: new Date().toISOString(),
+        scene: scene?.id || '',
+        step: step.id,
+        mode,
+        reply: reply.slice(0, 50),
+        retried: retriedRef.current ? 1 : 0,
+        ms: Math.max(0, Date.now() - stepEnteredAtRef.current),
+        seq: ++logSeqRef.current,
+      };
+      setDeviceLogs((prev) => [...prev.slice(-200), entry]);
+    },
+    [scene],
+  );
 
-    if (newScene.screen?.orb) {
+  const loadScene = useCallback((newScene: V3Scene, startStepId?: string) => {
+    setScene(newScene);
+    const entry =
+      startStepId && newScene.steps.some((s) => s.id === startStepId) ? startStepId : newScene.entry;
+    setCurrentStepId(entry);
+    setExecutionLog([]);
+    setRetriedThisStep(false);
+    retriedRef.current = false;
+    logMessage(`Đã nạp kịch bản: ${newScene.id}, bắt đầu từ step: ${entry}`);
+
+    const initialStep = newScene.steps.find((s) => s.id === entry);
+    if (initialStep?.orb) {
+      setActiveOrb(initialStep.orb);
+    } else if (newScene.screen?.orb) {
       setActiveOrb(newScene.screen.orb);
     }
   }, [logMessage]);
 
   const currentStep = scene?.steps.find((s) => s.id === currentStepId) || null;
 
-  // Evaluate branches condition
+  // Evaluate branches — `when` is an Excel-style string (or 'default').
   const evaluateBranches = useCallback(
     (step: V3Step, reply: string | null): string | null => {
       if (!step.branches || step.branches.length === 0) {
@@ -125,62 +172,40 @@ export function useScriptEngine() {
       }
 
       for (const branch of step.branches) {
-        if (branch.when === 'default' || !branch.when) {
+        const when = branch.when;
+        if (when === 'default' || when === undefined || when === null) {
           return branch.go || branch.next || null;
         }
-
-        if (typeof branch.when === 'object') {
-          let matched = true;
-          for (const [key, expectedVal] of Object.entries(branch.when)) {
-            let actualVal: any = null;
-            if (key === 'reply') {
-              actualVal = reply;
-            } else if (key.startsWith('sys.')) {
-              actualVal = (memory.sys as any)[key.replace('sys.', '')];
-            } else if (key.startsWith('learn.')) {
-              actualVal = memory.learn[key.replace('learn.', '')];
-            } else if (key.startsWith('stat.')) {
-              actualVal = memory.stat[key.replace('stat.', '')];
-            }
-
-            if (actualVal !== expectedVal) {
-              matched = false;
-              break;
-            }
-          }
-
-          if (matched) {
-            return branch.go || branch.next || null;
-          }
+        if (typeof when === 'string' && evalWhen(when, { reply, memory })) {
+          return branch.go || branch.next || null;
         }
       }
-
       return null;
     },
     [memory],
   );
 
-  // Commit save memory mutations
+  // Commit save memory mutations (sys.*/profile.* are read-only)
   const commitSave = useCallback((saveObj?: Record<string, any>) => {
     if (!saveObj) return;
 
     setMemory((prev) => {
       const next = { ...prev };
       for (const [k, v] of Object.entries(saveObj)) {
+        const resolved = typeof v === 'string' ? resolvePlaceholders(v, prev) : v;
         const parts = k.split('.');
         const space = parts[0] as keyof MemorySpaces;
         const sub = parts.slice(1).join('.');
 
-        // Disallow writing to sys or profile directly
         if (space === 'sys' || space === 'profile') continue;
 
         if (space === 'learn' || space === 'user' || space === 'tmp' || space === 'stat') {
-          if (typeof v === 'string' && v.startsWith('+')) {
-            const add = parseInt(v.replace('+', ''), 10) || 0;
+          if (typeof resolved === 'string' && resolved.startsWith('+')) {
+            const add = parseInt(resolved.replace('+', ''), 10) || 0;
             const cur = typeof next[space][sub] === 'number' ? next[space][sub] : 0;
             (next[space] as any)[sub] = cur + add;
           } else {
-            (next[space] as any)[sub] = v;
+            (next[space] as any)[sub] = resolved;
           }
         }
       }
@@ -197,7 +222,6 @@ export function useScriptEngine() {
         return;
       }
 
-      // Resolve placeholder if target is dynamic
       const resolvedTarget = resolvePlaceholders(target, memory, { reply });
 
       if (currentStep?.save) {
@@ -205,38 +229,119 @@ export function useScriptEngine() {
       }
 
       logMessage(`Chuyển sang step: ${resolvedTarget} (kết quả: ${reply || 'auto'})`);
+
+      // Cross-scene transition check (e.g. "END#idle", "END#finished", "LESSON_TEST")
+      if (resolvedTarget.includes('#')) {
+        const [targetSceneId, targetStepId] = resolvedTarget.split('#');
+        if (targetSceneId !== scene?.id) {
+          if (BUILTIN_SCENES[targetSceneId]) {
+            logMessage(`🔄 Chuyển sang kịch bản: ${targetSceneId} (step: ${targetStepId || 'entry'})`);
+            loadScene(BUILTIN_SCENES[targetSceneId], targetStepId);
+            return;
+          }
+        } else if (targetStepId) {
+          setCurrentStepId(targetStepId);
+          setCurrentReply(null);
+          setIsAwaitingInput(false);
+          retriedRef.current = false;
+          setRetriedThisStep(false);
+          return;
+        }
+      } else if (BUILTIN_SCENES[resolvedTarget] && resolvedTarget !== scene?.id) {
+        logMessage(`🔄 Chuyển sang kịch bản: ${resolvedTarget}`);
+        loadScene(BUILTIN_SCENES[resolvedTarget]);
+        return;
+      }
+
       setCurrentStepId(resolvedTarget);
       setCurrentReply(null);
       setIsAwaitingInput(false);
+      retriedRef.current = false;
+      setRetriedThisStep(false);
     },
-    [commitSave, currentStep, logMessage, memory],
+    [commitSave, currentStep, loadScene, logMessage, memory, scene?.id],
   );
 
-  // Handle reply from touch or voice
+  /** Replay the re-ask audio and re-open the listen window (one-shot). */
+  const runRetryAudio = useCallback(
+    async (step: V3Step) => {
+      const retry = step.listen?.retry;
+      if (!retry?.audio?.length) return;
+      for (const aud of retry.audio) {
+        const srcId = Array.isArray(aud.src) ? aud.src[0] : aud.src;
+        if (!audioContextRef.current && typeof window !== 'undefined' && (window.AudioContext || (window as any).webkitAudioContext)) {
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          audioContextRef.current = new AudioCtx();
+        }
+        if (audioContextRef.current) {
+          const buf = await VirtualSdCard.readFile(`/sdcard/assets/audio/${srcId}.wav`).catch(() => null);
+          if (buf) await playAudioBuffer(audioContextRef.current, buf);
+          else await playSynthesizedTone(audioContextRef.current, 620, 450);
+        }
+      }
+    },
+    [],
+  );
+
+  // Handle reply from any input source (touch, hear, voice, pet, talk).
   const handleInputReply = useCallback(
     (reply: string) => {
       if (!currentStep) return;
-      setCurrentReply(reply);
-      logMessage(`Nhận phản hồi từ bé: "${reply}"`);
+      const normalized = normalizeReply(reply);
+      setCurrentReply(normalized);
+      logMessage(`Nhận phản hồi từ bé: "${normalized}"`);
 
-      const target = evaluateBranches(currentStep, reply);
-      transitionToStep(target, reply);
+      const mode = currentStep.talk ? 'talk' : currentStep.listen?.mode || 'auto';
+
+      // retry: once per step, only when reply is in retry.on
+      const retry = currentStep.listen?.retry;
+      if (
+        retry &&
+        !retriedRef.current &&
+        retry.on.includes(normalized)
+      ) {
+        retriedRef.current = true;
+        setRetriedThisStep(true);
+        logMessage(`↩ retry một lần — hỏi lại (on: ${retry.on.join(', ')})`);
+        void runRetryAudio(currentStep);
+        setIsAwaitingInput(true); // re-open listen window
+        return; // log entry written only on FINAL reply — retried flag covers this attempt
+      }
+
+      pushDeviceLog(currentStep, mode, normalized);
+
+      // silent streak — may short-circuit to END#idle (bypass branches)
+      const streakLimit = memory.sys.cfg?.silent_streak ?? SILENT_STREAK_LIMIT;
+      const finalReply = normalized;
+      const ignore = currentStep.listen?.ignore_silence || currentStep.talk?.ignore_silence;
+      const newStreak =
+        finalReply === 'silent' && !ignore ? memory.sys.silent_streak + 1 : 0;
+      setMemory((prev) => ({ ...prev, sys: { ...prev.sys, silent_streak: newStreak } }));
+      if (newStreak >= streakLimit) {
+        logMessage(`silent_streak đạt ${streakLimit} → END#idle (bỏ qua branches)`);
+        transitionToStep('END#idle', finalReply);
+        return;
+      }
+
+      const target = evaluateBranches(currentStep, normalized);
+      transitionToStep(target, normalized);
     },
-    [currentStep, evaluateBranches, logMessage, transitionToStep],
+    [currentStep, evaluateBranches, logMessage, transitionToStep, memory, pushDeviceLog, runRetryAudio],
   );
 
   // Step entry effect
   useEffect(() => {
     if (!currentStep) return;
+    stepEnteredAtRef.current = Date.now();
+    retriedRef.current = false;
+    setRetriedThisStep(false);
 
-    // 1. Set Orb expression
     if (currentStep.orb) {
       setActiveOrb(currentStep.orb);
     }
 
     logMessage(`--- Đang thực thi Step: ${currentStep.id} ---`);
 
-    // 2. Play Audio from Virtual SD Card or synthesized tone
     if (currentStep.audio && currentStep.audio.length > 0) {
       setIsPlayingAudio(true);
       const audioNodes = currentStep.audio;
@@ -244,14 +349,13 @@ export function useScriptEngine() {
       (async () => {
         for (const aud of audioNodes) {
           const srcId = Array.isArray(aud.src) ? aud.src[0] : aud.src;
-          // Check SD card for this asset
           let foundBuffer: ArrayBuffer | null = null;
           const possiblePaths = [
             srcId,
             `/sdcard/assets/audio/${srcId}`,
             `/sdcard/assets/audio/${srcId}.opus`,
             `/sdcard/assets/audio/${srcId}.wav`,
-            `/sdcard/assets/audio/welcome.opus`, // sample fallback
+            `/sdcard/assets/audio/welcome.opus`,
           ];
           for (const p of possiblePaths) {
             foundBuffer = await VirtualSdCard.readFile(p);
@@ -283,7 +387,6 @@ export function useScriptEngine() {
               await new Promise((r) => setTimeout(r, 600));
             }
           } else {
-            // Synthesized tone if file not yet on SD card
             if (!audioContextRef.current && typeof window !== 'undefined' && (window.AudioContext || (window as any).webkitAudioContext)) {
               const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
               audioContextRef.current = new AudioCtx();
@@ -299,13 +402,14 @@ export function useScriptEngine() {
       })();
     }
 
-    // 3. Determine if awaiting input
-    if (currentStep.listen && currentStep.listen.mode !== 'none') {
+    // Interactive step: listen (4 modes) or talk block
+    const interactive = (currentStep.listen && currentStep.listen.mode !== 'none') || currentStep.talk;
+    if (interactive) {
       setIsAwaitingInput(true);
-      logMessage(`Đang chờ tương tác (${currentStep.listen.mode})...`);
+      const mode = currentStep.talk ? 'talk' : currentStep.listen?.mode;
+      logMessage(`Đang chờ tương tác (${mode})...`);
     } else {
       setIsAwaitingInput(false);
-      // Auto advance
       const delay = (currentStep.audio?.length || 0) * 800 + 600;
       stepTimerRef.current = window.setTimeout(() => {
         const nextStep = currentStep.next || evaluateBranches(currentStep, null);
@@ -327,6 +431,8 @@ export function useScriptEngine() {
     isPlayingAudio,
     isAwaitingInput,
     currentReply,
+    retriedThisStep,
+    deviceLogs,
     loadScene,
     handleInputReply,
     jumpToStep: setCurrentStepId,

@@ -53,17 +53,6 @@ export default function App() {
               <div className="flex items-center gap-1 p-1 bg-cream-200/80 rounded-xl text-xs font-bold border border-cream-300">
                 <button
                   type="button"
-                  onClick={() => setLessonEngineType('v2')}
-                  className={`rounded-lg px-3 py-1 transition ${
-                    lessonEngineType === 'v2'
-                      ? 'bg-mint-500 text-white shadow-sm'
-                      : 'text-ink-600 hover:text-ink-900'
-                  }`}
-                >
-                  📚 Kịch bản bài học (FSM)
-                </button>
-                <button
-                  type="button"
                   onClick={() => setLessonEngineType('v3')}
                   className={`rounded-lg px-3 py-1 transition ${
                     lessonEngineType === 'v3'
@@ -71,7 +60,18 @@ export default function App() {
                       : 'text-ink-600 hover:text-ink-900'
                   }`}
                 >
-                  ⚡ Script Engine v3 (Offline)
+                  ⚡ Giai đoạn 1: Kịch bản Bống v3 (Mới)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLessonEngineType('v2')}
+                  className={`rounded-lg px-3 py-1 transition ${
+                    lessonEngineType === 'v2'
+                      ? 'bg-mint-500 text-white shadow-sm'
+                      : 'text-ink-600 hover:text-ink-900'
+                  }`}
+                >
+                  📚 Kịch bản cũ (FSM v2)
                 </button>
               </div>
 

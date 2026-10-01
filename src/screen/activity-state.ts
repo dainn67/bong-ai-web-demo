@@ -62,7 +62,7 @@ export interface ActivityState {
 export const IDLE_ACTIVITY: ActivityState = {
   kind: null,
   title: '',
-  phase: 'loading',
+  phase: 'playing',
   caption: null,
   imageUrl: null,
   imageSeq: 0,

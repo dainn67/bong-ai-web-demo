@@ -8,10 +8,13 @@ import { useScriptEngine } from './use-script-engine';
 import { validateV3Scene } from './script-parser';
 import {
   SAMPLE_LESSON_TEST,
+  SAMPLE_TALK_SCENE,
   SAMPLE_START_SCENE,
   SAMPLE_END_SCENE,
 } from './sample-scenes';
 import type { V3Scene, V3DeviceManifest } from './types';
+import { normalizeReply } from './when-expr';
+import { SAMPLE_PROMPT_STORE } from './sample-scenes';
 import { useSimulatorStore } from '../store/simulator-store';
 import type { TouchLayoutType } from '../screen/touch-layout';
 import {
@@ -26,6 +29,66 @@ import type { SdFileInfo, SdStorageStats } from './virtual-sd-card';
 import { fetchCdnCatalog, type LessonSummary } from '../lessons/catalog';
 import { convertMetadataToV3Scene } from './metadata-converter';
 
+const GD1_QUICK_SCENES = [
+  {
+    id: 'LESSON_TEST',
+    emoji: '🐱',
+    title: 'Bài Học Mèo',
+    desc: 'Chạm 4 vùng, Hear presence, Voice STT/LLM, Retry, Silent streak',
+    badge: 'Khuyên Dùng GĐ1',
+    highlight: true,
+  },
+  {
+    id: 'TALK_DEMO',
+    emoji: '💬',
+    title: 'Trò Chuyện AI',
+    desc: 'Hội thoại giọng nói nhiều lượt (/talk/*)',
+    badge: 'Mới GĐ1',
+  },
+  {
+    id: 'ONBOARD',
+    emoji: '🌟',
+    title: 'Chào Bạn Mới',
+    desc: 'Bống hỏi tên và làm quen cùng bé',
+  },
+  {
+    id: 'S_001',
+    emoji: '📖',
+    title: 'Củ Cải Đỏ',
+    desc: 'Kể chuyện cổ tích tương tác',
+  },
+  {
+    id: 'L_002',
+    emoji: '📚',
+    title: 'Từ Vựng Anh',
+    desc: 'Bài học từ vựng đố vui',
+  },
+  {
+    id: 'START',
+    emoji: '🚀',
+    title: 'Khởi Động',
+    desc: 'Kiểm tra first_run và điều hướng',
+  },
+  {
+    id: 'END',
+    emoji: '😴',
+    title: 'Bé Đi Ngủ',
+    desc: 'Tạm biệt & nghỉ ngơi (idle)',
+  },
+];
+
+const ORB_DESCRIPTIONS: Record<string, { emoji: string; label: string }> = {
+  happy: { emoji: '😊', label: 'Vui vẻ' },
+  thinking: { emoji: '🤔', label: 'Đang suy nghĩ' },
+  surprised: { emoji: '😮', label: 'Ngạc nhiên' },
+  delicious: { emoji: '😋', label: 'Khen ngợi' },
+  crying: { emoji: '😢', label: 'Động viên' },
+  sleepy: { emoji: '😴', label: 'Buồn ngủ / Nghỉ ngơi' },
+  loving: { emoji: '😍', label: 'Ấm áp, yêu thương' },
+  cool: { emoji: '😎', label: 'Tuyệt vời' },
+  idle: { emoji: '🙂', label: 'Sẵn sàng' },
+};
+
 export const ScriptEnginePanel: React.FC = () => {
   const {
     scene,
@@ -36,6 +99,8 @@ export const ScriptEnginePanel: React.FC = () => {
     isPlayingAudio,
     isAwaitingInput,
     currentReply,
+    retriedThisStep,
+    deviceLogs,
     loadScene,
     handleInputReply,
     jumpToStep,
@@ -78,12 +143,37 @@ export const ScriptEnginePanel: React.FC = () => {
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
   const [syncedSceneIds, setSyncedSceneIds] = useState<Set<string>>(new Set());
 
-  // Load cached manifest on mount
+  // Talk session state (POST /device/talk/*)
+  const [talkSessionId, setTalkSessionId] = useState<string | null>(null);
+  const [talkTurnsLeft, setTalkTurnsLeft] = useState(0);
+  const [talkLog, setTalkLog] = useState<string[]>([]);
+
+
+  // End-user vs Dev mode state
+  const [viewMode, setViewMode] = useState<'user' | 'dev'>('user');
+  const [isOneClickSyncing, setIsOneClickSyncing] = useState(false);
+  const [oneClickSyncMessage, setOneClickSyncMessage] = useState<{ type: 'info' | 'success' | 'error'; text: string } | null>(null);
+  const [isSyncingLogs, setIsSyncingLogs] = useState(false);
+  const [syncLogsResult, setSyncLogsResult] = useState<string | null>(null);
+
+  // Load cached manifest on mount + silent auto-fetch if backend available
   useEffect(() => {
     void (async () => {
       const cached = await VirtualSdCard.loadManifestCache();
       if (cached) {
         setBackendManifest(cached);
+      }
+      try {
+        const res = await fetch('http://localhost:8000/api/v1/device/manifest?device_id=simulator_v3_dev');
+        if (res.ok) {
+          const data: V3DeviceManifest = await res.json();
+          setBackendManifest(data);
+          await VirtualSdCard.saveManifestCache(data);
+          if (data.prompts) await VirtualSdCard.savePromptsCache(data.prompts);
+          if (data.cfg) await VirtualSdCard.saveConfigCache(data.cfg);
+        }
+      } catch {
+        // offline fallback
       }
     })();
   }, []);
@@ -123,6 +213,32 @@ export const ScriptEnginePanel: React.FC = () => {
                 ? 'swipe'
                 : null;
 
+    let friendlyCaption: string | null = null;
+    if (currentStep) {
+      if (currentStep.listen?.mode === 'voice') {
+        const opts = (currentStep.listen.voice?.options || []).map((o) => o.name).join(', ');
+        friendlyCaption = opts ? `Hỏi bé: [${opts}]` : 'Bống đang lắng nghe bé nói...';
+      } else if (currentStep.listen?.mode === 'touch') {
+        friendlyCaption = 'Bé chạm vào màn hình nhé!';
+      } else if (currentStep.listen?.mode === 'hear') {
+        friendlyCaption = 'Bống đang lắng nghe bé...';
+      } else if (currentStep.talk) {
+        friendlyCaption = `Trò chuyện cùng ${currentStep.talk.voice}`;
+      } else if (isPlayingAudio) {
+        friendlyCaption = 'Bống đang nói...';
+      } else {
+        friendlyCaption = `Bước: ${currentStep.id}`;
+      }
+    }
+
+    const firstVisual = currentStep?.visual?.[0];
+    const rawSrc = Array.isArray(firstVisual?.src) ? firstVisual?.src[0] : firstVisual?.src;
+    const visualUrl: string | null =
+      firstVisual?.url ||
+      (typeof rawSrc === 'string' && (rawSrc.includes('/') || rawSrc.endsWith('.eaf'))
+        ? rawSrc
+        : null);
+
     setV3ScreenState({
       expression: activeOrb,
       mode: isPlayingAudio ? 'speaking' : 'idle',
@@ -134,7 +250,9 @@ export const ScriptEnginePanel: React.FC = () => {
             : null
         : null,
       touchLayout: isAwaitingInput && currentStep?.listen?.mode === 'touch' ? mappedLayout : null,
-      caption: currentStep ? `Step: ${currentStep.id}` : null,
+      caption: friendlyCaption,
+      imageUrl: visualUrl,
+      kind: 'lesson',
     });
   }, [activeOrb, currentStep, isAwaitingInput, isPlayingAudio, setV3ScreenState]);
 
@@ -147,6 +265,8 @@ export const ScriptEnginePanel: React.FC = () => {
         waitingFor: null,
         touchLayout: null,
         caption: null,
+        imageUrl: null,
+        kind: null,
       });
       setV3TouchHandler(null);
     };
@@ -419,6 +539,10 @@ export const ScriptEnginePanel: React.FC = () => {
       loadScene(SAMPLE_LESSON_TEST);
       return;
     }
+    if (id === 'TALK_DEMO') {
+      loadScene(SAMPLE_TALK_SCENE);
+      return;
+    }
     if (id === 'START') {
       loadScene(SAMPLE_START_SCENE);
       return;
@@ -476,6 +600,93 @@ export const ScriptEnginePanel: React.FC = () => {
     } catch (e: any) {
       setDownloadNotice(`❌ Lỗi tải kịch bản từ server: ${e?.message || e}`);
     }
+  };
+
+  const handleOneClickSyncGD1 = async () => {
+    setIsOneClickSyncing(true);
+    setOneClickSyncMessage({ type: 'info', text: '⏳ Đang kết nối Backend và tải Manifest v3...' });
+    try {
+      // 1. Fetch Key (best-effort)
+      let activeKeyBase64 = storedContentKey?.rawKeyBase64;
+      try {
+        const keyRes = await fetch('http://localhost:8000/api/v1/device/key?device_id=simulator_v3_dev');
+        if (keyRes.ok) {
+          const keyData = await keyRes.json();
+          SimulatedDeviceSecurity.saveWrappedContentKey(keyData.key_alias, keyData.key_version, keyData.key_bytes);
+          setStoredContentKey(SimulatedDeviceSecurity.getStoredContentKey());
+          activeKeyBase64 = keyData.key_bytes;
+        }
+      } catch {
+        // ignore key fetch
+      }
+
+      // 2. Fetch Manifest
+      const res = await fetch('http://localhost:8000/api/v1/device/manifest?device_id=simulator_v3_dev');
+      if (!res.ok) throw new Error(`Backend HTTP ${res.status}: ${res.statusText}`);
+      const manifestData: V3DeviceManifest = await res.json();
+      setBackendManifest(manifestData);
+      await VirtualSdCard.saveManifestCache(manifestData);
+      if (manifestData.prompts) await VirtualSdCard.savePromptsCache(manifestData.prompts);
+      if (manifestData.cfg) await VirtualSdCard.saveConfigCache(manifestData.cfg);
+
+      // 3. Sync all scene blobs into SD Card
+      setOneClickSyncMessage({ type: 'info', text: '📥 Đang đồng bộ kịch bản và assets vào Thẻ SD ảo...' });
+      const syncRes = await VirtualSdCard.syncFromManifest(
+        manifestData,
+        'http://localhost:8000/api/v1',
+        activeKeyBase64
+      );
+
+      await refreshSdStats();
+      await refreshCatalogAndSd();
+      setOneClickSyncMessage({
+        type: 'success',
+        text: `🎉 Đồng bộ GĐ1 thành công! Đã nạp ${syncRes.syncedScenes} kịch bản & ${syncRes.syncedFiles} assets (Manifest v${manifestData.ver}).`,
+      });
+    } catch (err: any) {
+      setOneClickSyncMessage({
+        type: 'error',
+        text: `❌ Lỗi kết nối Backend: ${err.message}. (Bạn vẫn có thể test các kịch bản mẫu offline có sẵn!)`,
+      });
+    } finally {
+      setIsOneClickSyncing(false);
+    }
+  };
+
+  const handleSyncDeviceLogs = async () => {
+    if (deviceLogs.length === 0) {
+      alert('Chưa có bản ghi nhật ký thiết bị nào để gửi lên server.');
+      return;
+    }
+    setIsSyncingLogs(true);
+    setSyncLogsResult(null);
+    try {
+      const res = await fetch('http://localhost:8000/api/v1/device/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device_id: 'simulator_v3_dev',
+          logs: deviceLogs,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSyncLogsResult(`✅ Server đã nhận ${deviceLogs.length} logs (ack_seq: ${data.ack_seq})`);
+      } else {
+        setSyncLogsResult(`❌ Server trả lỗi HTTP ${res.status}`);
+      }
+    } catch (err: any) {
+      setSyncLogsResult(`❌ Lỗi kết nối: ${err.message}`);
+    } finally {
+      setIsSyncingLogs(false);
+    }
+  };
+
+  const handleSimulateSilentStreak4 = () => {
+    handleInputReply('silent');
+    setTimeout(() => handleInputReply('silent'), 100);
+    setTimeout(() => handleInputReply('silent'), 200);
+    setTimeout(() => handleInputReply('silent'), 300);
   };
 
   const handleDownloadSelectedLesson = async () => {
@@ -635,30 +846,32 @@ export const ScriptEnginePanel: React.FC = () => {
       formData.append('scene', scene?.id || 'LESSON_TEST');
       formData.append('step', currentStep.id);
 
-      // Resolve prompt:
-      // 1. Direct prompt
-      // 2. prompt_ref from backendManifest.prompts (or scene.prompts)
-      let resolvedPrompt = currentStep.listen.voice.prompt;
-      if (!resolvedPrompt && currentStep.listen.voice.prompt_ref) {
-        const ref = currentStep.listen.voice.prompt_ref;
-        resolvedPrompt = backendManifest?.prompts?.[ref] || scene?.prompts?.[ref];
-      }
-      if (!resolvedPrompt) {
-        resolvedPrompt = `Phân loại: "{transcript}"`;
-      }
-
-      // Substitute {child_name} and {bong_name} from backendManifest.profile
+      // Resolve prompt — Oct-1 contract: {prompts.x} resolves client-side
+      // from the manifest prompt store, then {options} and memory
+      // placeholders expand; BE only substitutes {transcript}.
+      const promptStore = backendManifest?.prompts || SAMPLE_PROMPT_STORE;
+      let resolvedPrompt = currentStep.listen.voice.prompt || '';
+      resolvedPrompt = resolvedPrompt.replace(
+        /\{prompts\.([A-Za-z0-9_]+)\}/g,
+        (_m, name) => promptStore[name] || `{prompts.${name}}`,
+      );
+      const optionsText = (currentStep.listen.voice.options || [])
+        .map((o) => `- ${o.name}: ${o.desc}`)
+        .join('\n');
+      resolvedPrompt = resolvedPrompt.replace(/\{options\}/g, optionsText);
       const childName = backendManifest?.profile?.child_name || 'Bé';
       const bongName = backendManifest?.profile?.bong_name || 'Bống';
       resolvedPrompt = resolvedPrompt
         .replace(/\{child_name\}/g, childName)
-        .replace(/\{bong_name\}/g, bongName);
+        .replace(/\{bong_name\}/g, bongName)
+        .replace(/\{profile\.child_name\}/g, childName)
+        .replace(/\{profile\.bong_name\}/g, bongName);
+      if (!resolvedPrompt.trim()) {
+        resolvedPrompt = `Phân loại: "{transcript}"\n{options}`.replace('{options}', optionsText);
+      }
 
       formData.append('prompt', resolvedPrompt);
-      formData.append('clip', blob, 'test.wav');
-      formData.append('option_names', JSON.stringify(currentStep.listen.voice.options));
-      formData.append('hints', JSON.stringify(currentStep.listen.voice.hints || []));
-      formData.append('min_conf', String(currentStep.listen.voice.min_conf || 0.6));
+      formData.append('audio', blob, 'test.wav');
 
       // Call Backend API
       const res = await fetch('http://localhost:8000/api/v1/device/listen', {
@@ -669,7 +882,14 @@ export const ScriptEnginePanel: React.FC = () => {
       if (res.ok) {
         const data = await res.json();
         setBackendListenResult(data);
-        handleInputReply(data.reply);
+        // K7: device normalizes raw LLM text, then matches option names.
+        const norm = normalizeReply(data.reply || '');
+        const optNames = (currentStep.listen.voice?.options || []).map((o) => o.name);
+        const finalReply =
+          norm === 'silent' || norm === 'error' || norm === 'unclear' || optNames.includes(norm)
+            ? norm
+            : 'other';
+        handleInputReply(finalReply);
       } else {
         // Fallback simulate locally if backend STT unavailable
         setBackendListenResult({ reply: optionOrText, local_fallback: true });
@@ -684,14 +904,745 @@ export const ScriptEnginePanel: React.FC = () => {
     }
   };
 
+  // --- Talk session helpers (B7–B11) ---
+  const talkPost = async (path: string, fd: FormData) => {
+    const res = await fetch(`http://localhost:8000/api/v1/device/talk/${path}`, {
+      method: 'POST',
+      body: fd,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  };
+
+  const handleTalkStart = async () => {
+    const talk = currentStep?.talk;
+    if (!talk) return;
+    setIsCallingBackend(true);
+    try {
+      const fd = new FormData();
+      fd.append('device_id', 'simulator_v3_dev');
+      fd.append('scene', scene?.id || '');
+      fd.append('step', currentStep!.id);
+      fd.append('voice', talk.voice);
+      fd.append('prompt', resolveTalkPrompt(talk.prompt || ''));
+      fd.append('seed', talk.seed || '');
+      fd.append('turns', String(talk.turns));
+      fd.append('sec', String(talk.sec));
+      const data = await talkPost('start', fd);
+      setTalkSessionId(data.session);
+      setTalkTurnsLeft((currentStep!.talk?.turns ?? 0) - 1);
+      setTalkLog((l) => [...l, `[start] session=${data.session} branch=${data.branch}`]);
+      if (data.branch && data.branch !== 'continue' && data.branch !== 'silent') {
+        handleInputReply(data.branch);
+      }
+    } catch (err: any) {
+      setTalkLog((l) => [...l, `[start] lỗi: ${err.message} → branch "error"`]);
+      handleInputReply('error');
+    } finally {
+      setIsCallingBackend(false);
+    }
+  };
+
+  const resolveTalkPrompt = (prompt: string): string => {
+    const store = backendManifest?.prompts || SAMPLE_PROMPT_STORE;
+    let out = prompt.replace(/\{prompts\.([A-Za-z0-9_]+)\}/g, (_m, n) => store[n] || `{prompts.${n}}`);
+    const opts = (currentStep?.talk?.options || [])
+      .map((o) => `- ${o.name}: ${o.desc}`)
+      .join('\n');
+    out = out.replace(/\{options\}/g, opts);
+    return out;
+  };
+
+  const handleTalkTurn = async (saidText: string) => {
+    if (!talkSessionId) return;
+    setIsCallingBackend(true);
+    try {
+      const wavHeader = new Uint8Array([
+        0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45,
+        0x66, 0x6d, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+        0x80, 0x3e, 0x00, 0x00, 0x00, 0x7d, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00,
+        0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x00, 0x00,
+      ]);
+      const fd = new FormData();
+      fd.append('session', talkSessionId);
+      fd.append('audio', new Blob([wavHeader], { type: 'audio/wav' }), 'turn.wav');
+      const data = await talkPost('turn', fd);
+      setTalkTurnsLeft((t) => Math.max(0, t - 1));
+      setTalkLog((l) => [...l, `[turn] branch=${data.branch} topic=${data.topic || '-'} said="${saidText}"`]);
+      if (data.branch !== 'continue' && data.branch !== 'silent') {
+        setTalkSessionId(null);
+        handleInputReply(data.branch);
+      }
+    } catch (err: any) {
+      setTalkLog((l) => [...l, `[turn] lỗi: ${err.message} → branch "error"`]);
+      setTalkSessionId(null);
+      handleInputReply('error');
+    } finally {
+      setIsCallingBackend(false);
+    }
+  };
+
+  const handleTalkEnd = async () => {
+    if (!talkSessionId) return;
+    try {
+      const fd = new FormData();
+      fd.append('session', talkSessionId);
+      await talkPost('end', fd);
+      setTalkLog((l) => [...l, '[end] session closed']);
+    } catch {
+      // best-effort
+    }
+    setTalkSessionId(null);
+  };
+
   const rawTouchLayout = currentStep?.listen?.mode === 'touch' ? currentStep.listen.touch?.layout : undefined;
 
   return (
     <div className="flex flex-col gap-4 w-full bg-slate-900/60 p-5 rounded-2xl border border-slate-800 backdrop-blur-md shadow-xl">
-      {/* 1. Header: Scene Selector + Actions */}
+      {/* 0. Common Top Bar: App Title + 1-Click Sync + Mode Toggle */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Chọn Bài:</span>
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-coral-500/20 border border-coral-500/40 text-2xl shadow-sm">
+            🧸
+          </span>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-black text-white">Bống AI — Giả Lập Giai Đoạn 1</h2>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                ⚡ v3 Offline-First
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">Kiểm thử bài học, 4 tương tác (touch/hear/voice/talk), retry &amp; silent streak</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Toggle Online/Offline */}
+          <button
+            type="button"
+            onClick={() => setIsSimulatingOffline(!isSimulatingOffline)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition active:scale-95 ${
+              isSimulatingOffline
+                ? 'bg-rose-500/20 border-rose-500/40 text-rose-300 shadow-sm animate-pulse'
+                : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
+            }`}
+            title="Chuyển đổi chế độ mô phỏng Mạng Online / Offline"
+          >
+            <span>{isSimulatingOffline ? '📴 Offline' : '📡 Online'}</span>
+          </button>
+
+          {/* 1-Click Sync GĐ1 Button */}
+          <button
+            type="button"
+            onClick={handleOneClickSyncGD1}
+            disabled={isOneClickSyncing}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-md shadow-emerald-900/40 transition active:scale-95 disabled:opacity-50"
+            title="Đồng bộ toàn bộ 7 kịch bản GĐ1 và assets từ Backend (Port 8000)"
+          >
+            <span>{isOneClickSyncing ? '⏳' : '🚀'}</span>
+            <span>{isOneClickSyncing ? 'Đang đồng bộ...' : '1-Chạm Đồng Bộ GĐ1'}</span>
+          </button>
+
+          {/* View Mode Toggle: User vs Dev */}
+          <button
+            type="button"
+            onClick={() => setViewMode(viewMode === 'user' ? 'dev' : 'user')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition active:scale-95 ${
+              viewMode === 'user'
+                ? 'bg-indigo-600/30 border-indigo-500/50 text-indigo-300 hover:bg-indigo-600/50'
+                : 'bg-amber-600/30 border-amber-500/50 text-amber-300 hover:bg-amber-600/50'
+            }`}
+            title="Chuyển đổi giao diện người dùng đơn giản hoặc bảng kỹ thuật nâng cao"
+          >
+            <span>{viewMode === 'user' ? '🛠️ Bảng Kỹ Thuật' : '✨ Chế Độ Người Dùng'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 1-Click Sync Notification Message */}
+      {oneClickSyncMessage && (
+        <div
+          className={`p-3 rounded-xl border text-xs font-medium flex items-center justify-between shadow-sm ${
+            oneClickSyncMessage.type === 'success'
+              ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-200'
+              : oneClickSyncMessage.type === 'error'
+              ? 'bg-rose-950/60 border-rose-500/40 text-rose-200'
+              : 'bg-indigo-950/60 border-indigo-500/40 text-indigo-200'
+          }`}
+        >
+          <span>{oneClickSyncMessage.text}</span>
+          <button
+            type="button"
+            onClick={() => setOneClickSyncMessage(null)}
+            className="text-slate-400 hover:text-white font-bold ml-2 text-xs"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* VIEW MODE 1: USER-FRIENDLY TESTING STATION */}
+      {viewMode === 'user' && (
+        <div className="flex flex-col gap-4">
+          {/* A. Quick Scenario Cards Strip */}
+          <div className="flex flex-col gap-2.5 bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                <span>📚</span> Chọn Kịch Bản Kiểm Thử GĐ1:
+              </span>
+              <div className="flex items-center gap-2">
+                {scene && (
+                  <button
+                    type="button"
+                    onClick={() => loadScene(scene)}
+                    className="text-xs font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 px-2.5 py-1 rounded-lg hover:bg-slate-800 transition"
+                    title="Bắt đầu lại kịch bản hiện tại từ đầu"
+                  >
+                    <span>🔄</span> Bắt đầu lại
+                  </button>
+                )}
+                {/* Dropdown for other scenes */}
+                <select
+                  value={selectedLessonId}
+                  onChange={(e) => handleSelectScene(e.target.value)}
+                  className="bg-slate-800 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1 border border-slate-700 outline-none max-w-[200px] truncate"
+                  title="Chọn các kịch bản khác từ CSDL hoặc Manifest"
+                >
+                  <optgroup label="⚡ Kịch bản mẫu GĐ1">
+                    <option value="LESSON_TEST">LESSON_TEST (Bài học con mèo)</option>
+                    <option value="TALK_DEMO">TALK_DEMO (Hội thoại tự do)</option>
+                    <option value="START">START (Khởi động thiết bị)</option>
+                    <option value="END">END (Bé đi ngủ - idle)</option>
+                  </optgroup>
+                  {backendManifest?.scenes && backendManifest.scenes.length > 0 && (
+                    <optgroup label="📦 Kịch bản từ Manifest v3">
+                      {backendManifest.scenes.map((s) => (
+                        <option key={`m_${s.id}`} value={s.id}>
+                          {s.id} (v{s.ver}{s.pin ? ' 📌' : ''})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {catalog.length > 0 && (
+                    <optgroup label="☁️ Kịch bản từ CSDL PostgreSQL">
+                      {catalog.map((c) => (
+                        <option key={`c_${c.id}`} value={c.id}>
+                          {c.title} ({c.id})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+            </div>
+
+            {/* 7 Quick Scenario Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 pt-1">
+              {GD1_QUICK_SCENES.map((item) => {
+                const isActive = scene?.id === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handleSelectScene(item.id)}
+                    className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-center transition active:scale-95 ${
+                      isActive
+                        ? 'bg-indigo-600/30 border-indigo-400 text-white shadow-lg ring-1 ring-indigo-400'
+                        : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:bg-slate-800 hover:border-slate-500'
+                    }`}
+                  >
+                    <span className="text-2xl mb-1">{item.emoji}</span>
+                    <span className="text-xs font-bold leading-tight">{item.title}</span>
+                    {item.badge && (
+                      <span
+                        className={`text-[9px] font-semibold mt-1 px-1.5 py-0.5 rounded-full ${
+                          isActive
+                            ? 'bg-indigo-500 text-white'
+                            : item.highlight
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'bg-slate-700/80 text-slate-300'
+                        }`}
+                      >
+                        {item.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* B. Hero Assistant & GĐ1 Status Banner */}
+          <div className="bg-gradient-to-r from-indigo-950/70 via-slate-900/90 to-purple-950/60 border border-indigo-500/40 rounded-2xl p-4 shadow-lg flex flex-col gap-3">
+            {/* Top Row: Face emotion + Speaking status */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600/20 border border-indigo-400/40 text-2xl shadow-inner">
+                  {ORB_DESCRIPTIONS[activeOrb]?.emoji || '😊'}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-extrabold text-white">
+                      Bống đang {ORB_DESCRIPTIONS[activeOrb]?.label || activeOrb}
+                    </span>
+                    <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-800 text-indigo-300 border border-slate-700">
+                      {scene?.id} · {currentStep?.id}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {isPlayingAudio
+                      ? '🔊 Bống đang nói qua loa...'
+                      : isAwaitingInput
+                      ? '👂 Bống đang chờ bé phản hồi...'
+                      : '⏳ Bống đang chuyển bước tiếp theo...'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Step quick jumps */}
+              <div className="flex items-center gap-1 flex-wrap">
+                {scene?.steps.map((st, i) => {
+                  const isCurr = st.id === currentStep?.id;
+                  return (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => jumpToStep(st.id)}
+                      className={`text-[10px] font-bold px-2 py-1 rounded-lg border transition ${
+                        isCurr
+                          ? 'bg-indigo-600 border-indigo-400 text-white shadow-sm'
+                          : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:text-white'
+                      }`}
+                      title={`Nhảy tới bước ${st.id}`}
+                    >
+                      {i + 1}. {st.id.replace('step_', '')}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* GĐ1 Rules Showcase Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+              {/* Card 1: Retry (Hỏi lại một lần) */}
+              <div
+                className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                  retriedThisStep
+                    ? 'bg-amber-950/40 border-amber-500/60 text-amber-200'
+                    : 'bg-slate-800/40 border-slate-700/50 text-slate-300'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold flex items-center gap-1">
+                    <span>🔄</span> Lượt Hỏi Lại (Retry)
+                  </span>
+                  <span
+                    className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${
+                      retriedThisStep ? 'bg-amber-500 text-slate-950' : 'bg-slate-700 text-slate-300'
+                    }`}
+                  >
+                    {retriedThisStep ? 'ĐÃ HỎI LẠI (1/1)' : 'CHƯA DÙNG (0/1)'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  {retriedThisStep
+                    ? 'Bống đã nhận diện bé im lặng hoặc nói lí nhí và phát âm thanh hỏi lại 1 lần.'
+                    : 'Nếu bé im lặng hoặc nói lí nhí, Bống sẽ phát gợi ý hỏi lại 1 lần duy nhất.'}
+                </p>
+              </div>
+
+              {/* Card 2: Silent streak (Chuỗi im lặng) */}
+              <div className="p-2.5 rounded-xl border bg-slate-800/40 border-slate-700/50 flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-slate-200 flex items-center gap-1">
+                    <span>🤫</span> Chuỗi Im Lặng (Streak)
+                  </span>
+                  <span className="font-mono text-xs font-black text-indigo-300">
+                    {memory.sys.silent_streak || 0}/4
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-1 my-1">
+                  <div className="flex items-center gap-1.5">
+                    {[1, 2, 3, 4].map((dot) => {
+                      const filled = (memory.sys.silent_streak || 0) >= dot;
+                      return (
+                        <span
+                          key={dot}
+                          className={`h-2.5 w-2.5 rounded-full transition ${
+                            filled ? 'bg-rose-500 shadow-sm shadow-rose-500/50' : 'bg-slate-700'
+                          }`}
+                          title={`${dot}/4`}
+                        />
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSimulateSilentStreak4}
+                    className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold transition"
+                    title="Thử 4 lần im lặng liên tiếp để Bống đi ngủ (END#idle)"
+                  >
+                    Thử 4 lần
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-400">Đạt 4/4 im lặng ➔ Bống tự đi ngủ (END#idle)</p>
+              </div>
+
+              {/* Card 3: Memory / Score */}
+              <div className="p-2.5 rounded-xl border bg-slate-800/40 border-slate-700/50 flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-slate-200 flex items-center gap-1">
+                    <span>⭐</span> Tiến Độ Bé
+                  </span>
+                  <span className="text-[11px] font-bold text-emerald-300">
+                    {memory.profile?.child_name || 'Bảo Anh'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-[11px] my-0.5">
+                  <span className="text-slate-400">Từ vựng con mèo:</span>
+                  <span className="font-mono font-bold text-emerald-400">
+                    +{memory.learn?.['word.cat'] ?? memory.learn?.word?.cat ?? 0}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-slate-400">Điểm thưởng:</span>
+                  <span className="font-mono font-bold text-amber-400">
+                    {memory.stat?.score || 0} điểm
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* C. The Interactive Action Station */}
+          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 shadow-md flex flex-col gap-3">
+            {/* 1. Touch Mode */}
+            {currentStep?.listen?.mode === 'touch' && (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-extrabold text-amber-300 flex items-center gap-2">
+                    <span>👉</span> Chạm Màn Hình Để Chọn Đáp Án
+                  </h3>
+                  <span className="text-xs text-slate-400 font-mono">
+                    timeout: {currentStep.listen.touch?.timeout || 10000}ms
+                  </span>
+                </div>
+
+                <p className="text-xs text-slate-300">
+                  Bé có thể bấm trực tiếp vào các góc màu trên <strong>vòng tròn mặt Bống ở bên trái</strong>, hoặc bấm nhanh 1 trong các lựa chọn dưới đây:
+                </p>
+
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                  <button
+                    type="button"
+                    onClick={() => handleInputReply('zone1')}
+                    className="flex flex-col items-center justify-center p-3 rounded-xl bg-emerald-600/90 hover:bg-emerald-600 text-white font-bold transition active:scale-95 shadow-lg shadow-emerald-900/40 border border-emerald-400/40"
+                  >
+                    <span className="text-2xl mb-1">🐱</span>
+                    <span className="text-xs">Vùng 1: Con Mèo</span>
+                    <span className="text-[10px] opacity-80">(Đáp án Đúng! ⭐+1)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleInputReply('zone2')}
+                    className="flex flex-col items-center justify-center p-3 rounded-xl bg-rose-700/80 hover:bg-rose-700 text-white font-bold transition active:scale-95 shadow-sm border border-rose-500/30"
+                  >
+                    <span className="text-2xl mb-1">🐶</span>
+                    <span className="text-xs">Vùng 2: Con Chó</span>
+                    <span className="text-[10px] opacity-70">(Sai)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleInputReply('zone3')}
+                    className="flex flex-col items-center justify-center p-3 rounded-xl bg-rose-700/80 hover:bg-rose-700 text-white font-bold transition active:scale-95 shadow-sm border border-rose-500/30"
+                  >
+                    <span className="text-2xl mb-1">🐦</span>
+                    <span className="text-xs">Vùng 3: Con Chim</span>
+                    <span className="text-[10px] opacity-70">(Sai)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleInputReply('zone4')}
+                    className="flex flex-col items-center justify-center p-3 rounded-xl bg-rose-700/80 hover:bg-rose-700 text-white font-bold transition active:scale-95 shadow-sm border border-rose-500/30"
+                  >
+                    <span className="text-2xl mb-1">🐟</span>
+                    <span className="text-xs">Vùng 4: Con Cá</span>
+                    <span className="text-[10px] opacity-70">(Sai)</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={() => handleInputReply('miss')}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
+                  >
+                    🎯 Chạm Lệch Tâm (miss - hỏi lại)
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 2. Hear Mode */}
+            {currentStep?.listen?.mode === 'hear' && (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-extrabold text-cyan-300 flex items-center gap-2">
+                    <span>👂</span> Bống Đang Lắng Nghe (Phát Hiện Tiếng Nói Cục Bộ)
+                  </h3>
+                  <span className="text-[10px] text-cyan-400 font-mono">mode: hear (No Server)</span>
+                </div>
+                <p className="text-xs text-slate-300">
+                  Firmware tự nhận diện âm thanh bé lên tiếng tại chỗ mà không cần gửi lên server STT/LLM:
+                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleInputReply('spoke')}
+                    className="flex-1 py-3 px-4 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-extrabold flex items-center justify-center gap-2 shadow-lg transition active:scale-95"
+                  >
+                    <span className="text-lg">🗣️</span>
+                    <span>Bé Đã Lên Tiếng (spoke)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleInputReply('silent')}
+                    className="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold flex items-center justify-center gap-2 border border-slate-700 transition active:scale-95"
+                  >
+                    <span className="text-lg">🤫</span>
+                    <span>Bé Vẫn Im Lặng (silent)</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 3. Voice Mode */}
+            {currentStep?.listen?.mode === 'voice' && (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-extrabold text-amber-300 flex items-center gap-2">
+                    <span>🎤</span> Bé Trả Lời Câu Hỏi Bằng Giọng Nói
+                  </h3>
+                  {backendListenResult && (
+                    <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/50">
+                      BE LLM: "{backendListenResult.reply}"
+                    </span>
+                  )}
+                </div>
+
+                {currentStep.listen.voice?.prompt && (
+                  <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs text-slate-300 font-mono">
+                    Prompt: {currentStep.listen.voice.prompt}
+                  </div>
+                )}
+
+                <div>
+                  <p className="text-xs font-bold text-slate-300 mb-2">⚡ Chọn Nhanh Câu Trả Lời Của Bé (Mô Phỏng Không Cần Mic):</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={isCallingBackend}
+                      onClick={() => handleInputReply('cat')}
+                      className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition active:scale-95 shadow-sm flex items-center gap-1.5"
+                    >
+                      <span>🐱</span>
+                      <span>Nói "con mèo" / "cat" (Đúng ⭐+10)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isCallingBackend}
+                      onClick={() => handleInputReply('cat_near')}
+                      className="px-3 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold transition active:scale-95 shadow-sm flex items-center gap-1.5"
+                    >
+                      <span>🐾</span>
+                      <span>Nói "cát" (Gần đúng ⭐+5)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isCallingBackend}
+                      onClick={() => handleInputReply('other')}
+                      className="px-3 py-2 rounded-xl bg-rose-700/80 hover:bg-rose-700 text-white text-xs font-bold transition active:scale-95 shadow-sm flex items-center gap-1.5"
+                    >
+                      <span>🐶</span>
+                      <span>Nói "con chó" (Sai)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isCallingBackend}
+                      onClick={() => handleInputReply('unclear')}
+                      className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 text-xs font-bold transition active:scale-95 flex items-center gap-1.5"
+                      title="Thử trường hợp Bống hỏi lại khi nói không rõ"
+                    >
+                      <span>💨</span>
+                      <span>Nói lí nhí (Hỏi lại)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isCallingBackend}
+                      onClick={() => handleInputReply('silent')}
+                      className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-bold transition active:scale-95 flex items-center gap-1.5"
+                      title="Thử trường hợp bé im lặng"
+                    >
+                      <span>🤫</span>
+                      <span>Im lặng (silent)</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Call Backend Listen API */}
+                <div className="pt-2 border-t border-slate-800">
+                  <p className="text-[11px] font-bold text-slate-400 mb-1.5">🧪 Hoặc Gõ Từ Để Gọi API Thật Backend (STT Whisper + LLM):</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={testSpeechText}
+                      onChange={(e) => setTestSpeechText(e.target.value)}
+                      placeholder="Nhập câu bé nói, ví dụ: con mèo, cat..."
+                      className="flex-1 bg-slate-950 border border-slate-700 text-white rounded-xl px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      disabled={isCallingBackend || !testSpeechText.trim()}
+                      onClick={() => handleVoiceTest(testSpeechText.trim())}
+                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shadow-sm disabled:opacity-50"
+                    >
+                      {isCallingBackend ? 'Đang gọi Backend...' : '🚀 Gửi /listen'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 4. Talk Mode */}
+            {currentStep?.talk && (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-extrabold text-fuchsia-300 flex items-center gap-2">
+                    <span>💬</span> Trò Chuyện Tự Do Nhiều Lượt Với Bống
+                  </h3>
+                  <span className="text-xs font-bold text-fuchsia-400">
+                    Giọng: {currentStep.talk.voice} · Còn {talkTurnsLeft} lượt
+                  </span>
+                </div>
+
+                {talkLog.length > 0 && (
+                  <div className="bg-slate-950/80 rounded-xl p-3 max-h-32 overflow-y-auto font-mono text-xs text-slate-300 space-y-1 border border-slate-800">
+                    {talkLog.map((log, i) => (
+                      <div key={i} className="text-emerald-300">{log}</div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {!talkSessionId ? (
+                    <button
+                      type="button"
+                      disabled={isCallingBackend}
+                      onClick={handleTalkStart}
+                      className="px-4 py-2 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 text-white text-xs font-bold shadow-md transition disabled:opacity-50"
+                    >
+                      {isCallingBackend ? 'Đang gọi...' : '▶ Bắt Đầu Trò Chuyện (/talk/start)'}
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        disabled={isCallingBackend}
+                        onClick={() => handleTalkTurn('bé nói chuyện tiếp')}
+                        className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md transition disabled:opacity-50"
+                      >
+                        Lượt Tiếp (/talk/turn)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleTalkEnd}
+                        className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition"
+                      >
+                        Kết Thúc (/talk/end)
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleInputReply('silent')}
+                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-bold transition"
+                  >
+                    Bé Im Lặng
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 5. Auto Advance */}
+            {!currentStep?.listen && !currentStep?.talk && (
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-800/40 border border-slate-700/50">
+                <span className="text-xs text-slate-300">
+                  🔊 {isPlayingAudio ? 'Bống đang phát lời thoại...' : 'Bống đang tự chuyển sang bước tiếp theo...'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleInputReply('auto')}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white text-xs font-bold transition"
+                >
+                  ⏭️ Chuyển Tiếp Ngay
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* D. Recent Activity Ticker & Device Sync Box */}
+          <div className="bg-slate-950/70 border border-slate-800/80 rounded-2xl p-4 flex flex-col gap-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                <span>📜</span> Hoạt Động Gần Nhất &amp; Nhật Ký Thiết Bị
+              </span>
+              <button
+                type="button"
+                onClick={handleSyncDeviceLogs}
+                disabled={isSyncingLogs || deviceLogs.length === 0}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shadow-sm disabled:opacity-50 flex items-center gap-1.5"
+                title="Đồng bộ nhật ký lên backend qua POST /api/v1/device/sync"
+              >
+                <span>{isSyncingLogs ? '⏳' : '📤'}</span>
+                <span>Gửi Lên Backend (/device/sync - {deviceLogs.length} logs)</span>
+              </button>
+            </div>
+
+            {syncLogsResult && (
+              <div className="p-2 rounded-lg bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 text-xs font-semibold">
+                {syncLogsResult}
+              </div>
+            )}
+
+            <div className="max-h-24 overflow-y-auto space-y-1 font-mono text-[11px] text-slate-400">
+              {executionLog.length === 0 ? (
+                <div className="text-slate-600 italic">Chưa có nhật ký hoạt động...</div>
+              ) : (
+                executionLog.slice(-5).map((log, idx) => (
+                  <div key={idx} className="leading-snug">
+                    {log}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW MODE 2: ADVANCED DEVELOPER COCKPIT */}
+      {viewMode === 'dev' && (
+        <div className="flex flex-col gap-4">
+          {/* 1. Header: Scene Selector + Actions */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Chọn Bài:</span>
           <select
             value={selectedLessonId}
             onChange={(e) => handleSelectScene(e.target.value)}
@@ -927,7 +1878,8 @@ export const ScriptEnginePanel: React.FC = () => {
                 </p>
                 {backendListenResult && (
                   <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/50">
-                    Phân loại: "{backendListenResult.reply}" (conf: {backendListenResult.confidence ?? 0.9})
+                    BE reply: "{backendListenResult.reply}"
+                    {backendListenResult.local_fallback ? ' (local fallback)' : ''}
                   </span>
                 )}
               </div>
@@ -936,13 +1888,14 @@ export const ScriptEnginePanel: React.FC = () => {
                 {Array.isArray(currentStep.listen.voice?.options) &&
                   currentStep.listen.voice?.options.map((opt) => (
                     <button
-                      key={opt}
+                      key={opt.name}
                       type="button"
+                      title={opt.desc}
                       disabled={isCallingBackend}
-                      onClick={() => handleVoiceTest(opt)}
+                      onClick={() => handleVoiceTest(opt.name)}
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition active:scale-95 disabled:opacity-50 shadow-sm"
                     >
-                      Nói "{opt}"
+                      Nói "{opt.name}"
                     </button>
                   ))}
                 <button
@@ -988,6 +1941,120 @@ export const ScriptEnginePanel: React.FC = () => {
                   {isCallingBackend ? 'Đang gọi Backend...' : 'Gửi Backend'}
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* Interactive controls for hear (fully local — no server call) */}
+          {currentStep.listen?.mode === 'hear' && (
+            <div className="bg-slate-900/90 border border-cyan-500/40 rounded-xl p-3 flex flex-col gap-2">
+              <p className="text-xs font-semibold text-cyan-300">
+                👂 <strong>Nghe (hear):</strong> Phát hiện tiếng nói tại chỗ — không gọi server, không cần nội dung.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleInputReply('spoke')}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white transition active:scale-95"
+                >
+                  Bé nói gì đó (spoke)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleInputReply('silent')}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition"
+                >
+                  Im lặng (silent)
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Interactive controls for pet — 6 fixed gestures, no gestures filter */}
+          {currentStep.listen?.mode === 'pet' && (
+            <div className="bg-slate-900/90 border border-rose-500/40 rounded-xl p-3 flex flex-col gap-2">
+              <p className="text-xs font-semibold text-rose-300">
+                🐾 <strong>Pet:</strong> 6 cử chỉ cơ động — firmware trả tên cử chỉ thật.
+              </p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {['stroke_slow', 'stroke_fast', 'spin', 'tap', 'cover', 'uncover'].map((g) => (
+                  <button
+                    key={g}
+                    type="button"
+                    onClick={() => handleInputReply(g)}
+                    className="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-rose-700 hover:bg-rose-600 text-white transition active:scale-95"
+                  >
+                    {g}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => handleInputReply('miss')}
+                  className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition"
+                >
+                  miss
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleInputReply('silent')}
+                  className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition"
+                >
+                  silent
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Interactive controls for talk — calls /device/talk/* */}
+          {currentStep.talk && (
+            <div className="bg-slate-900/90 border border-fuchsia-500/40 rounded-xl p-3 flex flex-col gap-2">
+              <p className="text-xs font-semibold text-fuchsia-300">
+                💬 <strong>Talk:</strong> {currentStep.talk.voice} · {currentStep.talk.turns} lượt · {currentStep.talk.sec}s
+                {talkSessionId && <span className="ml-2 text-emerald-300">session {talkSessionId.slice(0, 8)}… (còn {talkTurnsLeft} lượt)</span>}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {!talkSessionId ? (
+                  <button
+                    type="button"
+                    disabled={isCallingBackend}
+                    onClick={handleTalkStart}
+                    className="px-3 py-1.5 text-xs font-bold rounded-lg bg-fuchsia-600 hover:bg-fuchsia-500 text-white transition disabled:opacity-50"
+                  >
+                    {isCallingBackend ? 'Đang gọi...' : '▶ Bắt đầu /talk/start'}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      disabled={isCallingBackend}
+                      onClick={() => handleTalkTurn('bé nói tiếp')}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition disabled:opacity-50"
+                    >
+                      Lượt tiếp (continue)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleTalkEnd}
+                      className="px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition"
+                    >
+                      Kết thúc /talk/end
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleInputReply('silent')}
+                  className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition"
+                >
+                  silent
+                </button>
+              </div>
+              {talkLog.length > 0 && (
+                <div className="max-h-24 overflow-y-auto text-[10px] font-mono text-slate-400 space-y-0.5 border-t border-slate-800 pt-1">
+                  {talkLog.map((l, i) => (
+                    <div key={i}>{l}</div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -2010,6 +3077,8 @@ export const ScriptEnginePanel: React.FC = () => {
               </div>
             )}
           </div>
+        </div>
+      )}
         </div>
       )}
     </div>

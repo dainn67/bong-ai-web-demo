@@ -1,6 +1,9 @@
 /**
  * TypeScript types for Offline-First Script Engine v3.
  * Reference: docs/kien-truc-offline-first-va-script-engine-v3.md
+ * Contract: Bong-AI-Cap-nhat-doi-ky-thuat-29-09.md (§3) — options {name,desc},
+ * Excel `when` strings, `hear` mode, single-object `retry`, `ignore_silence`,
+ * talk block, manifest prompt store.
  */
 
 export type OrbExpression =
@@ -37,41 +40,56 @@ export interface V3TouchConfig {
   timeout?: number; // ms (default 10000)
 }
 
+/** A single answer option — LLM returns `name`, firmware maps to `reply`. */
+export interface V3Option {
+  name: string; // ^[a-z0-9_]+$ or {lists.x.value} placeholder
+  desc: string; // free text, may contain placeholders
+}
+
 export interface V3VoiceConfig {
-  options: 'any' | string[]; // 'any' runs locally, string[] calls POST /listen
-  expect?: string[];
-  desc?: string[];
-  hints?: string[];
-  prompt?: string;
-  prompt_ref?: string;
-  min_conf?: number; // 0.0 - 1.0 (default 0.6)
+  options: V3Option[]; // required, non-empty
+  prompt: string; // inline text or "{prompts.x}" token(s)
   timeout?: number;
   vad_end?: number;
 }
 
 export interface V3RetryConfig {
-  on: ('silent' | 'unclear')[];
-  max: number; // max 2
-  audio?: V3AudioNode[];
+  on: string[]; // reply values that trigger the single re-ask
+  audio: V3AudioNode[]; // re-ask line(s)
 }
+
+export type V3ListenMode = 'hear' | 'voice' | 'touch' | 'pet' | 'none';
 
 export interface V3ListenConfig {
-  mode: 'voice' | 'touch' | 'none';
-  voice?: V3VoiceConfig;
-  touch?: V3TouchConfig;
-  retry?: V3RetryConfig;
-  optional?: boolean;
+  mode: V3ListenMode;
+  voice?: V3VoiceConfig; // required when mode === 'voice'
+  touch?: V3TouchConfig; // required when mode === 'touch'
+  retry?: V3RetryConfig; // single re-ask, at most once per step
+  ignore_silence?: boolean; // don't count silent toward silent_streak
+  timeout?: number;
 }
 
-export interface V3BranchCondition {
-  // Key = field to check (e.g. "reply", "sys.attempt", "learn.word.cat")
-  // Value = expected match or comparison object
-  [key: string]: any;
+export interface V3TalkConfig {
+  voice: string; // character voice — never Bống's
+  prompt: string; // may contain {prompts.x}, {history}, {today}, {options}
+  seed?: string;
+  turns: number;
+  sec: number;
+  timeout?: number;
+  ignore_silence?: boolean;
+  options: V3Option[]; // exit branches
 }
 
+/**
+ * `when` is always a STRING — Excel-style expression:
+ *   "{reply} = cat"  ·  "AND({reply} = more, {sys.time} >= {profile.bedtime})"
+ *   "OR({reply} = silent, {reply} = unclear)"  ·  "NOT({tmp.z} < 3)"
+ *   "ISBLANK({stat.guide_done})"
+ * or the literal "default" (must be the last branch).
+ */
 export interface V3Branch {
-  when?: V3BranchCondition | 'default';
-  go?: string; // Target step id or scene#step
+  when: string; // Excel expr or 'default'
+  go?: string; // Target step id, SCENE#step, or SCENE — may contain {placeholders}
   next?: string; // Alias for go
   save?: Record<string, any>;
 }
@@ -87,6 +105,7 @@ export interface V3Step {
   audio?: V3AudioNode[];
   visual?: V3VisualNode[];
   listen?: V3ListenConfig;
+  talk?: V3TalkConfig;
   branches?: V3Branch[];
   next?: string; // Direct next step if no listen/branches
   save?: Record<string, any>; // Mutations committed at end of step
@@ -102,7 +121,6 @@ export interface V3Scene {
   };
   volume?: number;
   ignore_volume_cap?: boolean;
-  prompts?: Record<string, string>;
   save?: Record<string, any>; // Scene-level save on entry
   steps: V3Step[];
 }
@@ -110,13 +128,15 @@ export interface V3Scene {
 export interface MemorySpaces {
   sys: {
     rnd: number;
-    attempt: number;
-    match: string | null;
     silent_streak: number;
     net: boolean;
     time: string;
     battery: number;
     first_run: boolean;
+    last_utterance?: string;
+    sleep_gap?: number;
+    plan?: string;
+    tts_left?: number;
     cfg?: Partial<DeviceManifestConfig>;
   };
   profile: {
@@ -132,14 +152,14 @@ export interface MemorySpaces {
     today_min: number;
     sessions: number;
     guide_done?: boolean;
+    onboard_done?: boolean;
     [key: string]: any;
   };
   tmp: Record<string, any>; // Cleared when device sleeps
 }
 
 /**
- * Device Runtime Config per Phase-1 sync contract.
- * Contains 8 timing parameters and guard thresholds.
+ * Device Runtime Config per Phase-1 sync contract — 8 keys.
  */
 export interface DeviceManifestConfig {
   listen_timeout: number;
@@ -187,4 +207,33 @@ export interface V3DeviceManifest {
   scenes: ManifestSceneItem[];
   files: ManifestFileItem[];
   prompts: Record<string, string>;
+  lists?: Record<string, Array<{ value: string; say?: string[] }>>;
+}
+
+/** /listen response — raw LLM reply + transcript (no match/confidence). */
+export interface ListenResponse {
+  reply: string;
+  transcript?: string;
+}
+
+/** /talk/start + /talk/turn response. */
+export interface TalkResponse {
+  audio: string; // base64 MP3
+  branch: string; // continue|<option>|limit|safety|error|silent
+  topic?: string;
+  tts_left?: number;
+  sync_hint?: boolean;
+  session?: string;
+}
+
+/** One device log line (2.2.6) — no `match`, `retried` instead of `attempt`. */
+export interface DeviceLogEntry {
+  t: string;
+  scene: string;
+  step: string;
+  mode: string;
+  reply: string;
+  retried: 0 | 1;
+  ms: number;
+  seq: number;
 }

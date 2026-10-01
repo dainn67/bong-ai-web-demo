@@ -37,6 +37,18 @@ interface RawPart {
   expected_answer?: string;
 }
 
+/** Strip diacritics + non-alphanumerics → valid option name ^[a-z0-9_]+$. */
+function slugifyBranchName(raw: string): string {
+  const slug = raw
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/[^a-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return slug || 'other';
+}
+
 // Reply names reserved by the firmware/backend pipeline — never emitted as options.
 const SYSTEM_REPLY_NAMES = new Set([
   'silent',
@@ -57,8 +69,7 @@ function buildClassifyPrompt(questionText?: string): string {
     ctx +
     'Bé nói: "{transcript}"\n' +
     'Các lựa chọn:\n{options}\n' +
-    'Chỉ trả về một JSON object: {"option": "<tên option>", "match": true|false, ' +
-    '"value": <giá trị hoặc null>, "confidence": <0.0-1.0>}'
+    'Chỉ trả lời đúng một tên lựa chọn (chữ thuần, không JSON).'
   );
 }
 
@@ -173,12 +184,17 @@ export function convertMetadataToV3Scene(
         // branchType strings become option names (system replies excluded).
         const optionNames: string[] = [];
         const branches = node.branches.map((b: any) => {
-          const name = String(b.branchType || b.name || b.expected_answer || '').trim();
-          if (name && !SYSTEM_REPLY_NAMES.has(name.toLowerCase()) && !optionNames.includes(name)) {
+          const rawName = String(b.branchType || b.name || b.expected_answer || '').trim();
+          const name = slugifyBranchName(rawName);
+          if (rawName && !SYSTEM_REPLY_NAMES.has(rawName.toLowerCase()) && !optionNames.includes(name)) {
             optionNames.push(name);
           }
+          const whenName = name || 'other';
           return {
-            when: b.when || { reply: name || 'other' },
+            when:
+              typeof b.when === 'string' && (b.when === 'default' || b.when.includes('{'))
+                ? b.when
+                : `{reply} = ${whenName}`,
             go: b.next ? String(b.next) : nextStepId,
           };
         });
@@ -187,11 +203,16 @@ export function convertMetadataToV3Scene(
           voice:
             optionNames.length > 0
               ? {
-                  options: optionNames,
-                  hints: optionNames,
+                  options: optionNames.map((n) => ({ name: n, desc: n })),
                   prompt: buildClassifyPrompt(node.content),
                 }
-              : { options: 'any' },
+              : {
+                  options: [
+                    { name: 'yes', desc: 'bé đồng ý / nói đúng' },
+                    { name: 'no', desc: 'bé từ chối / nói sai' },
+                  ],
+                  prompt: buildClassifyPrompt(node.content),
+                },
         };
         // Format branches, ensure last branch is default
 
@@ -234,26 +255,30 @@ export function convertMetadataToV3Scene(
 
       if (isQuestion) {
         const expected = part.expected_answer?.trim();
-        step.listen = {
-          mode: 'voice',
-          voice: expected
-            ? {
-                options: ['match', 'other'],
-                hints: [expected],
-                prompt: buildClassifyPrompt(part.description),
-              }
-            : { options: 'any' },
-        };
-        // 'any' mode only emits spoke/silent — dead reply names removed.
-        step.branches = expected
-          ? [
-              { when: { reply: 'match' }, go: nextPartId },
-              { when: 'default', go: nextPartId },
-            ]
-          : [
-              { when: { reply: 'spoke' }, go: nextPartId },
-              { when: 'default', go: nextPartId },
-            ];
+        if (expected) {
+          step.listen = {
+            mode: 'voice',
+            voice: {
+              // `other` is a mode-reserved branch — the machine generates it;
+              // content only declares the positive match.
+              options: [
+                { name: 'match', desc: `bé nói "${expected}" hoặc tương đương` },
+              ],
+              prompt: buildClassifyPrompt(part.description),
+            },
+          };
+          step.branches = [
+            { when: '{reply} = match', go: nextPartId },
+            { when: 'default', go: nextPartId },
+          ];
+        } else {
+          // no expected answer → `hear` mode (local, no server)
+          step.listen = { mode: 'hear' };
+          step.branches = [
+            { when: '{reply} = spoke', go: nextPartId },
+            { when: 'default', go: nextPartId },
+          ];
+        }
       } else {
         step.next = nextPartId;
       }

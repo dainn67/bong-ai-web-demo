@@ -163,7 +163,7 @@ export async function decryptBongAsset(
       toDecrypt as any
     );
   } catch (err) {
-    throw new Error('Decryption failed: corrupted data, auth tag mismatch, or wrong key');
+    throw new Error('Decryption failed: corrupted data, auth tag mismatch, or wrong key', { cause: err });
   }
 }
 

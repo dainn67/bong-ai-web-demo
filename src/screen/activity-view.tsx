@@ -38,6 +38,7 @@ export function ActivityView() {
   const skip = useSimulatorStore((state) => state.skipLessonNode);
   const position = useSimulatorStore((state) => state.lessonPosition);
   const dispatchTouch = useSimulatorStore((state) => state.dispatchTouch);
+  const lessonEngineType = useSimulatorStore((state) => state.lessonEngineType);
 
   const downPoint = useRef<TouchGestureSample | null>(null);
 
@@ -60,6 +61,13 @@ export function ActivityView() {
   };
 
   if (!activity.kind) return null;
+
+  // In V3 engine: when there is no visual asset (.eaf or image URL),
+  // suppress the full-screen opaque text overlay so Bống's expressive face
+  // emoji (e.g. 😮, 😊, 🤔) and the pulsing wait rings remain visible!
+  if (lessonEngineType === 'v3' && !effectiveImageUrl) {
+    return null;
+  }
 
   const status = phaseLabel(activity);
   const listening = activity.phase === 'listening';

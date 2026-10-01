@@ -42,7 +42,13 @@ import {
   type MenuAction,
   type MenuState,
 } from '../screen/menu-state';
-import { closeWaitWindow, IDLE_ACTIVITY, type ActivityState } from '../screen/activity-state';
+import {
+  closeWaitWindow,
+  IDLE_ACTIVITY,
+  type ActivityKind,
+  type ActivityPhase,
+  type ActivityState,
+} from '../screen/activity-state';
 import {
   parseTouchLayout,
   TOUCH_LAYOUTS,
@@ -183,6 +189,8 @@ interface SimulatorState {
     waitingFor?: 'touch' | 'speech' | null;
     touchLayout?: TouchLayoutType | null;
     caption?: string | null;
+    imageUrl?: string | null;
+    kind?: ActivityKind | null;
   }) => void;
 
   updateConfig: (patch: Partial<DeviceConfig>) => void;
@@ -516,7 +524,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         studioMode: next ? 'studio' : 'device',
       };
     }),
-  lessonEngineType: 'v2',
+  lessonEngineType: 'v3',
   setLessonEngineType: (lessonEngineType) => set({ lessonEngineType }),
   lessonSourceMode: 'socket',
   setLessonSourceMode: (lessonSourceMode) => {
@@ -547,21 +555,34 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   setLoginModalOpen: (open) => set({ loginModalOpen: open }),
   v3TouchHandler: null,
   setV3TouchHandler: (v3TouchHandler) => set({ v3TouchHandler }),
-  setV3ScreenState: ({ expression, mode, waitingFor, touchLayout, caption }) => {
+  setV3ScreenState: ({ expression, mode, waitingFor, touchLayout, caption, imageUrl, kind }) => {
     const curFace = get().face;
     const curActivity = get().activity;
+    const targetKind = kind !== undefined ? kind : 'lesson';
+    const derivedPhase: ActivityPhase =
+      waitingFor === 'speech'
+        ? 'listening'
+        : waitingFor === 'touch'
+          ? 'touching'
+          : mode === 'speaking'
+            ? 'playing'
+            : 'playing';
+
     set({
       status: 'connected',
       face: {
         ...curFace,
         ...(expression !== undefined ? { expression: expression as any } : {}),
         ...(mode !== undefined ? { mode } : {}),
+        ...(imageUrl !== undefined ? { imageUrl } : {}),
       },
       activity: {
         ...curActivity,
-        kind: 'lesson',
+        kind: targetKind,
+        phase: targetKind ? derivedPhase : 'playing',
         ...(waitingFor !== undefined ? { waitingFor } : {}),
         ...(caption !== undefined ? { caption: caption ?? undefined } : {}),
+        ...(imageUrl !== undefined ? { imageUrl } : {}),
       },
       touchZones: touchLayout ? { layout: touchLayout, timeoutMs: 15000 } : null,
     });
