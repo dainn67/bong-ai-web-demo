@@ -96,6 +96,7 @@ export function RoundScreen() {
   const sendTouchEvent = useSimulatorStore((state) => state.sendTouchEvent);
 
   const isAwake = status === 'connected';
+  const [imgErrorUrl, setImgErrorUrl] = useState<string | null>(null);
   // While the menu, an activity or touch zones own the glass, the glass is not an input
   // surface — the thing drawn on it is. See the note in `useDisplayTouch`.
   const overlaid = isOpen(menu) || activity.kind !== null || touchZones !== null;
@@ -135,7 +136,7 @@ export function RoundScreen() {
             {isAwake && face.imageUrl ? (
               // Fills the circle edge to edge. The parent clips it, which is
               // what the real display does — nothing exists outside the circle.
-              isEafUrl(face.imageUrl) ? (
+              isEafUrl(face.imageUrl) || imgErrorUrl === face.imageUrl ? (
                 <EafScreenView
                   key={`${face.imageUrl}-${face.imageSeq ?? 0}`}
                   url={face.imageUrl}
@@ -146,6 +147,7 @@ export function RoundScreen() {
                   src={cdnUrl(face.imageUrl)}
                   alt=""
                   className="h-full w-full object-cover"
+                  onError={() => setImgErrorUrl(face.imageUrl)}
                 />
               )
             ) : (

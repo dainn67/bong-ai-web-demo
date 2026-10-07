@@ -35,6 +35,9 @@ export function extractEmoteName(urlOrFileName?: string | null): string {
   if (withoutExt.toLowerCase().startsWith('ezgif')) {
     return 'robot';
   }
+  if (/^[a-f0-9]{64}$/i.test(withoutExt)) {
+    return 'happy';
+  }
   // Clean order prefixes like "order_1_happy" -> "happy" if recognizable
   const parts = withoutExt.split(/[_\-\s]+/);
   for (const part of parts.reverse()) {
@@ -101,7 +104,7 @@ function useEafCanvasPlayer(url: string, canvasRef: React.RefObject<HTMLCanvasEl
   const [isPlaying, setIsPlaying] = useState(false);
 
   useEffect(() => {
-    if (!url || !isEafUrl(url)) {
+    if (!url) {
       setIsPlaying(false);
       return;
     }

@@ -45,8 +45,10 @@ export function ActivityView() {
   const effectiveImageUrl = activity.imageUrl || face.imageUrl;
   const effectiveImageSeq = activity.imageSeq || face.imageSeq;
   const [imgSrc, setImgSrc] = useState<string>('');
+  const [useEafFallback, setUseEafFallback] = useState<boolean>(false);
 
   useEffect(() => {
+    setUseEafFallback(false);
     if (effectiveImageUrl && !isEafUrl(effectiveImageUrl)) {
       setImgSrc(cdnUrl(effectiveImageUrl));
     } else {
@@ -57,6 +59,8 @@ export function ActivityView() {
   const handleImageError = () => {
     if (imgSrc && imgSrc.includes('.360.png')) {
       setImgSrc(imgSrc.replace('.360.png', ''));
+    } else {
+      setUseEafFallback(true);
     }
   };
 
@@ -120,7 +124,7 @@ export function ActivityView() {
     >
       {hasImage ? (
         // Check if image is an Espressif Animation Format (.eaf)
-        isEafUrl(effectiveImageUrl) ? (
+        isEafUrl(effectiveImageUrl) || useEafFallback ? (
           <EafScreenView
             key={`${effectiveImageUrl}-${effectiveImageSeq ?? 0}`}
             url={effectiveImageUrl!}

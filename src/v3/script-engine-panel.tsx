@@ -233,11 +233,15 @@ export const ScriptEnginePanel: React.FC = () => {
 
     const firstVisual = currentStep?.visual?.[0];
     const rawSrc = Array.isArray(firstVisual?.src) ? firstVisual?.src[0] : firstVisual?.src;
-    const visualUrl: string | null =
+    let visualUrl: string | null =
       firstVisual?.url ||
       (typeof rawSrc === 'string' && (rawSrc.includes('/') || rawSrc.endsWith('.eaf'))
         ? rawSrc
         : null);
+
+    if (visualUrl && firstVisual?.nodeType === 'eaf' && !isEafUrl(visualUrl)) {
+      visualUrl = `${visualUrl}.eaf`;
+    }
 
     setV3ScreenState({
       expression: activeOrb,
