@@ -149,10 +149,11 @@ export function V3EngineProvider({ children }: { children: ReactNode }) {
       const manifestScene = backendManifest?.scenes?.find((s) => s.id === id);
       if (manifestScene) {
         try {
-          const baseClean = 'http://localhost:8000/api/v1';
-          const blobBase = backendManifest?.blob_base
+          const baseClean = '/api/v1';
+          let blobBase = backendManifest?.blob_base
             ? backendManifest.blob_base.replace(/\/$/, '')
             : `${baseClean}/o`;
+          blobBase = blobBase.replace(/^https?:\/\/[^/]+\/api\/v1\/o/, '/api/v1/o');
           const res = await fetch(`${blobBase}/${manifestScene.hash}`);
           if (res.ok) {
             const rawBytes = new Uint8Array(await res.arrayBuffer());
@@ -182,7 +183,7 @@ export function V3EngineProvider({ children }: { children: ReactNode }) {
       };
       if (PRODUCTION_SCENE_HASHES[id]) {
         try {
-          const res = await fetch(`http://localhost:8000/api/v1/o/${PRODUCTION_SCENE_HASHES[id]}`);
+          const res = await fetch(`/api/v1/o/${PRODUCTION_SCENE_HASHES[id]}`);
           if (res.ok) {
             const text = await res.text();
             const parsed = JSON.parse(text) as V3Scene;
@@ -254,7 +255,7 @@ export function V3EngineProvider({ children }: { children: ReactNode }) {
             ? '42 bước: Chạm 4 vùng pie4, Vuốt 4 hướng, Voice STT/LLM, Hoạt ảnh .eaf'
             : `Kịch bản phát hành v${s.ver ?? 1}${s.pin ? ' (Core)' : ''}`,
         category: 'learning',
-        metadataUrl: s.hash ? `http://localhost:8000/api/v1/o/${s.hash}` : '',
+        metadataUrl: s.hash ? `/api/v1/o/${s.hash}` : '',
         coverUrl: null,
       }));
       setStoreCatalog(v3Items);
@@ -266,7 +267,7 @@ export function V3EngineProvider({ children }: { children: ReactNode }) {
     setIsFetchingManifest(true);
     setManifestError(null);
     try {
-      const res = await fetch('http://localhost:8000/api/v1/device/manifest?device_id=simulator_v3_dev');
+      const res = await fetch('/api/v1/device/manifest?device_id=simulator_v3_dev');
       if (res.ok) {
         const data: V3DeviceManifest = await res.json();
         setBackendManifest(data);
@@ -456,18 +457,19 @@ export function V3EngineProvider({ children }: { children: ReactNode }) {
         ? rawSrc
         : null);
 
-    if (visualUrl && visualUrl.startsWith('https://bong-api.bcserver.xyz/api/v1/o/')) {
-      visualUrl = visualUrl.replace('https://bong-api.bcserver.xyz/api/v1/o/', 'http://localhost:8000/api/v1/o/');
+    if (visualUrl && (visualUrl.startsWith('https://bong-api.bcserver.xyz/api/v1/o/') || visualUrl.startsWith('http://localhost:8000/api/v1/o/'))) {
+      visualUrl = visualUrl.replace(/^https?:\/\/[^/]+\/api\/v1\/o\//, '/api/v1/o/');
     }
 
     // Resolve visualUrl from manifest files
     if (!visualUrl && typeof rawSrc === 'string' && backendManifest?.files) {
       const fileAsset = backendManifest.files.find((f) => f.id === rawSrc);
       if (fileAsset) {
-        const baseClean = 'http://localhost:8000/api/v1';
-        const blobBase = backendManifest.blob_base
+        const baseClean = '/api/v1';
+        let blobBase = backendManifest.blob_base
           ? backendManifest.blob_base.replace(/\/$/, '')
           : `${baseClean}/o`;
+        blobBase = blobBase.replace(/^https?:\/\/[^/]+\/api\/v1\/o/, '/api/v1/o');
         visualUrl = `${blobBase}/${fileAsset.hash}${fileAsset.kind === 'anim' ? '.eaf' : ''}`;
       }
     }

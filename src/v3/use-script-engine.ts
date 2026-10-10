@@ -381,17 +381,17 @@ export function useScriptEngine() {
             let audioUrl = aud.url;
             if (!audioUrl && typeof srcId === 'string') {
               if (srcId === 'voc_bong' || srcId === 'voc_bong_generic') {
-                audioUrl = 'http://localhost:8000/api/v1/o/87b24c3975ea3e62b1fe6c6a2383e6253d898e69585572c95fca8b41a3b49ea1';
+                audioUrl = '/api/v1/o/87b24c3975ea3e62b1fe6c6a2383e6253d898e69585572c95fca8b41a3b49ea1';
               } else if (manifestFilesRef.current) {
                 const found = manifestFilesRef.current.find((f) => f.id === srcId);
                 if (found) {
-                  audioUrl = `http://localhost:8000/api/v1/o/${found.hash}`;
+                  audioUrl = `/api/v1/o/${found.hash}`;
                 }
               }
             }
             if (audioUrl) {
               try {
-                const localUrl = audioUrl.replace('https://bong-api.bcserver.xyz/api/v1/o/', 'http://localhost:8000/api/v1/o/');
+                const localUrl = audioUrl.replace(/^https?:\/\/[^/]+\/api\/v1\/o\//, '/api/v1/o/');
                 let res = await fetch(localUrl);
                 if (!res.ok && localUrl !== audioUrl) res = await fetch(audioUrl);
                 if (res.ok) {
@@ -502,19 +502,19 @@ export function useScriptEngine() {
             let audioUrl = aud.url;
             if (!audioUrl && typeof srcId === 'string') {
               if (srcId === 'voc_bong' || srcId === 'voc_bong_generic') {
-                audioUrl = 'http://localhost:8000/api/v1/o/87b24c3975ea3e62b1fe6c6a2383e6253d898e69585572c95fca8b41a3b49ea1';
+                audioUrl = '/api/v1/o/87b24c3975ea3e62b1fe6c6a2383e6253d898e69585572c95fca8b41a3b49ea1';
               } else if (manifestFilesRef.current) {
                 const found = manifestFilesRef.current.find((f) => f.id === srcId);
                 if (found) {
-                  audioUrl = `http://localhost:8000/api/v1/o/${found.hash}`;
+                  audioUrl = `/api/v1/o/${found.hash}`;
                 }
               }
             }
             if (audioUrl) {
               try {
                 const localUrl = audioUrl.replace(
-                  'https://bong-api.bcserver.xyz/api/v1/o/',
-                  'http://localhost:8000/api/v1/o/'
+                  /^https?:\/\/[^/]+\/api\/v1\/o\//,
+                  '/api/v1/o/'
                 );
                 let res = await fetch(localUrl);
                 if (!res.ok && localUrl !== audioUrl) {

@@ -135,7 +135,7 @@ function toSummary(row: unknown, category: LessonCategory): LessonSummary | null
   if (rawMetaUrl) {
     metadataUrl = rawMetaUrl.startsWith('http') ? rawMetaUrl : cdnUrl(rawMetaUrl);
   } else if (dataUrl.includes('api/v1/o/')) {
-    metadataUrl = dataUrl.startsWith('http') ? dataUrl : `http://localhost:8000/${dataUrl.replace(/^\/+/, '')}`;
+    metadataUrl = dataUrl.startsWith('http') ? rehostKnownCdn(dataUrl) : `/${dataUrl.replace(/^\/+/, '')}`;
   } else {
     metadataUrl = cdnUrl(`${dataUrl}/metadata.json`);
   }
@@ -240,7 +240,10 @@ const MEDIA_ORIGIN = 'https://files.bcserver.xyz';
  */
 function rehostKnownCdn(url: string): string {
   if (url.startsWith('https://bong-api.bcserver.xyz/api/v1/o/')) {
-    return 'http://localhost:8000/api/v1/o/' + url.slice('https://bong-api.bcserver.xyz/api/v1/o/'.length);
+    return '/api/v1/o/' + url.slice('https://bong-api.bcserver.xyz/api/v1/o/'.length);
+  }
+  if (url.startsWith('http://localhost:8000/api/v1/o/')) {
+    return '/api/v1/o/' + url.slice('http://localhost:8000/api/v1/o/'.length);
   }
   if (url.startsWith(CDN_ORIGIN)) return CDN_BASE + url.slice(CDN_ORIGIN.length);
   if (url.startsWith(MEDIA_ORIGIN)) return '/media' + url.slice(MEDIA_ORIGIN.length);

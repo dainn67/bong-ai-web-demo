@@ -501,7 +501,7 @@ export class VirtualSdCard {
    */
   public static async checkBackendBlobs(
     hashes: string[],
-    apiBase: string = 'http://localhost:8000/api/v1',
+    apiBase: string = '/api/v1',
     internalSecret?: string
   ): Promise<{ missing: string[] }> {
     const cleanHashes = hashes.map((h) => h.trim().toLowerCase()).filter(Boolean);
@@ -527,7 +527,7 @@ export class VirtualSdCard {
    */
   public static async syncFromManifest(
     manifest: V3DeviceManifest,
-    apiBase: string = 'http://localhost:8000/api/v1',
+    apiBase: string = '/api/v1',
     activeKeyBase64?: string,
     onProgress?: (msg: string) => void
   ): Promise<{ syncedScenes: number; syncedFiles: number; errors: string[] }> {
@@ -536,7 +536,8 @@ export class VirtualSdCard {
     let syncedFiles = 0;
 
     const baseClean = apiBase.replace(/\/$/, '');
-    const blobBase = manifest.blob_base ? manifest.blob_base.replace(/\/$/, '') : `${baseClean}/o`;
+    let blobBase = manifest.blob_base ? manifest.blob_base.replace(/\/$/, '') : `${baseClean}/o`;
+    blobBase = blobBase.replace(/^https?:\/\/[^/]+\/api\/v1\/o/, '/api/v1/o');
     const fetchFn = typeof window !== 'undefined' && window.fetch ? window.fetch : globalThis.fetch;
 
     onProgress?.(`Bắt đầu đồng bộ Manifest v${manifest.ver}...`);

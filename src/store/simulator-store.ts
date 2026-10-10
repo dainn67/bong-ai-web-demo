@@ -522,7 +522,7 @@ export const DEFAULT_V3_CATALOG: LessonSummary[] = [
     title: 'Bài Học HAHA (Bản phát hành chuẩn)',
     description: '42 bước: Chạm 4 vùng pie4, Vuốt 4 hướng, Voice STT/LLM, Hoạt ảnh .eaf',
     category: 'learning',
-    metadataUrl: 'http://localhost:8000/api/v1/o/73e18d0c6d97fab9f190a3872b9e37fe3fe577f2e77708a6c69de3e79cede89b',
+    metadataUrl: '/api/v1/o/73e18d0c6d97fab9f190a3872b9e37fe3fe577f2e77708a6c69de3e79cede89b',
     coverUrl: null,
   },
   {
@@ -530,7 +530,7 @@ export const DEFAULT_V3_CATALOG: LessonSummary[] = [
     title: 'Bắt đầu (START)',
     description: 'Khởi động và chuyển tiếp vào HAHA',
     category: 'learning',
-    metadataUrl: 'http://localhost:8000/api/v1/o/ec77180aa18b7e4f8a455f73fa43ae3b27c7ebcb61c85defd73e54f231bf3434',
+    metadataUrl: '/api/v1/o/ec77180aa18b7e4f8a455f73fa43ae3b27c7ebcb61c85defd73e54f231bf3434',
     coverUrl: null,
   },
   {
@@ -538,7 +538,7 @@ export const DEFAULT_V3_CATALOG: LessonSummary[] = [
     title: 'Kết thúc (END)',
     description: 'Kịch bản kết thúc & đi ngủ',
     category: 'learning',
-    metadataUrl: 'http://localhost:8000/api/v1/o/d0a9e736acfaae8f16222d5fdbaa0dd8bdc22e9445a61a07d16baa3ef71c29e9',
+    metadataUrl: '/api/v1/o/d0a9e736acfaae8f16222d5fdbaa0dd8bdc22e9445a61a07d16baa3ef71c29e9',
     coverUrl: null,
   },
 ];
@@ -1223,7 +1223,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     if (get().catalogLoading) return;
     set({ catalogLoading: true, catalogError: null });
     try {
-      const res = await fetch('http://localhost:8000/api/v1/device/manifest?device_id=simulator_v3_dev');
+      const res = await fetch('/api/v1/device/manifest?device_id=simulator_v3_dev');
       if (res.ok) {
         const data = await res.json();
         const v3Items: LessonSummary[] = (data.scenes || []).map((s: any) => ({
@@ -1243,7 +1243,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
               ? '42 bước: Chạm 4 vùng pie4, Vuốt 4 hướng, Voice STT/LLM, Hoạt ảnh .eaf'
               : `Kịch bản phát hành v${s.ver ?? 1}${s.pin ? ' (Core)' : ''}`,
           category: 'learning',
-          metadataUrl: s.hash ? `http://localhost:8000/api/v1/o/${s.hash}` : '',
+          metadataUrl: s.hash ? `/api/v1/o/${s.hash}` : '',
           coverUrl: null,
         }));
         const cleanItems = v3Items.filter((item) => !isLegacyCatalogItem(item));

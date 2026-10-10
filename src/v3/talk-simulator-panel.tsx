@@ -32,7 +32,9 @@ interface TalkSessionState {
 
 export const TalkSimulatorPanel: React.FC = () => {
   const [deviceId, setDeviceId] = useState<string>('BONG_DEMO_001');
-  const [backendUrl, setBackendUrl] = useState<string>('http://localhost:8000');
+  const [backendUrl, setBackendUrl] = useState<string>(
+    import.meta.env.VITE_BACKEND_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
+  );
   const [session, setSession] = useState<TalkSessionState>({
     sessionId: null,
     turnsLeft: 0,

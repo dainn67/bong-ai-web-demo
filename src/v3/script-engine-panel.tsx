@@ -202,7 +202,7 @@ export const ScriptEnginePanel: React.FC = () => {
         }
       }
       try {
-        const res = await fetch('http://localhost:8000/api/v1/device/manifest?device_id=simulator_v3_dev');
+        const res = await fetch('/api/v1/device/manifest?device_id=simulator_v3_dev');
         if (res.ok) {
           const data: V3DeviceManifest = await res.json();
           setBackendManifest(data);
@@ -271,7 +271,7 @@ export const ScriptEnginePanel: React.FC = () => {
     setManifestError(null);
     setActiveTab('manifest');
     try {
-      const res = await fetch('http://localhost:8000/api/v1/device/manifest?device_id=simulator_v3_dev');
+      const res = await fetch('/api/v1/device/manifest?device_id=simulator_v3_dev');
       if (res.ok) {
         const data: V3DeviceManifest = await res.json();
         setBackendManifest(data);
@@ -303,7 +303,7 @@ export const ScriptEnginePanel: React.FC = () => {
         alert('Manifest không có hash blob nào để kiểm tra.');
         return;
       }
-      const result = await VirtualSdCard.checkBackendBlobs(allHashes, 'http://localhost:8000/api/v1');
+      const result = await VirtualSdCard.checkBackendBlobs(allHashes, '/api/v1');
       setBlobCheckResult({
         missing: result.missing,
         checkedCount: allHashes.length,
@@ -330,7 +330,7 @@ export const ScriptEnginePanel: React.FC = () => {
       const activeKey = SimulatedDeviceSecurity.getStoredContentKey();
       const res = await VirtualSdCard.syncFromManifest(
         backendManifest,
-        'http://localhost:8000/api/v1',
+        '/api/v1',
         activeKey?.rawKeyBase64,
         (msg) => {
           setSyncProgress(msg);
@@ -352,7 +352,7 @@ export const ScriptEnginePanel: React.FC = () => {
     setIsFetchingKey(true);
     setCryptoError(null);
     try {
-      const res = await fetch('http://localhost:8000/api/v1/device/key?device_id=simulator_v3_dev');
+      const res = await fetch('/api/v1/device/key?device_id=simulator_v3_dev');
       if (res.ok) {
         const data = await res.json();
         SimulatedDeviceSecurity.saveWrappedContentKey(data.key_alias, data.key_version, data.key_bytes);
@@ -457,7 +457,7 @@ export const ScriptEnginePanel: React.FC = () => {
   const refreshCatalogAndSd = useCallback(async () => {
     try {
       let items: LessonSummary[] = [];
-      const res = await fetch('http://localhost:8000/api/v1/device/manifest?device_id=simulator_v3_dev');
+      const res = await fetch('/api/v1/device/manifest?device_id=simulator_v3_dev');
       if (res.ok) {
         const data = await res.json();
         setBackendManifest(data);
@@ -478,7 +478,7 @@ export const ScriptEnginePanel: React.FC = () => {
               ? '42 bước: Chạm 4 vùng pie4, Vuốt 4 hướng, Voice STT/LLM, Hoạt ảnh .eaf'
               : `Kịch bản phát hành v${s.ver ?? 1}${s.pin ? ' (Core)' : ''}`,
           category: 'learning' as const,
-          metadataUrl: s.hash ? `http://localhost:8000/api/v1/o/${s.hash}` : '',
+          metadataUrl: s.hash ? `/api/v1/o/${s.hash}` : '',
           coverUrl: null,
         }));
       }
@@ -541,8 +541,9 @@ export const ScriptEnginePanel: React.FC = () => {
     if (manifestScene) {
       try {
         setDownloadNotice(`⏳ Đang tải kịch bản "${id}" từ Blob Store Backend...`);
-        const baseClean = 'http://localhost:8000/api/v1';
-        const blobBase = backendManifest?.blob_base ? backendManifest.blob_base.replace(/\/$/, '') : `${baseClean}/o`;
+        const baseClean = '/api/v1';
+        let blobBase = backendManifest?.blob_base ? backendManifest.blob_base.replace(/\/$/, '') : `${baseClean}/o`;
+        blobBase = blobBase.replace(/^https?:\/\/[^/]+\/api\/v1\/o/, '/api/v1/o');
         const res = await fetch(`${blobBase}/${manifestScene.hash}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         const rawBytes = new Uint8Array(await res.arrayBuffer());
@@ -573,7 +574,7 @@ export const ScriptEnginePanel: React.FC = () => {
     if (PROD_HASHES[id]) {
       try {
         setDownloadNotice(`⏳ Đang tải kịch bản "${id}" từ Backend...`);
-        const res = await fetch(`http://localhost:8000/api/v1/o/${PROD_HASHES[id]}`);
+        const res = await fetch(`/api/v1/o/${PROD_HASHES[id]}`);
         if (res.ok) {
           const text = await res.text();
           const parsed = JSON.parse(text) as V3Scene;
@@ -639,7 +640,7 @@ export const ScriptEnginePanel: React.FC = () => {
       // 1. Fetch Key (best-effort)
       let activeKeyBase64 = storedContentKey?.rawKeyBase64;
       try {
-        const keyRes = await fetch('http://localhost:8000/api/v1/device/key?device_id=simulator_v3_dev');
+        const keyRes = await fetch('/api/v1/device/key?device_id=simulator_v3_dev');
         if (keyRes.ok) {
           const keyData = await keyRes.json();
           SimulatedDeviceSecurity.saveWrappedContentKey(keyData.key_alias, keyData.key_version, keyData.key_bytes);
@@ -651,7 +652,7 @@ export const ScriptEnginePanel: React.FC = () => {
       }
 
       // 2. Fetch Manifest
-      const res = await fetch('http://localhost:8000/api/v1/device/manifest?device_id=simulator_v3_dev');
+      const res = await fetch('/api/v1/device/manifest?device_id=simulator_v3_dev');
       if (!res.ok) throw new Error(`Backend HTTP ${res.status}: ${res.statusText}`);
       const manifestData: V3DeviceManifest = await res.json();
       setBackendManifest(manifestData);
@@ -663,7 +664,7 @@ export const ScriptEnginePanel: React.FC = () => {
       setOneClickSyncMessage({ type: 'info', text: '📥 Đang đồng bộ kịch bản và assets vào Thẻ SD ảo...' });
       const syncRes = await VirtualSdCard.syncFromManifest(
         manifestData,
-        'http://localhost:8000/api/v1',
+        '/api/v1',
         activeKeyBase64
       );
 
@@ -691,7 +692,7 @@ export const ScriptEnginePanel: React.FC = () => {
     setIsSyncingLogs(true);
     setSyncLogsResult(null);
     try {
-      const res = await fetch('http://localhost:8000/api/v1/device/sync', {
+      const res = await fetch('/api/v1/device/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -736,8 +737,9 @@ export const ScriptEnginePanel: React.FC = () => {
       // Check if it's a Manifest scene
       const manifestScene = backendManifest?.scenes?.find((s) => s.id === selectedLessonId);
       if (manifestScene) {
-        const baseClean = 'http://localhost:8000/api/v1';
-        const blobBase = backendManifest?.blob_base ? backendManifest.blob_base.replace(/\/$/, '') : `${baseClean}/o`;
+        const baseClean = '/api/v1';
+        let blobBase = backendManifest?.blob_base ? backendManifest.blob_base.replace(/\/$/, '') : `${baseClean}/o`;
+        blobBase = blobBase.replace(/^https?:\/\/[^/]+\/api\/v1\/o/, '/api/v1/o');
         const res = await fetch(`${blobBase}/${manifestScene.hash}`);
         if (!res.ok) throw new Error(`HTTP ${res.status} tải blob scene ${manifestScene.hash}`);
         const rawBytes = new Uint8Array(await res.arrayBuffer());
@@ -825,7 +827,7 @@ export const ScriptEnginePanel: React.FC = () => {
     setIsSyncingSd(true);
     try {
       // 1. Fetch Key
-      const keyRes = await fetch('http://localhost:8000/api/v1/device/key?device_id=simulator_v3_dev');
+      const keyRes = await fetch('/api/v1/device/key?device_id=simulator_v3_dev');
       let activeKeyBase64 = storedContentKey?.rawKeyBase64;
       if (keyRes.ok) {
         const keyData = await keyRes.json();
@@ -835,13 +837,13 @@ export const ScriptEnginePanel: React.FC = () => {
       }
 
       // 2. Fetch Manifest
-      const manRes = await fetch('http://localhost:8000/api/v1/device/manifest?device_id=simulator_v3_dev');
+      const manRes = await fetch('/api/v1/device/manifest?device_id=simulator_v3_dev');
       if (manRes.ok) {
         const manData = await manRes.json();
         setBackendManifest(manData);
 
         // Pre-save manifest scenes & blobs
-        await VirtualSdCard.syncFromManifest(manData, 'http://localhost:8000/api/v1', activeKeyBase64);
+        await VirtualSdCard.syncFromManifest(manData, '/api/v1', activeKeyBase64);
         await refreshSdStats();
         await refreshCatalogAndSd();
         alert(`Đồng bộ thành công! Thẻ nhớ SD ảo đã cập nhật bài học & blobs cho Manifest v${manData.ver}.`);
@@ -904,7 +906,7 @@ export const ScriptEnginePanel: React.FC = () => {
       formData.append('audio', blob, 'test.wav');
 
       // Call Backend API
-      const res = await fetch('http://localhost:8000/api/v1/device/listen', {
+      const res = await fetch('/api/v1/device/listen', {
         method: 'POST',
         body: formData,
       });
@@ -936,7 +938,7 @@ export const ScriptEnginePanel: React.FC = () => {
 
   // --- Talk session helpers (B7–B11) ---
   const talkPost = async (path: string, fd: FormData) => {
-    const res = await fetch(`http://localhost:8000/api/v1/device/talk/${path}`, {
+    const res = await fetch(`/api/v1/device/talk/${path}`, {
       method: 'POST',
       body: fd,
     });

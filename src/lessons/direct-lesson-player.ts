@@ -186,7 +186,7 @@ export class DirectLessonPlayer {
             let audioUrl = a.url;
             if (!audioUrl && typeof srcId === 'string') {
               if (srcId === 'voc_bong') {
-                audioUrl = 'http://localhost:8000/api/v1/o/87b24c3975ea3e62b1fe6c6a2383e6253d898e69585572c95fca8b41a3b49ea1';
+                audioUrl = '/api/v1/o/87b24c3975ea3e62b1fe6c6a2383e6253d898e69585572c95fca8b41a3b49ea1';
               }
             }
             return {
@@ -490,12 +490,12 @@ export class DirectLessonPlayer {
       let targetUrl = rawUrl ? cdnUrl(rawUrl) : '';
       if (!targetUrl && srcId) {
         if (srcId === 'voc_bong' || srcId === 'voc_bong_generic') {
-          targetUrl = 'http://localhost:8000/api/v1/o/87b24c3975ea3e62b1fe6c6a2383e6253d898e69585572c95fca8b41a3b49ea1';
+          targetUrl = '/api/v1/o/87b24c3975ea3e62b1fe6c6a2383e6253d898e69585572c95fca8b41a3b49ea1';
         }
       }
 
-      // 3. Fetch buffer if not in SD card and targetUrl is http(s)
-      if (!rawBuf && targetUrl && /^https?:\/\//i.test(targetUrl)) {
+      // 3. Fetch buffer if not in SD card and targetUrl is http(s) or relative URL
+      if (!rawBuf && targetUrl && (/^https?:\/\//i.test(targetUrl) || targetUrl.startsWith('/'))) {
         try {
           const res = await fetch(targetUrl);
           if (res.ok) {
