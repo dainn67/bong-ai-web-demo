@@ -410,7 +410,7 @@ function scheduleAutoMicStart(get: Getter, delayMs = ECHO_HANGOVER_MS): void {
   }, Math.max(0, delayMs));
 }
 
-function pauseListeningForAiTurn(set: Setter, get: Getter): void {
+function pauseListeningForAiTurn(set: Setter, _get: Getter): void {
   clearAutoMicTimer();
   // Mute and stop local microphone without sending `listen: stop` to server.
   // The server is already taking its turn (TTS / display thinking / STT).
