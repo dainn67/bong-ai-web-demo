@@ -236,12 +236,8 @@ export const ScriptEnginePanel: React.FC = () => {
   }, [setStoreCatalog]);
 
 
-  // Initialize with sample scene if none loaded
-  useEffect(() => {
-    if (!scene) {
-      loadScene(SAMPLE_LESSON_TEST);
-    }
-  }, [loadScene, scene]);
+  // Simulator starts in idle standby — do not auto-run any scene until user chooses.
+
 
 
 

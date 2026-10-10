@@ -26,6 +26,26 @@ describe('touch-layout', () => {
       expect(parseTouchLayout(undefined)).toBeNull();
       expect(parseTouchLayout(4)).toBeNull();
     });
+
+    it('normalizes recognized layout aliases to canonical TouchLayoutType', () => {
+      expect(parseTouchLayout('pie4')).toBe('tap4');
+      expect(parseTouchLayout('quadrant')).toBe('tap4');
+      expect(parseTouchLayout('pie3')).toBe('tap3');
+      expect(parseTouchLayout('pie5')).toBe('tap5');
+      expect(parseTouchLayout('pie6')).toBe('tap6');
+      expect(parseTouchLayout('tb2')).toBe('tap2_tren_duoi');
+      expect(parseTouchLayout('split_horizontal')).toBe('tap2_tren_duoi');
+      expect(parseTouchLayout('top_bottom')).toBe('tap2_tren_duoi');
+      expect(parseTouchLayout('tap2_horizontal')).toBe('tap2_tren_duoi');
+      expect(parseTouchLayout('lr2')).toBe('tap2_trai_phai');
+      expect(parseTouchLayout('split_vertical')).toBe('tap2_trai_phai');
+      expect(parseTouchLayout('left_right')).toBe('tap2_trai_phai');
+      expect(parseTouchLayout('tap2_vertical')).toBe('tap2_trai_phai');
+      expect(parseTouchLayout('vuot')).toBe('swipe');
+      // Case insensitivity for aliases
+      expect(parseTouchLayout('PIE4')).toBe('tap4');
+      expect(parseTouchLayout(' pie4 ')).toBe('tap4');
+    });
   });
 
   describe('tap2_tren_duoi & tap2_trai_phai', () => {

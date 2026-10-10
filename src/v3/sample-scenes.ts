@@ -141,11 +141,11 @@ export const SAMPLE_START_SCENE: V3Scene = {
     {
       id: 'step_init',
       orb: 'happy',
-      audio: [{ src: 'bong_greeting' }],
+      audio: [],
       branches: [
         { when: 'ISBLANK({stat.guide_done})', go: 'GUIDE' },
         { when: '{sys.first_run} = TRUE', go: 'ONBOARD' },
-        { when: 'default', go: 'LESSON_TEST' },
+        { when: 'default', go: 'HAHA' },
       ],
     },
   ],

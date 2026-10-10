@@ -4,6 +4,7 @@ import { isLegacyCatalogItem } from '../lessons/catalog';
 import { DEFAULT_CONFIG } from '../config/device-config';
 import type { IncomingMessage } from '../protocol/message-types';
 import { INITIAL_FACE_STATE } from '../screen/face-state-machine';
+import { IDLE_ACTIVITY } from '../screen/activity-state';
 
 describe('simulatorStore direct mode and resetConfig', () => {
   beforeEach(() => {
@@ -332,5 +333,77 @@ describe('simulatorStore direct mode and resetConfig', () => {
     expect(isLegacyCatalogItem({ id: 'some-id', title: '[Case 12] Cảm Ứng' })).toBe(true);
     expect(isLegacyCatalogItem({ id: 'unit-template-day-03', title: 'Template' })).toBe(true);
     expect(isLegacyCatalogItem({ id: 'e4fbb60b-05d8-4902-9de5-220ac4198f58', title: 'Legacy UUID' })).toBe(true);
+  });
+
+  it('dứt điểm Free Chat, mic và audio khi mở menu bằng pressBack', () => {
+    useSimulatorStore.setState({
+      status: 'connected',
+      speaking: true,
+      micState: 'listening',
+      micLevel: 42,
+      menu: { view: { screen: 'closed' }, cursor: 0 },
+    });
+
+    const store = useSimulatorStore.getState();
+    store.pressBack();
+
+    const state = useSimulatorStore.getState();
+    expect(state.menu.view.screen).toBe('root');
+    expect(state.speaking).toBe(false);
+    expect(state.micState).toBe('off');
+    expect(state.micLevel).toBe(0);
+  });
+
+  it('dứt điểm hoàn toàn mọi hoạt động khi bấm pressHome', () => {
+    useSimulatorStore.setState({
+      status: 'connected',
+      speaking: true,
+      micState: 'listening',
+      activity: { ...IDLE_ACTIVITY, kind: 'lesson', title: 'Test Lesson', phase: 'playing' },
+      menu: { view: { screen: 'picker', category: 'learning' }, cursor: 0 },
+    });
+
+    const store = useSimulatorStore.getState();
+    store.pressHome();
+
+    const state = useSimulatorStore.getState();
+    expect(state.menu.view.screen).toBe('closed');
+    expect(state.speaking).toBe(false);
+    expect(state.micState).toBe('off');
+    expect(state.activity.kind).toBeNull();
+  });
+
+  it('không cho phép mic mở hoặc phát TTS khi menu đang mở', async () => {
+    useSimulatorStore.setState({
+      status: 'connected',
+      speaking: false,
+      micState: 'off',
+      autoMic: true,
+      menu: { view: { screen: 'root' }, cursor: 0 },
+    });
+
+    const store = useSimulatorStore.getState();
+
+    // 1. Calling startListening directly should be blocked
+    await store.startListening();
+    expect(useSimulatorStore.getState().micState).toBe('off');
+
+    // 2. toggleListening should be blocked
+    store.toggleListening();
+    expect(useSimulatorStore.getState().micState).toBe('off');
+
+    // 3. tapScreen should be blocked
+    store.tapScreen();
+    expect(useSimulatorStore.getState().micState).toBe('off');
+
+    // 4. activity_state: idle should NOT close the menu
+    const set = useSimulatorStore.setState;
+    const get = useSimulatorStore.getState;
+    handleMessage(set, get, { type: 'activity_state', state: 'idle' } as IncomingMessage);
+    expect(useSimulatorStore.getState().menu.view.screen).toBe('root');
+
+    // 5. tts: start message should be dropped while menu is open
+    handleMessage(set, get, { type: 'tts', state: 'start' } as IncomingMessage);
+    expect(useSimulatorStore.getState().speaking).toBe(false);
   });
 });

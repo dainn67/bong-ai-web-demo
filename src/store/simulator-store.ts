@@ -66,7 +66,7 @@ import {
   type DirectLessonIndexItem,
   type DirectPlaybackState,
 } from '../lessons/direct-lesson-player';
-import { unlockSharedAudioContext } from '../v3/use-script-engine';
+import { unlockSharedAudioContext, stopCurrentAudioPlayback } from '../v3/use-script-engine';
 
 
 
@@ -337,6 +337,15 @@ function scheduleSocketAutoNext(get: Getter, delayMs?: number): void {
   socketAutoNextTimer = setTimeout(() => {
     socketAutoNextTimer = null;
     if (get().lessonSourceMode === 'socket' && get().directAutoNext) {
+      const act = get().activity;
+      if (
+        act.waitingFor === 'speech' ||
+        act.waitingFor === 'touch' ||
+        act.phase === 'listening' ||
+        get().touchZones !== null
+      ) {
+        return;
+      }
       get().nextSocketIndex();
     }
   }, delay);
@@ -378,6 +387,8 @@ function clearAutoMicTimer(): void {
 function scheduleAutoMicStart(get: Getter, delayMs = ECHO_HANGOVER_MS): void {
   clearAutoMicTimer();
   if (!get().autoMic || get().status !== 'connected') return;
+  // While menu is open, never auto-start microphone
+  if (get().menu.view.screen !== 'closed') return;
 
   const currentActivity = get().activity;
   // Inside a lesson or story, mic should ONLY open when explicitly awaiting speech!
@@ -393,6 +404,7 @@ function scheduleAutoMicStart(get: Getter, delayMs = ECHO_HANGOVER_MS): void {
   autoMicTimer = setTimeout(async () => {
     autoMicTimer = null;
     if (!get().autoMic || get().status !== 'connected' || get().speaking) return;
+    if (get().menu.view.screen !== 'closed') return;
 
     const act = get().activity;
     if (act.kind === 'lesson' || act.kind === 'story') {
@@ -480,7 +492,10 @@ function openTouchWindow(set: Setter, get: Getter, raw: string, timeoutMs: numbe
     return;
   }
 
-  set({ touchZones: { layout, timeoutMs } });
+  set({
+    touchZones: { layout, timeoutMs },
+    activity: { ...get().activity, notice: null },
+  });
 
   // Reported rather than dropped: a child who simply does not touch would
   // otherwise leave the badge and the server each waiting on the other, and
@@ -637,6 +652,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   v3InputHandler: null,
   setV3InputHandler: (v3InputHandler) => set({ v3InputHandler }),
   setV3ScreenState: ({ expression, mode, waitingFor, touchLayout, caption, imageUrl, kind }) => {
+    if (get().menu.view.screen !== 'closed') return;
     const curFace = get().face;
     const curActivity = get().activity;
     const targetKind = kind !== undefined ? kind : 'lesson';
@@ -725,6 +741,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       },
       onMessage: (message) => handleMessage(set, get, message),
       onAudio: (frame) => {
+        if (get().menu.view.screen !== 'closed') return;
         set({ framesIn: get().framesIn + 1 });
         ensurePlayer(set, get).decode(frame);
       },
@@ -792,6 +809,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
    * is how the real badge works — there is no push-to-talk button on it.
    */
   startListening: async () => {
+    if (get().menu.view.screen !== 'closed') {
+      return;
+    }
+
     const support = audioSupport();
     if (!support.ok) {
       set({ audioError: support.reason });
@@ -810,16 +831,26 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
     mic ??= new MicCapture(get().config.sampleRate, {
       onFrame: (frame) => {
+        if (get().menu.view.screen !== 'closed') return;
         client?.sendAudio(frame);
         set({ framesOut: get().framesOut + 1 });
       },
-      onLevel: (level) => handleLevel(set, get, level),
+      onLevel: (level) => {
+        if (get().menu.view.screen !== 'closed') return;
+        handleLevel(set, get, level);
+      },
       onError: (message) => set({ audioError: message }),
     });
 
     mic.setMuted(false);
     const started = await mic.start();
-    if (!started) return;
+    if (!started || get().menu.view.screen !== 'closed') {
+      if (get().menu.view.screen !== 'closed') {
+        void mic?.stop();
+        mic = null;
+      }
+      return;
+    }
 
     client?.send({ type: 'listen', state: 'start', mode: 'auto' });
     set({ micState: 'listening', audioError: null });
@@ -855,9 +886,9 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   toggleListening: () => {
-    const { micState, startListening, stopListening } = get();
+    const { micState, startListening, stopListening, menu } = get();
     if (micState === 'listening') stopListening();
-    else void startListening();
+    else if (menu.view.screen === 'closed') void startListening();
   },
 
   autoMic: getStoredAutoMic(),
@@ -867,7 +898,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     set({ autoMic: next });
     if (!next) {
       clearAutoMicTimer();
-    } else if (get().status === 'connected' && !get().speaking && get().micState !== 'listening') {
+    } else if (get().status === 'connected' && !get().speaking && get().micState !== 'listening' && get().menu.view.screen === 'closed') {
       scheduleAutoMicStart(get, 200);
     }
   },
@@ -876,7 +907,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     set({ autoMic: enabled });
     if (!enabled) {
       clearAutoMicTimer();
-    } else if (get().status === 'connected' && !get().speaking && get().micState !== 'listening') {
+    } else if (get().status === 'connected' && !get().speaking && get().micState !== 'listening' && get().menu.view.screen === 'closed') {
       scheduleAutoMicStart(get, 200);
     }
   },
@@ -889,7 +920,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
    * come from what the device is currently doing.
    */
   tapScreen: () => {
-    const { status, connect, toggleListening, lessonSourceMode, lessonEngineType } = get();
+    const { status, connect, toggleListening, lessonSourceMode, lessonEngineType, menu } = get();
+    if (menu.view.screen !== 'closed') return;
     if (lessonEngineType === 'v3' || lessonSourceMode === 'direct') {
       if (status === 'disconnected') {
         set({ status: 'connected' });
@@ -1057,10 +1089,34 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   pressHome: () => {
-    // Home is the idle face, the way it is the home screen on a phone. This is
-    // the bail-out: whatever is open, close it.
-    if (get().activity.kind) get().exitActivity();
+    // Dứt điểm hoàn toàn mọi hoạt động (bài học, kể chuyện, free chat, mic)
+    clearAutoMicTimer();
+    clearSocketAutoNextTimer();
+    get().discardListening();
+    player?.stop();
+    directPlayer?.stop();
+    story?.stop();
+    stopCurrentAudioPlayback();
+    lesson?.dispose();
+    lesson = null;
+    story = null;
+    if (get().activity.kind) {
+      if (get().activity.kind === 'story') client?.stopStory();
+      else client?.stopLesson();
+    }
+    client?.abort('home_press');
     get().menuDispatch({ type: 'close' });
+    set({
+      activity: IDLE_ACTIVITY,
+      speaking: false,
+      micState: 'off',
+      micLevel: 0,
+      touchZones: null,
+      lessonDebug: null,
+      lessonPosition: null,
+      lastTouch: null,
+      face: { ...get().face, imageUrl: null, said: '', heard: '', mode: 'idle' },
+    });
   },
 
   pressVolume: (delta) => {
@@ -1078,6 +1134,32 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   lessonMetadataUrl: () => lesson?.metadataUrl ?? null,
 
   menuDispatch: (action) => {
+    if (action.type === 'open') {
+      // Dứt điểm hoàn toàn Free Chat & Mic & Audio khi mở menu
+      clearAutoMicTimer();
+      clearSocketAutoNextTimer();
+      get().discardListening();
+      player?.stop();
+      directPlayer?.stop();
+      story?.stop();
+      stopCurrentAudioPlayback();
+      lesson?.dispose();
+      lesson = null;
+      story = null;
+      client?.abort('menu_open');
+      if (get().activity.kind) {
+        if (get().activity.kind === 'story') client?.stopStory();
+        else client?.stopLesson();
+      }
+      set({
+        speaking: false,
+        micState: 'off',
+        micLevel: 0,
+        activity: IDLE_ACTIVITY,
+        touchZones: null,
+      });
+    }
+
     const state = get();
     const rowCount = rowsFor(state.menu, state.catalog).length;
     const menu = reduceMenu(state.menu, action, rowCount);
@@ -1139,18 +1221,18 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         menu: INITIAL_MENU_STATE,
       });
 
-      if (get().v3LoadSceneHandler) {
-        void get().v3LoadSceneHandler!(entry.id);
-      }
-      void get().selectLesson(entry);
-
       if (get().lessonSourceMode === 'socket') {
         if (get().status === 'disconnected') {
           get().connect();
         }
         client?.abort('start_lesson');
         client?.startLesson(entry.id);
+      } else {
+        if (get().v3LoadSceneHandler) {
+          void get().v3LoadSceneHandler!(entry.id);
+        }
       }
+      void get().selectLesson(entry);
       return;
     }
     if (entry.category === 'stories') void startStory(set, get, entry);
@@ -1164,9 +1246,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     if (activity.kind === 'story') client?.stopStory();
     else if (activity.kind === 'lesson') client?.stopLesson();
     client?.abort('exit_activity');
+    const isMenuOpen = get().menu.view.screen !== 'closed';
     set({
       activity: IDLE_ACTIVITY,
-      menu: INITIAL_MENU_STATE,
+      menu: isMenuOpen ? get().menu : INITIAL_MENU_STATE,
       lessonDebug: null,
       lessonPosition: null,
       lastTouch: null,
@@ -1268,11 +1351,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       set({ lessonEngineType: 'v3' });
     }
 
-    const v3Handler = get().v3LoadSceneHandler;
-    if (isV3 && v3Handler) {
-      void v3Handler(lessonEntry.id);
-    }
-
+    // Do not call v3LoadSceneHandler here: selecting a lesson should only inspect its
+    // metadata for the Studio/catalog, not start playback automatically.
     if (!lessonEntry.metadataUrl) return;
 
     if (!directPlayer) {
@@ -1577,10 +1657,13 @@ function stopActivity(set: Setter, get: Getter): void {
   activityFetch?.abort();
   activityFetch = null;
   clearSocketAutoNextTimer();
+  clearAutoMicTimer();
   ttsDone = false;
+  player?.stop();
   directPlayer?.stop();
   story?.stop();
   story = null;
+  stopCurrentAudioPlayback();
   lesson?.dispose();
   lesson = null;
   if (noticeClearTimer) clearTimeout(noticeClearTimer);
@@ -1595,8 +1678,12 @@ function stopActivity(set: Setter, get: Getter): void {
   // to — otherwise it fires into the next activity and answers a question
   // nobody asked.
   clearTouchWindow(set);
-  set({ micLevel: 0, face: { ...get().face, said: '', heard: '' } });
-
+  set({
+    speaking: false,
+    micState: 'off',
+    micLevel: 0,
+    face: { ...get().face, said: '', heard: '', mode: 'idle' },
+  });
 }
 
 /** Starts a story. Plays via StoryPlayer if metadata is available, and informs server. */
@@ -1686,14 +1773,20 @@ function ensurePlayer(set: Setter, get: Getter): OpusPlayer {
 
         // When audio finishes playing in socket mode with auto-next enabled
         if (get().lessonSourceMode === 'socket' && get().directAutoNext) {
-          if (ttsDone || get().directPlaybackState === 'playing') {
+          const act = get().activity;
+          const isAwaiting =
+            act.waitingFor === 'speech' ||
+            act.waitingFor === 'touch' ||
+            act.phase === 'listening' ||
+            get().touchZones !== null;
+          if (!isAwaiting && (ttsDone || get().directPlaybackState === 'playing')) {
             set({ directPlaybackState: 'idle' });
             scheduleSocketAutoNext(get, get().directAutoNextDelayMs);
           }
         }
 
         // Auto mic turn-taking: when AI finishes speaking, wait for hangover and auto open mic
-        if (get().autoMic) {
+        if (get().autoMic && get().menu.view.screen === 'closed') {
           scheduleAutoMicStart(get, ECHO_HANGOVER_MS);
         }
       }
@@ -1766,6 +1859,7 @@ export function handleMessage(set: Setter, get: Getter, message: IncomingMessage
   }
 
   if (message.type === 'lesson_question') {
+    if (get().menu.view.screen !== 'closed') return;
     openServerQuestion(get, message);
     return;
   }
@@ -1776,6 +1870,7 @@ export function handleMessage(set: Setter, get: Getter, message: IncomingMessage
       player?.stop();
       set({ activity: { ...get().activity, phase: 'paused' } });
     } else if (actState === 'playing') {
+      if (get().menu.view.screen !== 'closed') return;
       const order = (message as { order?: string }).order;
       if (order && get().directIndexes.length > 0) {
         const matched = get().directIndexes.find((idx) => idx.order === String(order));
@@ -1805,11 +1900,26 @@ export function handleMessage(set: Setter, get: Getter, message: IncomingMessage
         }
       }
       set({ activity: { ...get().activity, kind: get().activity.kind ?? 'lesson', phase: 'playing' } });
+    } else if (actState === 'awaiting') {
+      clearSocketAutoNextTimer();
+      set({
+        directPlaybackState: 'idle',
+        activity: {
+          ...get().activity,
+          kind: get().activity.kind ?? 'lesson',
+          phase: 'listening',
+          waitingFor: 'speech',
+        },
+      });
+      if (get().autoMic && get().menu.view.screen === 'closed') {
+        scheduleAutoMicStart(get, 150);
+      }
     } else if (actState === 'idle') {
       stopActivity(set, get);
+      const isMenuOpen = get().menu.view.screen !== 'closed';
       set({
         activity: IDLE_ACTIVITY,
-        menu: INITIAL_MENU_STATE,
+        menu: isMenuOpen ? get().menu : INITIAL_MENU_STATE,
         face: { ...get().face, imageUrl: null },
       });
     }
@@ -1818,13 +1928,16 @@ export function handleMessage(set: Setter, get: Getter, message: IncomingMessage
 
   const displayCmd = toDisplayCommand(message);
   if (displayCmd?.kind === 'touch_zones') {
-    openTouchWindow(set, get, displayCmd.layout, displayCmd.timeoutMs);
+    if (get().menu.view.screen === 'closed') {
+      openTouchWindow(set, get, displayCmd.layout, displayCmd.timeoutMs);
+    }
   } else if (displayCmd?.kind === 'clear_touch_zones') {
     clearTouchWindow(set);
   }
 
   // Update activity state based on server events during streaming
   if (displayCmd?.kind === 'image') {
+    if (get().menu.view.screen !== 'closed') return;
     const previous = get().activity;
     set({
       activity: {
@@ -1889,22 +2002,23 @@ export function handleMessage(set: Setter, get: Getter, message: IncomingMessage
     }
   }
 
-
-
   // Auto-mic: mute uplink as soon as child finishes speaking or server starts thinking
   if (message.type === 'stt') {
+    if (get().menu.view.screen !== 'closed') return;
     if (get().autoMic && get().micState === 'listening') {
       pauseListeningForAiTurn(set, get);
     }
   }
 
   if (message.type === 'display' && (message as { name?: string }).name === 'thinking') {
+    if (get().menu.view.screen !== 'closed') return;
     if (get().autoMic && get().micState === 'listening') {
       pauseListeningForAiTurn(set, get);
     }
   }
 
   if (message.type === 'listen') {
+    if (get().menu.view.screen !== 'closed') return;
     if (message.state === 'stop') {
       if (get().autoMic && get().micState === 'listening') {
         pauseListeningForAiTurn(set, get);
@@ -1917,6 +2031,10 @@ export function handleMessage(set: Setter, get: Getter, message: IncomingMessage
   }
 
   if (message.type === 'tts') {
+    if (get().menu.view.screen !== 'closed') {
+      player?.stop();
+      return;
+    }
     if (message.state === 'start' || message.state === 'sentence_start') {
       ttsDone = false;
       clearSocketAutoNextTimer();
@@ -1936,19 +2054,27 @@ export function handleMessage(set: Setter, get: Getter, message: IncomingMessage
 
       // Auto next in socket mode if enabled
       if (get().lessonSourceMode === 'socket' && get().directAutoNext) {
-        if (!get().speaking) {
-          set({ directPlaybackState: 'idle' });
-          scheduleSocketAutoNext(get, get().directAutoNextDelayMs);
-        } else {
-          // Audio is still actively speaking through OpusPlayer.
-          // onPlayingChange(false) will schedule auto-next when silence is reached,
-          // but we also arm a safety fallback timer just in case.
-          scheduleSocketAutoNext(get, get().directAutoNextDelayMs + 3000);
+        const act = get().activity;
+        const isAwaiting =
+          act.waitingFor === 'speech' ||
+          act.waitingFor === 'touch' ||
+          act.phase === 'listening' ||
+          get().touchZones !== null;
+        if (!isAwaiting) {
+          if (!get().speaking) {
+            set({ directPlaybackState: 'idle' });
+            scheduleSocketAutoNext(get, get().directAutoNextDelayMs);
+          } else {
+            // Audio is still actively speaking through OpusPlayer.
+            // onPlayingChange(false) will schedule auto-next when silence is reached,
+            // but we also arm a safety fallback timer just in case.
+            scheduleSocketAutoNext(get, get().directAutoNextDelayMs + 3000);
+          }
         }
       }
 
       // Auto mic turn-taking: when TTS stops, if audio already finished or not speaking
-      if (get().autoMic && !get().speaking) {
+      if (get().autoMic && !get().speaking && get().menu.view.screen === 'closed') {
         scheduleAutoMicStart(get, ECHO_HANGOVER_MS);
       }
     }

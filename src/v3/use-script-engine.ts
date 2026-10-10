@@ -9,7 +9,8 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { V3Scene, V3Step, MemorySpaces, OrbExpression, DeviceLogEntry, ManifestFileItem } from './types';
 import { resolvePlaceholders } from './script-parser';
-import { evalWhen, normalizeReply } from './when-expr';
+import { evalWhen } from './when-expr';
+import { normalizeK7 } from './k7-normalizer';
 import { VirtualSdCard } from './virtual-sd-card';
 import { isBongEncrypted, decryptBongAsset, SimulatedDeviceSecurity } from './crypto-client';
 import { isImaAdpcmWav, decodeImaAdpcmToAudioBuffer } from './adpcm-decoder';
@@ -415,14 +416,24 @@ export function useScriptEngine() {
   const handleInputReply = useCallback(
     (reply: string) => {
       if (!currentStep) return;
-      const normalized = normalizeReply(reply);
-      setCurrentReply(normalized);
-      logMessage(`Nhận phản hồi từ bé: "${normalized}"`);
-
       const mode = currentStep.talk ? 'talk' : currentStep.listen?.mode || 'auto';
+      const options = currentStep.listen?.voice?.options || currentStep.talk?.options || [];
+
+      let normalized: string;
+      if (mode === 'hear') {
+        normalized = reply === 'silent' ? 'silent' : 'spoke';
+      } else if (mode === 'voice' || (options && options.length > 0)) {
+        normalized = normalizeK7(reply, options);
+      } else {
+        normalized = normalizeK7(reply);
+      }
+
+      setCurrentReply(normalized);
+      logMessage(`Nhận phản hồi từ bé: "${normalized}" (gốc: "${reply}")`);
 
       // retry: once per step, only when reply is in retry.on
       const retry = currentStep.listen?.retry;
+
       if (
         retry &&
         !retriedRef.current &&

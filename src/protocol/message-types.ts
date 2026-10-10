@@ -269,8 +269,9 @@ export interface ListenIn {
 
 export interface ActivityStateIn {
   type: 'activity_state';
-  state?: 'playing' | 'paused' | 'idle';
+  state?: 'playing' | 'paused' | 'idle' | 'awaiting';
   session_id?: string;
+  order?: string;
 }
 
 /**

@@ -25,7 +25,7 @@ import {
   isBongEncrypted,
 } from './crypto-client';
 import { useSimulatorStore } from '../store/simulator-store';
-import type { TouchLayoutType } from '../screen/touch-layout';
+import { parseTouchLayout, type TouchLayoutType } from '../screen/touch-layout';
 import { isEafUrl } from '../screen/eaf-view';
 import { convertMetadataToV3Scene } from './metadata-converter';
 import { fetchCdnCatalog, type LessonSummary } from '../lessons/catalog';
@@ -310,24 +310,16 @@ export function V3EngineProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // 3. Fetch fresh manifest from backend
+      // 2. Fetch fresh manifest from backend
       const fresh = await fetchManifestFromBackend();
-      const activeManifest = fresh || cached;
-
-      // 4. Start initial scene: prioritize HAHA, then START
-      if (!engine.scene) {
-        if (activeManifest?.scenes?.some((s) => s.id === 'HAHA')) {
-          void loadSceneById('HAHA');
-        } else if (activeManifest?.scenes?.some((s) => s.id === 'START')) {
-          void loadSceneById('START');
-        } else if (activeManifest?.scenes?.some((s) => s.id === 'UNIT_TEST_DAY_03_01')) {
-          void loadSceneById('UNIT_TEST_DAY_03_01');
-        } else {
-          engine.loadScene(SAMPLE_LESSON_TEST);
-        }
+      if (fresh?.scenes && fresh.scenes.length > 0) {
+        void syncCatalogWithManifest(fresh.scenes);
       }
+      // NOTE: Do NOT auto-start any scene on boot.
+      // Device and simulator boot up into Standby / Idle face.
+      // Lessons should only start when explicitly chosen by the user.
     })();
-  }, [engine.loadScene, engine.scene, fetchManifestFromBackend, loadSceneById, syncCatalogWithManifest]);
+  }, [fetchManifestFromBackend, syncCatalogWithManifest]);
 
   // Register external scene loader for cross-scene transitions (e.g. START -> HAHA)
   useEffect(() => {
@@ -377,20 +369,6 @@ export function V3EngineProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setV3InputHandler((text: string) => {
       if (!engine.currentStep) return;
-      const voiceOpts = engine.currentStep.listen?.voice?.options;
-      if (voiceOpts && voiceOpts.length > 0) {
-        const lower = text.toLowerCase().trim();
-        const matched = voiceOpts.find(
-          (o) =>
-            lower.includes(o.name.toLowerCase()) ||
-            o.desc.toLowerCase().includes(lower) ||
-            lower.includes(o.desc.toLowerCase()),
-        );
-        if (matched) {
-          engine.handleInputReply(matched.name);
-          return;
-        }
-      }
       engine.handleInputReply(text);
     });
 
@@ -399,25 +377,23 @@ export function V3EngineProvider({ children }: { children: ReactNode }) {
     };
   }, [engine.currentStep, engine.handleInputReply, setV3InputHandler]);
 
+
   // Synchronize state with RoundScreen display
   useEffect(() => {
+    if (useSimulatorStore.getState().menu.view.screen !== 'closed') {
+      return;
+    }
+
+    if (!engine.currentStep) {
+      return;
+    }
+
     const rawLayout =
       engine.currentStep?.listen?.mode === 'touch'
         ? engine.currentStep.listen.touch?.layout
         : undefined;
 
-    const mappedLayout: TouchLayoutType | null =
-      rawLayout === 'pie4'
-        ? 'tap4'
-        : rawLayout === 'tb2'
-          ? 'tap2_tren_duoi'
-          : rawLayout === 'lr2'
-            ? 'tap2_trai_phai'
-            : rawLayout === 'pie3'
-              ? 'tap3'
-              : rawLayout === 'swipe'
-                ? 'swipe'
-                : null;
+    const mappedLayout: TouchLayoutType | null = parseTouchLayout(rawLayout);
 
     const isWaitingForInput = engine.isAwaitingInput && !engine.isPlayingAudio;
     const micState = useSimulatorStore.getState().micState;
@@ -532,7 +508,7 @@ export function V3EngineProvider({ children }: { children: ReactNode }) {
 
     const store = useSimulatorStore.getState();
     if (isWaitingForSpeech) {
-      if (store.autoMic && store.micState !== 'listening') {
+      if (store.autoMic && store.micState !== 'listening' && store.menu.view.screen === 'closed') {
         void store.startListening();
       }
     } else if (engine.isPlayingAudio) {

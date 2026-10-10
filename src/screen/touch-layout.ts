@@ -47,16 +47,41 @@ export const TOUCH_LAYOUTS: readonly TouchLayoutType[] = [
 ];
 
 /**
- * Narrows an authored `layout` string, or null if it names none of the seven.
+ * Maps known alias layout names to the canonical 7 touch layouts.
  *
- * Guessing a default here would be the wrong kind of forgiving: a typo'd layout
- * would silently grade the child against a grid the artwork was never drawn to,
- * and every zone would look like a content bug rather than a schema one.
+ * Content authors, v3 scenes, and remote backend definitions use aliases
+ * such as 'pie4', 'quadrant', 'tb2', 'lr2', 'split_horizontal', etc.
+ */
+export const TOUCH_LAYOUT_ALIASES: Readonly<Record<string, TouchLayoutType>> = {
+  pie4: 'tap4',
+  quadrant: 'tap4',
+  pie3: 'tap3',
+  pie5: 'tap5',
+  pie6: 'tap6',
+  tb2: 'tap2_tren_duoi',
+  split_horizontal: 'tap2_tren_duoi',
+  top_bottom: 'tap2_tren_duoi',
+  tap2_horizontal: 'tap2_tren_duoi',
+  lr2: 'tap2_trai_phai',
+  split_vertical: 'tap2_trai_phai',
+  left_right: 'tap2_trai_phai',
+  tap2_vertical: 'tap2_trai_phai',
+  swipe: 'swipe',
+  vuot: 'swipe',
+};
+
+/**
+ * Narrows an authored `layout` string or recognised alias to one of the seven canonical layouts,
+ * or null if invalid.
  */
 export function parseTouchLayout(value: unknown): TouchLayoutType | null {
-  return typeof value === 'string' && (TOUCH_LAYOUTS as readonly string[]).includes(value)
-    ? (value as TouchLayoutType)
-    : null;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if ((TOUCH_LAYOUTS as readonly string[]).includes(trimmed)) {
+    return trimmed as TouchLayoutType;
+  }
+  const lower = trimmed.toLowerCase();
+  return TOUCH_LAYOUT_ALIASES[lower] ?? null;
 }
 
 export type TouchZoneResult =

@@ -222,13 +222,15 @@ export function evalWhen(expr: string, ctx: WhenEvalContext): boolean {
   }
 }
 
+import { cleanK7Text, normalizeK7 } from './k7-normalizer';
+
 /**
  * K7 reply normalization — lowercase, trim, strip trailing punctuation and
  * wrapping quotes. Applied to raw LLM output before comparing to option names.
  */
 export function normalizeReply(raw: string): string {
-  let s = (raw || '').trim().toLowerCase();
-  s = s.replace(/^["'`«»“”]+|["'`«»“”]+$/g, '');
-  s = s.replace(/[.!?。…]+$/g, '').trim();
-  return s;
+  return cleanK7Text(raw);
 }
+
+export { cleanK7Text, normalizeK7 };
+
