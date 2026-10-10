@@ -14,6 +14,8 @@
  * arrived yet.
  */
 
+import { isImaAdpcmWav, decodeImaAdpcmToAudioBuffer } from '../v3/adpcm-decoder';
+
 export interface ClipSpec {
   url: string;
   delayMs: number;
@@ -142,7 +144,11 @@ export class GroupPlayer {
       try {
         const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return await context.decodeAudioData(await response.arrayBuffer());
+        const raw = await response.arrayBuffer();
+        if (isImaAdpcmWav(raw)) {
+          return decodeImaAdpcmToAudioBuffer(context, raw);
+        }
+        return await context.decodeAudioData(raw);
       } catch {
         return MISSING;
       }

@@ -4,19 +4,19 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useScriptEngine } from './use-script-engine';
+import { useV3EngineContext } from './v3-engine-context';
 import { validateV3Scene } from './script-parser';
 import {
   SAMPLE_LESSON_TEST,
   SAMPLE_TALK_SCENE,
   SAMPLE_START_SCENE,
   SAMPLE_END_SCENE,
+  SAMPLE_INLIST_SCENE,
 } from './sample-scenes';
 import type { V3Scene, V3DeviceManifest } from './types';
 import { normalizeReply } from './when-expr';
 import { SAMPLE_PROMPT_STORE } from './sample-scenes';
 import { useSimulatorStore } from '../store/simulator-store';
-import type { TouchLayoutType } from '../screen/touch-layout';
 import {
   SimulatedDeviceSecurity,
   encryptBongAsset,
@@ -26,7 +26,8 @@ import {
 } from './crypto-client';
 import { VirtualSdCard } from './virtual-sd-card';
 import type { SdFileInfo, SdStorageStats } from './virtual-sd-card';
-import { fetchCdnCatalog, type LessonSummary } from '../lessons/catalog';
+import { type LessonSummary } from '../lessons/catalog';
+import { DEFAULT_V3_CATALOG } from '../store/simulator-store';
 import { convertMetadataToV3Scene } from './metadata-converter';
 
 const GD1_QUICK_SCENES = [
@@ -91,35 +92,53 @@ const ORB_DESCRIPTIONS: Record<string, { emoji: string; label: string }> = {
 
 export const ScriptEnginePanel: React.FC = () => {
   const {
-    scene,
-    currentStep,
-    activeOrb,
-    memory,
-    executionLog,
-    isPlayingAudio,
-    isAwaitingInput,
-    currentReply,
-    retriedThisStep,
-    deviceLogs,
-    loadScene,
-    handleInputReply,
-    jumpToStep,
-  } = useScriptEngine();
+    engine: {
+      scene,
+      currentStep,
+      activeOrb,
+      memory,
+      executionLog,
+      isPlayingAudio,
+      isAwaitingInput,
+      currentReply,
+      retriedThisStep,
+      deviceLogs,
+      setManifestLists,
+      loadScene,
+      handleInputReply,
+      jumpToStep,
+    },
+    backendManifest: contextBackendManifest,
+    isFetchingManifest: contextIsFetchingManifest,
+    manifestError: contextManifestError,
+  } = useV3EngineContext();
 
-  const setV3ScreenState = useSimulatorStore((state) => state.setV3ScreenState);
-  const setV3TouchHandler = useSimulatorStore((state) => state.setV3TouchHandler);
+  const setStoreCatalog = useSimulatorStore((state) => state.setCatalog);
 
   const [activeTab, setActiveTab] = useState<'steps' | 'memory' | 'logs' | 'manifest' | 'security' | 'sdcard'>('steps');
   const [testSpeechText, setTestSpeechText] = useState('cat');
   const [isCallingBackend, setIsCallingBackend] = useState(false);
   const [backendListenResult, setBackendListenResult] = useState<any>(null);
-  const [backendManifest, setBackendManifest] = useState<V3DeviceManifest | null>(null);
-  const [manifestError, setManifestError] = useState<string | null>(null);
-  const [isFetchingManifest, setIsFetchingManifest] = useState(false);
+  const [backendManifest, setBackendManifest] = useState<V3DeviceManifest | null>(contextBackendManifest);
+  const [manifestError, setManifestError] = useState<string | null>(contextManifestError);
+  const [isFetchingManifest, setIsFetchingManifest] = useState(contextIsFetchingManifest);
   const [syncProgress, setSyncProgress] = useState<string | null>(null);
   const [isCheckingBlobs, setIsCheckingBlobs] = useState(false);
   const [blobCheckResult, setBlobCheckResult] = useState<{ missing: string[]; checkedCount: number } | null>(null);
   const [showRawManifestJson, setShowRawManifestJson] = useState(false);
+
+  useEffect(() => {
+    if (contextBackendManifest) {
+      setBackendManifest(contextBackendManifest);
+    }
+  }, [contextBackendManifest]);
+
+  // Synchronize backend manifest lists into script engine evaluator
+  useEffect(() => {
+    if (backendManifest?.lists) {
+      setManifestLists(backendManifest.lists as any);
+    }
+  }, [backendManifest, setManifestLists]);
 
   // Security & 2-tier Key Management state
   const [key0Hex, setKey0Hex] = useState(() => SimulatedDeviceSecurity.getDeviceRootKey0Hex());
@@ -162,6 +181,25 @@ export const ScriptEnginePanel: React.FC = () => {
       const cached = await VirtualSdCard.loadManifestCache();
       if (cached) {
         setBackendManifest(cached);
+        if (cached.scenes && cached.scenes.length > 0) {
+          setStoreCatalog(
+            cached.scenes.map((s) => ({
+              id: s.id,
+              title:
+                s.id === 'START'
+                  ? 'Bắt đầu (START)'
+                  : s.id === 'END'
+                  ? 'Kết thúc (END)'
+                  : s.id === 'UNIT_TEST_DAY_03_01'
+                  ? 'Bài học kiểm thử GĐ3'
+                  : `Kịch bản ${s.id}`,
+              description: `Kịch bản phát hành v${s.ver}${s.pin ? ' (Core)' : ''}`,
+              category: 'learning',
+              metadataUrl: '',
+              coverUrl: null,
+            }))
+          );
+        }
       }
       try {
         const res = await fetch('http://localhost:8000/api/v1/device/manifest?device_id=simulator_v3_dev');
@@ -171,12 +209,32 @@ export const ScriptEnginePanel: React.FC = () => {
           await VirtualSdCard.saveManifestCache(data);
           if (data.prompts) await VirtualSdCard.savePromptsCache(data.prompts);
           if (data.cfg) await VirtualSdCard.saveConfigCache(data.cfg);
+          if (data.scenes && data.scenes.length > 0) {
+            setStoreCatalog(
+              data.scenes.map((s) => ({
+                id: s.id,
+                title:
+                  s.id === 'START'
+                    ? 'Bắt đầu (START)'
+                    : s.id === 'END'
+                    ? 'Kết thúc (END)'
+                    : s.id === 'UNIT_TEST_DAY_03_01'
+                    ? 'Bài học kiểm thử GĐ3'
+                    : `Kịch bản ${s.id}`,
+                description: `Kịch bản phát hành v${s.ver}${s.pin ? ' (Core)' : ''}`,
+                category: 'learning',
+                metadataUrl: '',
+                coverUrl: null,
+              }))
+            );
+          }
         }
       } catch {
         // offline fallback
       }
     })();
-  }, []);
+  }, [setStoreCatalog]);
+
 
   // Initialize with sample scene if none loaded
   useEffect(() => {
@@ -185,96 +243,7 @@ export const ScriptEnginePanel: React.FC = () => {
     }
   }, [loadScene, scene]);
 
-  // Register touch handler to bridge RoundScreen taps into useScriptEngine
-  useEffect(() => {
-    setV3TouchHandler((result) => {
-      const reply = result === 'cham_khac' ? 'miss' : result;
-      handleInputReply(reply);
-    });
 
-    return () => {
-      setV3TouchHandler(null);
-    };
-  }, [handleInputReply, setV3TouchHandler]);
-
-  // Synchronize v3 state with the main hardware screen (RoundScreen) on the left
-  useEffect(() => {
-    const rawLayout = currentStep?.listen?.mode === 'touch' ? currentStep.listen.touch?.layout : undefined;
-    const mappedLayout: TouchLayoutType | null =
-      rawLayout === 'pie4'
-        ? 'tap4'
-        : rawLayout === 'tb2'
-          ? 'tap2_tren_duoi'
-          : rawLayout === 'lr2'
-            ? 'tap2_trai_phai'
-            : rawLayout === 'pie3'
-              ? 'tap3'
-              : rawLayout === 'swipe'
-                ? 'swipe'
-                : null;
-
-    let friendlyCaption: string | null = null;
-    if (currentStep) {
-      if (currentStep.listen?.mode === 'voice') {
-        const opts = (currentStep.listen.voice?.options || []).map((o) => o.name).join(', ');
-        friendlyCaption = opts ? `Hỏi bé: [${opts}]` : 'Bống đang lắng nghe bé nói...';
-      } else if (currentStep.listen?.mode === 'touch') {
-        friendlyCaption = 'Bé chạm vào màn hình nhé!';
-      } else if (currentStep.listen?.mode === 'hear') {
-        friendlyCaption = 'Bống đang lắng nghe bé...';
-      } else if (currentStep.talk) {
-        friendlyCaption = `Trò chuyện cùng ${currentStep.talk.voice}`;
-      } else if (isPlayingAudio) {
-        friendlyCaption = 'Bống đang nói...';
-      } else {
-        friendlyCaption = `Bước: ${currentStep.id}`;
-      }
-    }
-
-    const firstVisual = currentStep?.visual?.[0];
-    const rawSrc = Array.isArray(firstVisual?.src) ? firstVisual?.src[0] : firstVisual?.src;
-    let visualUrl: string | null =
-      firstVisual?.url ||
-      (typeof rawSrc === 'string' && (rawSrc.includes('/') || rawSrc.endsWith('.eaf'))
-        ? rawSrc
-        : null);
-
-    if (visualUrl && firstVisual?.nodeType === 'eaf' && !isEafUrl(visualUrl)) {
-      visualUrl = `${visualUrl}.eaf`;
-    }
-
-    setV3ScreenState({
-      expression: activeOrb,
-      mode: isPlayingAudio ? 'speaking' : 'idle',
-      waitingFor: isAwaitingInput
-        ? currentStep?.listen?.mode === 'touch'
-          ? 'touch'
-          : currentStep?.listen?.mode === 'voice'
-            ? 'speech'
-            : null
-        : null,
-      touchLayout: isAwaitingInput && currentStep?.listen?.mode === 'touch' ? mappedLayout : null,
-      caption: friendlyCaption,
-      imageUrl: visualUrl,
-      kind: 'lesson',
-    });
-  }, [activeOrb, currentStep, isAwaitingInput, isPlayingAudio, setV3ScreenState]);
-
-  // Clean up hardware screen on unmount
-  useEffect(() => {
-    return () => {
-      setV3ScreenState({
-        expression: 'idle',
-        mode: 'idle',
-        waitingFor: null,
-        touchLayout: null,
-        caption: null,
-        imageUrl: null,
-        kind: null,
-      });
-      setV3TouchHandler(null);
-    };
-  }, [setV3ScreenState, setV3TouchHandler]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -487,7 +456,35 @@ export const ScriptEnginePanel: React.FC = () => {
 
   const refreshCatalogAndSd = useCallback(async () => {
     try {
-      const items = await fetchCdnCatalog();
+      let items: LessonSummary[] = [];
+      const res = await fetch('http://localhost:8000/api/v1/device/manifest?device_id=simulator_v3_dev');
+      if (res.ok) {
+        const data = await res.json();
+        setBackendManifest(data);
+        items = (data.scenes || []).map((s: any) => ({
+          id: s.id,
+          title:
+            s.id === 'HAHA'
+              ? 'Bài Học HAHA (Bản phát hành chuẩn)'
+              : s.id === 'START'
+              ? 'Bắt đầu (START)'
+              : s.id === 'END'
+              ? 'Kết thúc (END)'
+              : s.id === 'UNIT_TEST_DAY_03_01'
+              ? 'Bài học kiểm thử GĐ3'
+              : `Kịch bản ${s.id}`,
+          description:
+            s.id === 'HAHA'
+              ? '42 bước: Chạm 4 vùng pie4, Vuốt 4 hướng, Voice STT/LLM, Hoạt ảnh .eaf'
+              : `Kịch bản phát hành v${s.ver ?? 1}${s.pin ? ' (Core)' : ''}`,
+          category: 'learning' as const,
+          metadataUrl: s.hash ? `http://localhost:8000/api/v1/o/${s.hash}` : '',
+          coverUrl: null,
+        }));
+      }
+      if (items.length === 0) {
+        items = DEFAULT_V3_CATALOG;
+      }
       setCatalog(items);
 
       // Check which scenes exist on SD Card
@@ -501,7 +498,8 @@ export const ScriptEnginePanel: React.FC = () => {
       }
       setSyncedSceneIds(onSd);
     } catch (err) {
-      console.warn('Failed to fetch catalog:', err);
+      console.warn('Failed to fetch manifest scenes:', err);
+      setCatalog(DEFAULT_V3_CATALOG);
     }
   }, []);
 
@@ -538,31 +536,7 @@ export const ScriptEnginePanel: React.FC = () => {
       }
     }
 
-    // 2. Built-in sample scenes
-    if (id === 'LESSON_TEST') {
-      loadScene(SAMPLE_LESSON_TEST);
-      return;
-    }
-    if (id === 'TALK_DEMO') {
-      loadScene(SAMPLE_TALK_SCENE);
-      return;
-    }
-    if (id === 'START') {
-      loadScene(SAMPLE_START_SCENE);
-      return;
-    }
-    if (id === 'END') {
-      loadScene(SAMPLE_END_SCENE);
-      return;
-    }
-
-    // 3. Not on SD card - check offline mode
-    if (isSimulatingOffline) {
-      setDownloadNotice(`⚠️ Bài học "${id}" chưa được tải về Thẻ SD! Hãy bật Online để tải về thẻ trước.`);
-      return;
-    }
-
-    // 4. Check if it's a Manifest scene available via Backend Blob Store
+    // 2. Check if it's a Manifest scene available via Backend Blob Store
     const manifestScene = backendManifest?.scenes?.find((s) => s.id === id);
     if (manifestScene) {
       try {
@@ -590,21 +564,73 @@ export const ScriptEnginePanel: React.FC = () => {
       }
     }
 
-    // 5. Online fetch from database catalog via backend API
+    // Direct fallback for production scenes
+    const PROD_HASHES: Record<string, string> = {
+      HAHA: '73e18d0c6d97fab9f190a3872b9e37fe3fe577f2e77708a6c69de3e79cede89b',
+      START: 'ec77180aa18b7e4f8a455f73fa43ae3b27c7ebcb61c85defd73e54f231bf3434',
+      END: 'd0a9e736acfaae8f16222d5fdbaa0dd8bdc22e9445a61a07d16baa3ef71c29e9',
+    };
+    if (PROD_HASHES[id]) {
+      try {
+        setDownloadNotice(`⏳ Đang tải kịch bản "${id}" từ Backend...`);
+        const res = await fetch(`http://localhost:8000/api/v1/o/${PROD_HASHES[id]}`);
+        if (res.ok) {
+          const text = await res.text();
+          const parsed = JSON.parse(text) as V3Scene;
+          loadScene(parsed);
+          setDownloadNotice(`☁️ Đã nạp kịch bản chuẩn "${id}" từ Backend.`);
+          return;
+        }
+      } catch (err: any) {
+        console.warn('Direct load failed:', err);
+      }
+    }
+
+    // 3. Built-in sample scenes
+    if (id === 'LESSON_TEST') {
+      loadScene(SAMPLE_LESSON_TEST);
+      return;
+    }
+    if (id === 'INLIST_DEMO') {
+      loadScene(SAMPLE_INLIST_SCENE);
+      return;
+    }
+    if (id === 'TALK_DEMO') {
+      loadScene(SAMPLE_TALK_SCENE);
+      return;
+    }
+    if (id === 'START') {
+      loadScene(SAMPLE_START_SCENE);
+      return;
+    }
+    if (id === 'END') {
+      loadScene(SAMPLE_END_SCENE);
+      return;
+    }
+
+    // 4. Not on SD card - check offline mode
+    if (isSimulatingOffline) {
+      setDownloadNotice(`⚠️ Bài học "${id}" chưa được tải về Thẻ SD! Hãy bật Online để tải về thẻ trước.`);
+      return;
+    }
+
+    // 5. Online fetch from catalog fallback
     const item = catalog.find((c) => c.id === id);
     const metaUrl = item?.metadataUrl || `/cdn/lessions/${id}/metadata.json`;
     try {
-      setDownloadNotice(`⏳ Đang tải kịch bản từ CSDL...`);
+      setDownloadNotice(`⏳ Đang tải kịch bản...`);
       const res = await fetch(metaUrl);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const rawMeta = await res.json();
-      const v3Scene = convertMetadataToV3Scene(id, item?.title || id, rawMeta);
+      const v3Scene = rawMeta.steps ? rawMeta : convertMetadataToV3Scene(id, item?.title || id, rawMeta);
       loadScene(v3Scene);
-      setDownloadNotice(`☁️ Đã nạp kịch bản từ CSDL PostgreSQL. Bấm "Tải về Thẻ SD" để lưu offline.`);
+      setDownloadNotice(`☁️ Đã nạp kịch bản. Bấm "Tải về Thẻ SD" để lưu offline.`);
     } catch (e: any) {
       setDownloadNotice(`❌ Lỗi tải kịch bản từ server: ${e?.message || e}`);
     }
   };
+
+
 
   const handleOneClickSyncGD1 = async () => {
     setIsOneClickSyncing(true);
@@ -1109,26 +1135,27 @@ export const ScriptEnginePanel: React.FC = () => {
                 <select
                   value={selectedLessonId}
                   onChange={(e) => handleSelectScene(e.target.value)}
-                  className="bg-slate-800 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1 border border-slate-700 outline-none max-w-[200px] truncate"
-                  title="Chọn các kịch bản khác từ CSDL hoặc Manifest"
+                  className="bg-slate-800 text-slate-200 text-xs font-semibold rounded-lg px-2.5 py-1 border border-slate-700 outline-none max-w-[220px] truncate"
+                  title="Chọn các kịch bản khác từ Manifest hoặc Kịch bản mẫu"
                 >
-                  <optgroup label="⚡ Kịch bản mẫu GĐ1">
-                    <option value="LESSON_TEST">LESSON_TEST (Bài học con mèo)</option>
-                    <option value="TALK_DEMO">TALK_DEMO (Hội thoại tự do)</option>
-                    <option value="START">START (Khởi động thiết bị)</option>
-                    <option value="END">END (Bé đi ngủ - idle)</option>
-                  </optgroup>
                   {backendManifest?.scenes && backendManifest.scenes.length > 0 && (
-                    <optgroup label="📦 Kịch bản từ Manifest v3">
+                    <optgroup label="📦 Kịch bản đã phát hành (Manifest v3)">
                       {backendManifest.scenes.map((s) => (
                         <option key={`m_${s.id}`} value={s.id}>
-                          {s.id} (v{s.ver}{s.pin ? ' 📌' : ''})
+                          {syncedSceneIds.has(s.id) ? '💾 ' : '☁️ '} {s.id} (v{s.ver}{s.pin ? ' 📌' : ''})
                         </option>
                       ))}
                     </optgroup>
                   )}
-                  {catalog.length > 0 && (
-                    <optgroup label="☁️ Kịch bản từ CSDL PostgreSQL">
+                  <optgroup label="⚡ Kịch bản mẫu giả lập">
+                    <option value="LESSON_TEST">LESSON_TEST (Bài học con mèo)</option>
+                    <option value="INLIST_DEMO">INLIST_DEMO (CT-04 Test INLIST & Save)</option>
+                    <option value="TALK_DEMO">TALK_DEMO (Hội thoại tự do)</option>
+                    <option value="START">START (Khởi động thiết bị)</option>
+                    <option value="END">END (Bé đi ngủ - idle)</option>
+                  </optgroup>
+                  {catalog.length > 0 && !backendManifest?.scenes?.length && (
+                    <optgroup label="☁️ Kịch bản phát hành">
                       {catalog.map((c) => (
                         <option key={`c_${c.id}`} value={c.id}>
                           {c.title} ({c.id})
@@ -1140,8 +1167,75 @@ export const ScriptEnginePanel: React.FC = () => {
               </div>
             </div>
 
-            {/* 7 Quick Scenario Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 pt-1">
+            {/* 1. Live Published Scenes from Manifest (Web Admin) */}
+            {backendManifest?.scenes && backendManifest.scenes.length > 0 && (
+              <div className="flex flex-col gap-2 p-3 bg-gradient-to-r from-indigo-950/70 via-slate-900 to-purple-950/60 rounded-xl border border-indigo-500/50 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black uppercase tracking-wider text-indigo-200 flex items-center gap-1.5">
+                    <span>📦</span> Kịch Bản Đã Phát Hành Từ Web Admin ({backendManifest.scenes.length} kịch bản):
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    Manifest v{backendManifest.ver}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  {backendManifest.scenes.map((s) => {
+                    const isActive = scene?.id === s.id;
+                    const isSynced = syncedSceneIds.has(s.id);
+                    const label =
+                      s.id === 'START'
+                        ? 'Khởi Động Thiết Bị'
+                        : s.id === 'END'
+                        ? 'Đi Ngủ & Kết Thúc'
+                        : s.id === 'UNIT_TEST_DAY_03_01'
+                        ? 'Bài Học Kiểm Thử GĐ3 (23 Nodes)'
+                        : `Kịch Bản ${s.id}`;
+                    const emoji = s.id === 'START' ? '🚀' : s.id === 'END' ? '🌙' : '🧪';
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => handleSelectScene(s.id)}
+                        className={`flex items-center gap-3 p-3 rounded-xl border text-left transition active:scale-95 ${
+                          isActive
+                            ? 'bg-indigo-600/40 border-indigo-400 shadow-md ring-1 ring-indigo-400 text-white'
+                            : 'bg-slate-900/80 border-slate-700/80 text-slate-200 hover:bg-slate-800 hover:border-indigo-400/50'
+                        }`}
+                      >
+                        <span className="text-2xl p-2 rounded-lg bg-indigo-950/80 border border-indigo-500/30 shrink-0">
+                          {emoji}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-extrabold text-xs truncate">{s.id}</span>
+                            <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                              v{s.ver}{s.pin ? ' 📌' : ''}
+                            </span>
+                            <span
+                              className={`text-[9px] font-semibold px-1 rounded ${
+                                isSynced
+                                  ? 'bg-emerald-500/20 text-emerald-300'
+                                  : 'bg-amber-500/20 text-amber-300'
+                              }`}
+                            >
+                              {isSynced ? '💾 SD' : '☁️ Online'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 truncate mt-0.5">{label}</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Secondary: Sandbox / Local Sample Scenarios */}
+            <div className="pt-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
+                🧪 Kịch bản mẫu giả lập khác (Sandbox):
+              </span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
               {GD1_QUICK_SCENES.map((item) => {
                 const isActive = scene?.id === item.id;
                 return (
@@ -1175,6 +1269,7 @@ export const ScriptEnginePanel: React.FC = () => {
               })}
             </div>
           </div>
+        </div>
 
           {/* B. Hero Assistant & GĐ1 Status Banner */}
           <div className="bg-gradient-to-r from-indigo-950/70 via-slate-900/90 to-purple-950/60 border border-indigo-500/40 rounded-2xl p-4 shadow-lg flex flex-col gap-3">
@@ -1652,33 +1747,19 @@ export const ScriptEnginePanel: React.FC = () => {
             onChange={(e) => handleSelectScene(e.target.value)}
             className="bg-slate-800 text-white text-xs font-semibold rounded-lg px-3 py-1.5 border border-slate-700 outline-none focus:ring-1 focus:ring-indigo-500 max-w-[280px] truncate"
           >
-            {catalog.some((it) => it.category === 'stories') && (
-              <optgroup label="📖 Câu chuyện từ CSDL (Stories)">
-                {catalog
-                  .filter((it) => it.category === 'stories')
-                  .map((it) => (
-                    <option key={it.id} value={it.id}>
-                      {syncedSceneIds.has(it.id) ? '💾 ' : '☁️ '} {it.title} ({it.id})
-                    </option>
-                  ))}
-              </optgroup>
-            )}
-            {catalog.some((it) => it.category === 'learning') && (
-              <optgroup label="📚 Bài học từ CSDL (Learning)">
-                {catalog
-                  .filter((it) => it.category === 'learning')
-                  .map((it) => (
-                    <option key={it.id} value={it.id}>
-                      {syncedSceneIds.has(it.id) ? '💾 ' : '☁️ '} {it.title} ({it.id})
-                    </option>
-                  ))}
-              </optgroup>
-            )}
-            {backendManifest?.scenes && backendManifest.scenes.length > 0 && (
-              <optgroup label="📦 Kịch bản từ Manifest v3">
+            {backendManifest?.scenes && backendManifest.scenes.length > 0 ? (
+              <optgroup label="📦 Kịch bản phát hành V3 (Manifest)">
                 {backendManifest.scenes.map((s) => (
                   <option key={`manifest_${s.id}`} value={s.id}>
-                    {syncedSceneIds.has(s.id) ? '💾 ' : '☁️ '} {s.id} (v{s.ver}{s.pin ? ' 📌' : ''})
+                    {syncedSceneIds.has(s.id) ? '💾 ' : '☁️ '} {s.id === 'HAHA' ? 'Bài Học HAHA (Bản phát hành chuẩn)' : s.id === 'START' ? 'Bắt đầu (START)' : s.id === 'END' ? 'Kết thúc (END)' : s.id} (v{s.ver}{s.pin ? ' 📌' : ''})
+                  </option>
+                ))}
+              </optgroup>
+            ) : (
+              <optgroup label="📦 Kịch bản phát hành V3">
+                {catalog.map((it) => (
+                  <option key={it.id} value={it.id}>
+                    {syncedSceneIds.has(it.id) ? '💾 ' : '☁️ '} {it.title} ({it.id})
                   </option>
                 ))}
               </optgroup>
@@ -2927,16 +3008,14 @@ export const ScriptEnginePanel: React.FC = () => {
                     await VirtualSdCard.syncLessonToSdCard(sc.id, sc.id, sc, keyBase64, keyVer);
                   }
 
-                  // Sync stories and first 10 lessons from database
+                  // Sync scenes from catalog / manifest
                   let syncCount = 0;
-                  const targets = [
-                    ...catalog.filter((c) => c.category === 'stories'),
-                    ...catalog.filter((c) => c.category === 'learning').slice(0, 10),
-                  ];
+                  const targets = catalog;
 
                   for (const item of targets) {
                     try {
-                      const res = await fetch(item.metadataUrl || `/cdn/lessions/${item.id}/metadata.json`);
+                      if (!item.metadataUrl) continue;
+                      const res = await fetch(item.metadataUrl);
                       if (res.ok) {
                         const raw = await res.json();
                         await VirtualSdCard.syncLessonToSdCard(item.id, item.title, raw, keyBase64, keyVer);
@@ -2948,7 +3027,7 @@ export const ScriptEnginePanel: React.FC = () => {
                   }
                   await refreshSdStats();
                   await refreshCatalogAndSd();
-                  alert(`Đã đồng bộ thành công ${syncCount} bài học & câu chuyện CSDL vào thẻ nhớ SD ảo! Giờ đây bạn có thể ngắt mạng và phát hoàn toàn offline.`);
+                  alert(`Đã đồng bộ thành công ${syncCount} kịch bản V3 vào thẻ nhớ SD ảo! Giờ đây bạn có thể ngắt mạng và phát hoàn toàn offline.`);
                 } catch (err: any) {
                   alert(`Lỗi đồng bộ: ${err.message}`);
                 } finally {

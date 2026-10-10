@@ -4,25 +4,53 @@ import { BongBubble } from './screen/speech-bubble';
 import { TalkBar } from './dev/talk-bar';
 import { DevDrawer } from './dev/dev-drawer';
 import { QrPairingModal } from './dev/qr-pairing-modal';
-import { LessonStudioPanel } from './dev/lesson-studio/lesson-studio-panel';
 import { ScriptEnginePanel } from './v3/script-engine-panel';
+import { TalkSimulatorPanel } from './v3/talk-simulator-panel';
+import { V3EngineProvider } from './v3/v3-engine-context';
 import { useSimulatorStore } from './store/simulator-store';
 import { fetchProfile, hasStoredSession, type Account } from './api/auth-client';
+import { QaAcceptanceModal } from './dev/qa-acceptance-modal';
+import { unlockSharedAudioContext } from './v3/use-script-engine';
 
 /**
  * The badge, centre stage or studio mode.
  *
- * When studio mode is active on wide screens, presents a 2-column studio layout:
- * Left column displays the physical round screen, right column displays the
- * lesson selector, index table, active inspector and playback controls.
+ * Wraps with V3EngineProvider so the V3 Offline-First Script Engine runs
+ * continuously in the background at root level. Interactions happen directly
+ * on the simulated round hardware device.
  */
 export default function App() {
+  return (
+    <V3EngineProvider>
+      <AppContent />
+    </V3EngineProvider>
+  );
+}
+
+function AppContent() {
   const [devOpen, setDevOpen] = useState(false);
+  const [qaModalOpen, setQaModalOpen] = useState(false);
   const showLessonPanel = useSimulatorStore((state) => state.showLessonPanel);
   const setShowLessonPanel = useSimulatorStore((state) => state.setShowLessonPanel);
   const lessonEngineType = useSimulatorStore((state) => state.lessonEngineType);
   const setLessonEngineType = useSimulatorStore((state) => state.setLessonEngineType);
   const setLoginOpen = useSimulatorStore((state) => state.setLoginModalOpen);
+
+  useEffect(() => {
+    // Auto-connect to Xiaozhi Gateway on startup
+    useSimulatorStore.getState().connect();
+
+    // Global user-gesture audio unlock for web browser autoplay policy
+    const handleGesture = () => {
+      unlockSharedAudioContext();
+    };
+    window.addEventListener('pointerdown', handleGesture, { capture: true });
+    window.addEventListener('keydown', handleGesture, { capture: true });
+    return () => {
+      window.removeEventListener('pointerdown', handleGesture, { capture: true });
+      window.removeEventListener('keydown', handleGesture, { capture: true });
+    };
+  }, []);
 
   return (
     <main
@@ -34,6 +62,7 @@ export default function App() {
         devOpen={devOpen}
         onToggleDev={() => setDevOpen((open) => !open)}
         onOpenLogin={() => setLoginOpen(true)}
+        onOpenQa={() => setQaModalOpen(true)}
       />
 
       {showLessonPanel ? (
@@ -50,28 +79,28 @@ export default function App() {
           {/* Right Column: Studio Panel */}
           <div className="flex-1 min-w-0">
             <div className="mb-3 flex items-center justify-between">
-              <div className="flex items-center gap-1 p-1 bg-cream-200/80 rounded-xl text-xs font-bold border border-cream-300">
+              <div className="flex items-center gap-1.5 p-1 bg-cream-200/80 rounded-xl text-xs font-bold border border-cream-300">
                 <button
                   type="button"
                   onClick={() => setLessonEngineType('v3')}
-                  className={`rounded-lg px-3 py-1 transition ${
-                    lessonEngineType === 'v3'
-                      ? 'bg-indigo-600 text-white shadow-sm'
+                  className={`rounded-lg px-3.5 py-1.5 transition ${
+                    lessonEngineType !== 'talk_v3'
+                      ? 'bg-indigo-600 text-white shadow-sm font-black'
                       : 'text-ink-600 hover:text-ink-900'
                   }`}
                 >
-                  ⚡ Giai đoạn 1: Kịch bản Bống v3 (Mới)
+                  ⚡ Kịch bản Bống v3 (Offline-First)
                 </button>
                 <button
                   type="button"
-                  onClick={() => setLessonEngineType('v2')}
-                  className={`rounded-lg px-3 py-1 transition ${
-                    lessonEngineType === 'v2'
-                      ? 'bg-mint-500 text-white shadow-sm'
+                  onClick={() => setLessonEngineType('talk_v3')}
+                  className={`rounded-lg px-3.5 py-1.5 transition ${
+                    lessonEngineType === 'talk_v3'
+                      ? 'bg-amber-500 text-slate-950 font-black shadow-sm'
                       : 'text-ink-600 hover:text-ink-900'
                   }`}
                 >
-                  📚 Kịch bản cũ (FSM v2)
+                  🎙️ Đàm thoại tự do Free Talk v3
                 </button>
               </div>
 
@@ -79,34 +108,64 @@ export default function App() {
                 type="button"
                 onClick={() => setShowLessonPanel(false)}
                 className="flex items-center gap-1 text-xs text-ink-500 hover:text-ink-800 font-bold px-2.5 py-1 rounded-lg hover:bg-cream-200 transition"
-                title="Ẩn bảng kiểm thử bài học"
+                title="Ẩn bảng kiểm thử kịch bản"
               >
                 ✕ Ẩn bảng
               </button>
             </div>
 
-            {lessonEngineType === 'v2' ? <LessonStudioPanel /> : <ScriptEnginePanel />}
+            {lessonEngineType === 'talk_v3' ? (
+              <TalkSimulatorPanel />
+            ) : (
+              <ScriptEnginePanel />
+            )}
           </div>
         </div>
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-12">
+          {/* Main Mode Switcher: Offline Lesson vs. Free Talk with Xiaozhi AI */}
+          <div className="flex items-center gap-1.5 p-1 bg-cream-200/90 rounded-2xl text-xs font-bold border border-cream-300 shadow-xs">
+            <button
+              type="button"
+              onClick={() => setLessonEngineType('v3')}
+              className={`rounded-xl px-4 py-1.5 transition ${
+                lessonEngineType !== 'talk_v3'
+                  ? 'bg-indigo-600 text-white shadow-sm font-black'
+                  : 'text-ink-600 hover:text-ink-900'
+              }`}
+            >
+              ⚡ Kịch bản Bống v3 (Offline)
+            </button>
+            <button
+              type="button"
+              onClick={() => setLessonEngineType('talk_v3')}
+              className={`rounded-xl px-4 py-1.5 transition ${
+                lessonEngineType === 'talk_v3'
+                  ? 'bg-gradient-to-r from-amber-500 to-coral-500 text-white font-black shadow-sm'
+                  : 'text-ink-600 hover:text-ink-900'
+              }`}
+            >
+              🎙️ Trò Chuyện Tự Do (Xiaozhi AI)
+            </button>
+          </div>
+
           <RoundScreen />
           <BongBubble />
           <TalkBar />
-          <button
-            type="button"
-            onClick={() => setShowLessonPanel(true)}
-            className="flex items-center gap-2 rounded-full bg-cream-200/90 hover:bg-cream-300 text-ink-700 px-4 py-2 text-xs font-bold transition shadow-sm border border-cream-300 active:scale-95"
-            title="Mở bảng kiểm thử bài học bên cạnh thiết bị"
-          >
-            <span>🎛</span>
-            <span>Mở bảng kiểm thử bài học</span>
-          </button>
+          {/* Subtle hardware badge tips */}
+          <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-ink-500 font-medium bg-cream-200/60 px-5 py-2 rounded-full border border-cream-300/80 shadow-sm">
+            <span>💡 Chạm mặt kính để trả lời</span>
+            <span>•</span>
+            <span>Bấm nút ⌂ (Home) bên sườn để mở danh sách bài học</span>
+            <span>•</span>
+            <span>Bật mic hoặc gõ để đàm thoại</span>
+          </div>
         </div>
       )}
 
       <DevDrawer open={devOpen} onClose={() => setDevOpen(false)} />
       <QrPairingModal />
+      <QaAcceptanceModal isOpen={qaModalOpen} onClose={() => setQaModalOpen(false)} />
     </main>
   );
 }
@@ -115,10 +174,12 @@ function Header({
   devOpen,
   onToggleDev,
   onOpenLogin,
+  onOpenQa,
 }: {
   devOpen: boolean;
   onToggleDev: () => void;
   onOpenLogin: () => void;
+  onOpenQa: () => void;
 }) {
   const [account, setAccount] = useState<Account | null>(null);
   const loginModalOpen = useSimulatorStore((state) => state.loginModalOpen);
@@ -148,6 +209,20 @@ function Header({
       </div>
 
       <div className="flex items-center gap-3">
+        {/* Sổ Tay Nghiệm Thu & Test V3 */}
+        <button
+          type="button"
+          onClick={onOpenQa}
+          className="flex items-center gap-1.5 rounded-blob px-3.5 py-1.5 text-xs font-black transition shadow-sm bg-gradient-to-r from-amber-500 via-orange-500 to-coral-500 text-white hover:from-amber-600 hover:to-coral-600 active:scale-95 shadow-[0_4px_12px_-4px_rgba(245,158,11,0.6)]"
+          title="Mở Sổ tay tài liệu nghiệm thu & Hướng dẫn test V3"
+        >
+          <span>📋</span>
+          <span>Tài Liệu Nghiệm Thu V3</span>
+          <span className="rounded-full bg-white/30 px-1.5 py-0.2 text-[10px] uppercase font-bold tracking-wider">
+            HOT
+          </span>
+        </button>
+
         <button
           type="button"
           onClick={onOpenLogin}
@@ -168,19 +243,18 @@ function Header({
           </span>
         </button>
 
-        {/* Toggle option for Lesson Testing */}
+        {/* Toggle option for Technical Inspector */}
         <button
           type="button"
           onClick={toggleLessonPanel}
           className={`flex items-center gap-1.5 rounded-blob px-3.5 py-1.5 text-xs font-bold transition shadow-sm ${
             showLessonPanel
-              ? 'bg-mint-500 text-white shadow-[0_4px_12px_-4px_rgba(46,189,133,0.7)] hover:bg-mint-600'
-              : 'bg-cream-200/90 text-ink-700 hover:bg-cream-300 border border-cream-300'
+              ? 'bg-ink-700 text-white shadow-sm'
+              : 'bg-cream-200/90 text-ink-600 hover:bg-cream-300 border border-cream-300'
           }`}
-          title="Bật/tắt kiểm thử bài học bên cạnh thiết bị"
+          title="Bật/tắt bảng kỹ thuật (debug inspector)"
         >
-          <span>{showLessonPanel ? '📖' : '📚'}</span>
-          <span>{showLessonPanel ? 'Ẩn kiểm thử' : 'Hiện kiểm thử bài học'}</span>
+          <span>{showLessonPanel ? '✕ Ẩn kỹ thuật' : '🛠️ Debug'}</span>
         </button>
 
         <StatusPill />

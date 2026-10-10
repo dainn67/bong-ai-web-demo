@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { useSimulatorStore, handleMessage } from './simulator-store';
+import { useSimulatorStore, handleMessage, DEFAULT_V3_CATALOG } from './simulator-store';
+import { isLegacyCatalogItem } from '../lessons/catalog';
 import { DEFAULT_CONFIG } from '../config/device-config';
 import type { IncomingMessage } from '../protocol/message-types';
 import { INITIAL_FACE_STATE } from '../screen/face-state-machine';
@@ -288,5 +289,48 @@ describe('simulatorStore direct mode and resetConfig', () => {
 
     expect(useSimulatorStore.getState().micState).toBe('off');
     expect(useSimulatorStore.getState().micLevel).toBe(0);
+  });
+
+  it('preserves V3 catalog and filters legacy items when content_catalog arrives', () => {
+    useSimulatorStore.setState({
+      lessonEngineType: 'v3',
+      catalog: DEFAULT_V3_CATALOG,
+    });
+
+    const set = useSimulatorStore.setState;
+    const get = useSimulatorStore.getState;
+
+    const legacyCatalogMsg: IncomingMessage = {
+      type: 'content_catalog',
+      child_name: 'Bé Bống',
+      lessons: [
+        { id: 'TC16-intent-match-open-box', title: '[Case 16] Test', data_url: 'lessions/tc16' },
+        { id: 'Day-01', title: 'Day-01', data_url: 'lessions/day-01' },
+        { id: 'unit-template-day-03', title: 'Unit Template', data_url: 'lessions/template' },
+      ],
+      stories: [],
+      topics: [],
+    } as unknown as IncomingMessage;
+
+    handleMessage(set, get, legacyCatalogMsg);
+
+    const catalog = useSimulatorStore.getState().catalog;
+    // Should preserve HAHA, START, END and NOT contain TC16, Day-01, or unit-template
+    expect(catalog.map((c) => c.id)).toEqual(['HAHA', 'START', 'END']);
+    expect(useSimulatorStore.getState().childName).toBe('Bé Bống');
+  });
+
+  it('isLegacyCatalogItem correctly identifies legacy test cases vs V3 scenes', () => {
+    expect(isLegacyCatalogItem({ id: 'HAHA', title: 'Bài Học HAHA' })).toBe(false);
+    expect(isLegacyCatalogItem({ id: 'START', title: 'Bắt đầu' })).toBe(false);
+    expect(isLegacyCatalogItem({ id: 'END', title: 'Kết thúc' })).toBe(false);
+    expect(isLegacyCatalogItem({ id: 'L_001', title: 'Lời chào' })).toBe(false);
+    expect(isLegacyCatalogItem({ id: 'animals-5', title: '5 con vật' })).toBe(false);
+
+    expect(isLegacyCatalogItem({ id: 'TC16-intent-match', title: 'Intent' })).toBe(true);
+    expect(isLegacyCatalogItem({ id: 'Day-01', title: 'Day 01' })).toBe(true);
+    expect(isLegacyCatalogItem({ id: 'some-id', title: '[Case 12] Cảm Ứng' })).toBe(true);
+    expect(isLegacyCatalogItem({ id: 'unit-template-day-03', title: 'Template' })).toBe(true);
+    expect(isLegacyCatalogItem({ id: 'e4fbb60b-05d8-4902-9de5-220ac4198f58', title: 'Legacy UUID' })).toBe(true);
   });
 });

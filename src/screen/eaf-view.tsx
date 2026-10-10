@@ -96,6 +96,79 @@ function getEmoteMeta(emoteKey: string): EmoteMeta {
   );
 }
 
+function huffmanDecode(input: Uint8Array, maxSize: number): Uint8Array {
+  if (input.length < 3) return new Uint8Array(0);
+  const dictLen = input[0] | (input[1] << 8);
+  if (input.length < 2 + dictLen) return new Uint8Array(0);
+  const dataLen = input.length - 2 - dictLen;
+  const td = input.subarray(2, 2 + dictLen);
+  if (dataLen === 0) {
+    let pos = 1, count = 0, sym = 0;
+    while (pos < td.length) {
+      const s = td[pos++];
+      const l = td[pos++];
+      const nb = (l + 7) >> 3;
+      if (pos + nb > td.length) break;
+      pos += nb;
+      count++;
+      sym = s;
+      if (count > 1) break;
+    }
+    return new Uint8Array(maxSize).fill(sym);
+  }
+  const root: { leaf: boolean; sym: number; left: any; right: any } = { leaf: false, sym: 0, left: null, right: null };
+  let pos = 1;
+  while (pos < td.length) {
+    const sym = td[pos++];
+    const l = td[pos++];
+    const nb = (l + 7) >> 3;
+    let code = 0n;
+    for (let i = 0; i < nb; i++) code = (code << 8n) | BigInt(td[pos++]);
+    let curr = root;
+    for (let b = l - 1; b >= 0; b--) {
+      const bit = Number((code >> BigInt(b)) & 1n);
+      if (bit) {
+        if (!curr.right) curr.right = { leaf: false, sym: 0, left: null, right: null };
+        curr = curr.right;
+      } else {
+        if (!curr.left) curr.left = { leaf: false, sym: 0, left: null, right: null };
+        curr = curr.left;
+      }
+    }
+    curr.leaf = true;
+    curr.sym = sym;
+  }
+  const stream = input.subarray(2 + dictLen);
+  const pad = td[0];
+  let totalBits = stream.length * 8;
+  if (pad > 0) totalBits -= pad;
+  const out: number[] = [];
+  let curr = root;
+  for (let i = 0; i < totalBits; i++) {
+    const bit = (stream[i >> 3] >> (7 - (i & 7))) & 1;
+    curr = bit ? curr.right : curr.left;
+    if (!curr) break;
+    if (curr.leaf) {
+      out.push(curr.sym);
+      curr = root;
+    }
+  }
+  return Uint8Array.from(out);
+}
+
+function rleDecode(input: Uint8Array, maxSize: number): Uint8Array {
+  const out = new Uint8Array(maxSize);
+  let o = 0;
+  for (let i = 0; i + 1 < input.length; i += 2) {
+    const n = input[i];
+    const val = input[i + 1];
+    out.fill(val, o, Math.min(maxSize, o + n));
+    o += n;
+    if (o >= maxSize) break;
+  }
+  return out.subarray(0, Math.min(o, maxSize));
+}
+
 /**
  * Decodes and plays .eaf file on an HTML5 canvas at 15 fps.
  * Returns true if successfully loaded and playing, false otherwise.
@@ -176,30 +249,32 @@ function useEafCanvasPlayer(url: string, canvasRef: React.RefObject<HTMLCanvasEl
             const blkLen = view.getUint32(offset + 20 + b * 4, true);
             const blockEnd = blockDataPtr + blkLen;
             const startY = b * blockHeight;
-            const endY = Math.min(height, startY + blockHeight);
+            const curBlockH = b === blockCount - 1 ? (height - b * blockHeight) : blockHeight;
+            const t = bytes[blockDataPtr];
+            const du = bytes.subarray(blockDataPtr + 1, blockEnd);
+            const dem = width * curBlockH;
 
-            // First byte in block: 0 = RLE
-            let ptr = blockDataPtr + 1;
+            let decIndices: Uint8Array;
+            if (t === 0) decIndices = rleDecode(du, dem);
+            else if (t === 1) decIndices = rleDecode(huffmanDecode(du, dem * 2), dem);
+            else if (t === 3) decIndices = huffmanDecode(du, dem);
+            else decIndices = du;
+
             let currentPixel = startY * width;
-            const maxPixel = endY * width;
-
-            while (ptr < blockEnd && currentPixel < maxPixel) {
-              const run = bytes[ptr++];
-              const palIdx = bytes[ptr++];
+            for (let i = 0; i < decIndices.length; i++) {
+              const palIdx = decIndices[i];
               const palPos = paletteOffset + palIdx * 4;
               const blue = bytes[palPos];
               const green = bytes[palPos + 1];
               const red = bytes[palPos + 2];
-              const alpha = bytes[palPos + 3];
+              const alpha = palIdx === 0 ? 0 : bytes[palPos + 3];
 
-              for (let r = 0; r < run && currentPixel < maxPixel; r++) {
-                const pxIdx = currentPixel * 4;
-                pixels[pxIdx] = red;
-                pixels[pxIdx + 1] = green;
-                pixels[pxIdx + 2] = blue;
-                pixels[pxIdx + 3] = alpha;
-                currentPixel++;
-              }
+              const pxIdx = currentPixel * 4;
+              pixels[pxIdx] = red;
+              pixels[pxIdx + 1] = green;
+              pixels[pxIdx + 2] = blue;
+              pixels[pxIdx + 3] = alpha;
+              currentPixel++;
             }
 
             blockDataPtr = blockEnd;

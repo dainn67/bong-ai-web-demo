@@ -30,6 +30,7 @@ import { TouchZonesOverlay } from './touch-zones-overlay';
 import { isOpen } from './menu-state';
 import { isEafUrl, EafScreenView } from './eaf-view';
 import { cdnUrl } from '../lessons/catalog';
+import { unlockSharedAudioContext } from '../v3/use-script-engine';
 
 
 /**
@@ -94,8 +95,9 @@ export function RoundScreen() {
   const activity = useSimulatorStore((state) => state.activity);
   const touchZones = useSimulatorStore((state) => state.touchZones);
   const sendTouchEvent = useSimulatorStore((state) => state.sendTouchEvent);
+  const lessonEngineType = useSimulatorStore((state) => state.lessonEngineType);
 
-  const isAwake = status === 'connected';
+  const isAwake = status === 'connected' || lessonEngineType === 'v3';
   const [imgErrorUrl, setImgErrorUrl] = useState<string | null>(null);
   // While the menu, an activity or touch zones own the glass, the glass is not an input
   // surface — the thing drawn on it is. See the note in `useDisplayTouch`.
@@ -214,7 +216,7 @@ export function RoundScreen() {
             <ScreenMenu />
             {/* Keyed on the layout so a new question gets a fresh overlay
                 rather than the previous one's highlight. */}
-            {touchZones && (
+            {!isOpen(menu) && touchZones && (
               <TouchZonesOverlay
                 key={touchZones.layout}
                 config={touchZones}
@@ -499,6 +501,7 @@ function useDisplayTouch(onTap: () => void, enabled: boolean) {
   };
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    unlockSharedAudioContext();
     // Bail before capturing when something is drawn on the glass.
     //
     // This is not merely "ignore the tap". Capturing retargets the pointer —

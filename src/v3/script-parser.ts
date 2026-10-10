@@ -14,7 +14,7 @@ export interface ValidationIssue {
   message: string;
 }
 
-const SCENE_ID_RE = /^[A-Z][A-Za-z0-9_.\-]*$/;
+const SCENE_ID_RE = /^[A-Z][A-Za-z0-9_.-]*$/;
 const STEP_ID_RE = /^[a-z0-9_]+$/;
 const OPTION_NAME_RE = /^[a-z0-9_]+$/;
 const PLACEHOLDER_RE = /\{[^{}]*\}/;
@@ -233,7 +233,7 @@ function checkBranches(
 function checkTarget(target: string, allStepIds: Set<string>, sid: string, issues: ValidationIssue[]): void {
   if (PLACEHOLDER_RE.test(target)) return;
   if (allStepIds.has(target)) return;
-  if (/^[A-Za-z0-9_.\-]+#[A-Za-z0-9_]+$/.test(target)) return; // SCENE#step
+  if (/^[A-Za-z0-9_.-]+#[A-Za-z0-9_]+$/.test(target)) return; // SCENE#step
   if (SCENE_ID_RE.test(target)) return; // bare SCENE
   issues.push({ type: 'error', rule: 'V8', stepId: sid, message: `"${sid}": đích "${target}" không tồn tại.` });
 }

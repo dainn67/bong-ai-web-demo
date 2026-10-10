@@ -15,6 +15,7 @@
 import { useSimulatorStore } from '../store/simulator-store';
 import { MODE_LABELS, MODE_ORDER, rowsFor } from './menu-state';
 import type { LessonSummary } from '../lessons/catalog';
+import { unlockSharedAudioContext } from '../v3/use-script-engine';
 
 export function ScreenMenu() {
   const menu = useSimulatorStore((state) => state.menu);
@@ -31,7 +32,7 @@ export function ScreenMenu() {
   const rows = rowsFor(menu, catalog);
 
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-screen/95 backdrop-blur-sm">
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-screen/95 backdrop-blur-sm pointer-events-auto">
       {/*
         The largest rectangle that fits in a circle is the inscribed square —
         side = diameter / √2, about 71%. That is the budget, and the layout
@@ -137,8 +138,11 @@ function Row({
   return (
     <button
       type="button"
-      onClick={onSelect}
-      className="w-full shrink-0 rounded-2xl bg-cream-200/10 px-2.5 py-2 text-center transition active:scale-[0.97] active:bg-cream-200/20"
+      onClick={() => {
+        unlockSharedAudioContext();
+        onSelect();
+      }}
+      className="w-full shrink-0 cursor-pointer rounded-2xl bg-cream-200/10 px-2.5 py-2 text-center transition active:scale-[0.97] active:bg-cream-200/20"
     >
       <span className="flex items-center justify-center gap-1.5">
         <span className="text-xs">{icon}</span>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSimulatorStore } from '../../store/simulator-store';
+import { isLegacyCatalogItem } from '../../lessons/catalog';
 import { PlaybackBar } from './playback-bar';
 import { ActiveIndexCard } from './active-index-card';
 import { IndexTable } from './index-table';
@@ -23,6 +24,7 @@ export function LessonStudioPanel() {
   }, [catalog.length, loadCdnCatalog]);
 
   const filteredCatalog = catalog.filter((it) => {
+    if (isLegacyCatalogItem(it)) return false;
     if (!lessonFilter.trim()) return true;
     const q = lessonFilter.toLowerCase();
     return it.title.toLowerCase().includes(q) || it.id.toLowerCase().includes(q);

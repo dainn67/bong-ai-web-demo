@@ -7,43 +7,115 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import type { V3Scene, V3Step, MemorySpaces, OrbExpression, DeviceLogEntry } from './types';
+import type { V3Scene, V3Step, MemorySpaces, OrbExpression, DeviceLogEntry, ManifestFileItem } from './types';
 import { resolvePlaceholders } from './script-parser';
 import { evalWhen, normalizeReply } from './when-expr';
 import { VirtualSdCard } from './virtual-sd-card';
 import { isBongEncrypted, decryptBongAsset, SimulatedDeviceSecurity } from './crypto-client';
+import { isImaAdpcmWav, decodeImaAdpcmToAudioBuffer } from './adpcm-decoder';
 import {
   SAMPLE_LESSON_TEST,
   SAMPLE_TALK_SCENE,
   SAMPLE_START_SCENE,
   SAMPLE_END_SCENE,
+  SAMPLE_INLIST_SCENE,
+  SAMPLE_MANIFEST_LISTS,
 } from './sample-scenes';
 
 const BUILTIN_SCENES: Record<string, V3Scene> = {
   LESSON_TEST: SAMPLE_LESSON_TEST,
+  INLIST_DEMO: SAMPLE_INLIST_SCENE,
   TALK_DEMO: SAMPLE_TALK_SCENE,
   START: SAMPLE_START_SCENE,
   END: SAMPLE_END_SCENE,
 };
 
+let sharedAudioContext: AudioContext | null = null;
+let activeSourceNode: AudioBufferSourceNode | null = null;
+let activeSourceTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function stopCurrentAudioPlayback(): void {
+  if (activeSourceTimer) {
+    clearTimeout(activeSourceTimer);
+    activeSourceTimer = null;
+  }
+  if (activeSourceNode) {
+    try {
+      activeSourceNode.stop();
+      activeSourceNode.disconnect();
+    } catch {}
+    activeSourceNode = null;
+  }
+}
+
+export function getSharedAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  if (!sharedAudioContext) {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioCtx) {
+      sharedAudioContext = new AudioCtx();
+    }
+  }
+  return sharedAudioContext;
+}
+
+export function unlockSharedAudioContext(): void {
+  const ctx = getSharedAudioContext();
+  if (ctx && ctx.state === 'suspended') {
+    void ctx.resume();
+  }
+}
+
 const playAudioBuffer = async (
   audioContext: AudioContext,
   buffer: ArrayBuffer
 ): Promise<void> => {
+  stopCurrentAudioPlayback();
   try {
     if (audioContext.state === 'suspended') {
-      await audioContext.resume();
+      await audioContext.resume().catch(() => {});
     }
-    const audioBuffer = await audioContext.decodeAudioData(buffer.slice(0));
+    // If still suspended (no user interaction yet), don't deadlock!
+    if (audioContext.state === 'suspended') {
+      console.warn('[script-engine] AudioContext suspended (waiting for user interaction). Bypassing audio wait.');
+      return new Promise((resolve) => setTimeout(resolve, 300));
+    }
+
+    let audioBuffer: AudioBuffer;
+    if (isImaAdpcmWav(buffer)) {
+      audioBuffer = decodeImaAdpcmToAudioBuffer(audioContext, buffer);
+    } else {
+      audioBuffer = await audioContext.decodeAudioData(buffer.slice(0));
+    }
+
     const source = audioContext.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(audioContext.destination);
-    source.start(0);
+    activeSourceNode = source;
+
     return new Promise((resolve) => {
-      source.onended = () => resolve();
+      let resolved = false;
+      const finish = () => {
+        if (!resolved) {
+          resolved = true;
+          if (activeSourceTimer) {
+            clearTimeout(activeSourceTimer);
+            activeSourceTimer = null;
+          }
+          if (activeSourceNode === source) {
+            activeSourceNode = null;
+          }
+          resolve();
+        }
+      };
+
+      activeSourceTimer = setTimeout(finish, Math.max(500, (audioBuffer.duration + 0.6) * 1000));
+      source.onended = finish;
+      source.start(0);
     });
-  } catch {
-    return new Promise((resolve) => setTimeout(resolve, 600));
+  } catch (err) {
+    console.warn('Audio playback error, falling back to pause:', err);
+    return new Promise((resolve) => setTimeout(resolve, 500));
   }
 };
 
@@ -107,6 +179,7 @@ const SILENT_STREAK_LIMIT = 4; // cfg.silent_streak default
 export function useScriptEngine() {
   const [scene, setScene] = useState<V3Scene | null>(null);
   const [currentStepId, setCurrentStepId] = useState<string | null>(null);
+  const [stepRunSeq, setStepRunSeq] = useState(0);
   const [activeOrb, setActiveOrb] = useState<OrbExpression>('idle');
   const [memory, setMemory] = useState<MemorySpaces>(INITIAL_MEMORY);
   const [executionLog, setExecutionLog] = useState<string[]>([]);
@@ -115,6 +188,21 @@ export function useScriptEngine() {
   const [isAwaitingInput, setIsAwaitingInput] = useState(false);
   const [retriedThisStep, setRetriedThisStep] = useState(false);
   const [deviceLogs, setDeviceLogs] = useState<DeviceLogEntry[]>([]);
+  const [manifestLists, setManifestLists] = useState<Record<string, Array<{ value: string; [k: string]: unknown }>>>(SAMPLE_MANIFEST_LISTS);
+  const [manifestFiles, setManifestFiles] = useState<ManifestFileItem[]>([]);
+  const manifestFilesRef = useRef<ManifestFileItem[]>([]);
+  const externalSceneLoaderRef = useRef<((sceneId: string, stepId?: string) => Promise<void> | void) | null>(null);
+
+  useEffect(() => {
+    manifestFilesRef.current = manifestFiles;
+  }, [manifestFiles]);
+
+  const registerExternalSceneLoader = useCallback(
+    (loader: ((sceneId: string, stepId?: string) => Promise<void> | void) | null) => {
+      externalSceneLoaderRef.current = loader;
+    },
+    [],
+  );
 
   const stepTimerRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -145,10 +233,12 @@ export function useScriptEngine() {
   );
 
   const loadScene = useCallback((newScene: V3Scene, startStepId?: string) => {
+    stopCurrentAudioPlayback();
     setScene(newScene);
     const entry =
       startStepId && newScene.steps.some((s) => s.id === startStepId) ? startStepId : newScene.entry;
     setCurrentStepId(entry);
+    setStepRunSeq((seq) => seq + 1);
     setExecutionLog([]);
     setRetriedThisStep(false);
     retriedRef.current = false;
@@ -164,35 +254,14 @@ export function useScriptEngine() {
 
   const currentStep = scene?.steps.find((s) => s.id === currentStepId) || null;
 
-  // Evaluate branches — `when` is an Excel-style string (or 'default').
-  const evaluateBranches = useCallback(
-    (step: V3Step, reply: string | null): string | null => {
-      if (!step.branches || step.branches.length === 0) {
-        return step.next || null;
-      }
-
-      for (const branch of step.branches) {
-        const when = branch.when;
-        if (when === 'default' || when === undefined || when === null) {
-          return branch.go || branch.next || null;
-        }
-        if (typeof when === 'string' && evalWhen(when, { reply, memory })) {
-          return branch.go || branch.next || null;
-        }
-      }
-      return null;
-    },
-    [memory],
-  );
-
   // Commit save memory mutations (sys.*/profile.* are read-only)
-  const commitSave = useCallback((saveObj?: Record<string, any>) => {
+  const commitSave = useCallback((saveObj?: Record<string, any>, reply?: string | null) => {
     if (!saveObj) return;
 
     setMemory((prev) => {
       const next = { ...prev };
       for (const [k, v] of Object.entries(saveObj)) {
-        const resolved = typeof v === 'string' ? resolvePlaceholders(v, prev) : v;
+        const resolved = typeof v === 'string' ? resolvePlaceholders(v, prev, { reply: reply ?? null }) : v;
         const parts = k.split('.');
         const space = parts[0] as keyof MemorySpaces;
         const sub = parts.slice(1).join('.');
@@ -213,9 +282,34 @@ export function useScriptEngine() {
     });
   }, []);
 
+  // Evaluate branches — `when` is an Excel-style string (or 'default').
+  const evaluateBranches = useCallback(
+    (step: V3Step, reply: string | null): string | null => {
+      if (!step.branches || step.branches.length === 0) {
+        return step.next || null;
+      }
+
+      for (const branch of step.branches) {
+        const when = (branch as any).when;
+        const isDefault = 'default' in branch || when === 'default' || when === undefined || when === null;
+        if (isDefault) {
+          if (branch.save) commitSave(branch.save, reply);
+          return (branch as any).default || branch.go || branch.next || null;
+        }
+        if (typeof when === 'string' && evalWhen(when, { reply, memory, manifestLists })) {
+          if (branch.save) commitSave(branch.save, reply);
+          return branch.go || branch.next || null;
+        }
+      }
+      return null;
+    },
+    [memory, manifestLists, commitSave],
+  );
+
   // Jump to next step
   const transitionToStep = useCallback(
     (target: string | null, reply: string | null) => {
+      stopCurrentAudioPlayback();
       if (!target) {
         logMessage('Kịch bản đã hoàn thành hoặc dừng lại.');
         setIsAwaitingInput(false);
@@ -230,30 +324,33 @@ export function useScriptEngine() {
 
       logMessage(`Chuyển sang step: ${resolvedTarget} (kết quả: ${reply || 'auto'})`);
 
-      // Cross-scene transition check (e.g. "END#idle", "END#finished", "LESSON_TEST")
-      if (resolvedTarget.includes('#')) {
-        const [targetSceneId, targetStepId] = resolvedTarget.split('#');
-        if (targetSceneId !== scene?.id) {
-          if (BUILTIN_SCENES[targetSceneId]) {
-            logMessage(`🔄 Chuyển sang kịch bản: ${targetSceneId} (step: ${targetStepId || 'entry'})`);
-            loadScene(BUILTIN_SCENES[targetSceneId], targetStepId);
-            return;
-          }
-        } else if (targetStepId) {
-          setCurrentStepId(targetStepId);
-          setCurrentReply(null);
-          setIsAwaitingInput(false);
-          retriedRef.current = false;
-          setRetriedThisStep(false);
+      // Cross-scene transition check (e.g. "END#idle", "END#finished", "LESSON_TEST", "HAHA")
+      const sceneIdOnly = resolvedTarget.includes('#') ? resolvedTarget.split('#')[0] : resolvedTarget;
+      const stepIdOnly = resolvedTarget.includes('#') ? resolvedTarget.split('#')[1] : undefined;
+
+      if (sceneIdOnly !== scene?.id) {
+        if (BUILTIN_SCENES[sceneIdOnly]) {
+          logMessage(`🔄 Chuyển sang kịch bản tích hợp: ${sceneIdOnly} (step: ${stepIdOnly || 'entry'})`);
+          loadScene(BUILTIN_SCENES[sceneIdOnly], stepIdOnly);
           return;
         }
-      } else if (BUILTIN_SCENES[resolvedTarget] && resolvedTarget !== scene?.id) {
-        logMessage(`🔄 Chuyển sang kịch bản: ${resolvedTarget}`);
-        loadScene(BUILTIN_SCENES[resolvedTarget]);
+        if (externalSceneLoaderRef.current) {
+          logMessage(`🔄 Chuyển sang kịch bản ngoại vi: ${sceneIdOnly} (step: ${stepIdOnly || 'entry'})`);
+          void externalSceneLoaderRef.current(sceneIdOnly, stepIdOnly);
+          return;
+        }
+      } else if (stepIdOnly) {
+        setCurrentStepId(stepIdOnly);
+        setStepRunSeq((seq) => seq + 1);
+        setCurrentReply(null);
+        setIsAwaitingInput(false);
+        retriedRef.current = false;
+        setRetriedThisStep(false);
         return;
       }
 
       setCurrentStepId(resolvedTarget);
+      setStepRunSeq((seq) => seq + 1);
       setCurrentReply(null);
       setIsAwaitingInput(false);
       retriedRef.current = false;
@@ -268,13 +365,44 @@ export function useScriptEngine() {
       const retry = step.listen?.retry;
       if (!retry?.audio?.length) return;
       for (const aud of retry.audio) {
+        if (aud.wait) {
+          await new Promise((r) => setTimeout(r, aud.wait));
+        }
         const srcId = Array.isArray(aud.src) ? aud.src[0] : aud.src;
-        if (!audioContextRef.current && typeof window !== 'undefined' && (window.AudioContext || (window as any).webkitAudioContext)) {
-          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-          audioContextRef.current = new AudioCtx();
+        if (!audioContextRef.current) {
+          audioContextRef.current = getSharedAudioContext();
         }
         if (audioContextRef.current) {
-          const buf = await VirtualSdCard.readFile(`/sdcard/assets/audio/${srcId}.wav`).catch(() => null);
+          let buf: ArrayBuffer | null = await VirtualSdCard.readFile(`/sdcard/assets/audio/${srcId}`).catch(() => null);
+          if (!buf) {
+            buf = await VirtualSdCard.readFile(`/sdcard/assets/audio/${srcId}.wav`).catch(() => null);
+          }
+          if (!buf) {
+            let audioUrl = aud.url;
+            if (!audioUrl && typeof srcId === 'string') {
+              if (srcId === 'voc_bong' || srcId === 'voc_bong_generic') {
+                audioUrl = 'http://localhost:8000/api/v1/o/87b24c3975ea3e62b1fe6c6a2383e6253d898e69585572c95fca8b41a3b49ea1';
+              } else if (manifestFilesRef.current) {
+                const found = manifestFilesRef.current.find((f) => f.id === srcId);
+                if (found) {
+                  audioUrl = `http://localhost:8000/api/v1/o/${found.hash}`;
+                }
+              }
+            }
+            if (audioUrl) {
+              try {
+                const localUrl = audioUrl.replace('https://bong-api.bcserver.xyz/api/v1/o/', 'http://localhost:8000/api/v1/o/');
+                let res = await fetch(localUrl);
+                if (!res.ok && localUrl !== audioUrl) res = await fetch(audioUrl);
+                if (res.ok) {
+                  buf = await res.arrayBuffer();
+                  void VirtualSdCard.writeFile(`/sdcard/assets/audio/${srcId}`, buf);
+                }
+              } catch (e) {
+                console.warn('Could not fetch retry audio:', srcId, e);
+              }
+            }
+          }
           if (buf) await playAudioBuffer(audioContextRef.current, buf);
           else await playSynthesizedTone(audioContextRef.current, 620, 450);
         }
@@ -342,12 +470,21 @@ export function useScriptEngine() {
 
     logMessage(`--- Đang thực thi Step: ${currentStep.id} ---`);
 
-    if (currentStep.audio && currentStep.audio.length > 0) {
-      setIsPlayingAudio(true);
-      const audioNodes = currentStep.audio;
+    let cancelled = false;
+    setIsAwaitingInput(false);
 
-      (async () => {
+    (async () => {
+      // 1. Play audio sequence if present
+      if (currentStep.audio && currentStep.audio.length > 0) {
+        setIsPlayingAudio(true);
+        const audioNodes = currentStep.audio;
+
         for (const aud of audioNodes) {
+          if (cancelled) return;
+          if (aud.wait) {
+            await new Promise((r) => setTimeout(r, aud.wait));
+          }
+          if (cancelled) return;
           const srcId = Array.isArray(aud.src) ? aud.src[0] : aud.src;
           let foundBuffer: ArrayBuffer | null = null;
           const possiblePaths = [
@@ -355,12 +492,45 @@ export function useScriptEngine() {
             `/sdcard/assets/audio/${srcId}`,
             `/sdcard/assets/audio/${srcId}.opus`,
             `/sdcard/assets/audio/${srcId}.wav`,
-            `/sdcard/assets/audio/welcome.opus`,
           ];
           for (const p of possiblePaths) {
             foundBuffer = await VirtualSdCard.readFile(p);
             if (foundBuffer) break;
           }
+
+          if (!foundBuffer) {
+            let audioUrl = aud.url;
+            if (!audioUrl && typeof srcId === 'string') {
+              if (srcId === 'voc_bong' || srcId === 'voc_bong_generic') {
+                audioUrl = 'http://localhost:8000/api/v1/o/87b24c3975ea3e62b1fe6c6a2383e6253d898e69585572c95fca8b41a3b49ea1';
+              } else if (manifestFilesRef.current) {
+                const found = manifestFilesRef.current.find((f) => f.id === srcId);
+                if (found) {
+                  audioUrl = `http://localhost:8000/api/v1/o/${found.hash}`;
+                }
+              }
+            }
+            if (audioUrl) {
+              try {
+                const localUrl = audioUrl.replace(
+                  'https://bong-api.bcserver.xyz/api/v1/o/',
+                  'http://localhost:8000/api/v1/o/'
+                );
+                let res = await fetch(localUrl);
+                if (!res.ok && localUrl !== audioUrl) {
+                  res = await fetch(audioUrl);
+                }
+                if (res.ok) {
+                  foundBuffer = await res.arrayBuffer();
+                  void VirtualSdCard.writeFile(`/sdcard/assets/audio/${srcId}`, foundBuffer);
+                }
+              } catch (e) {
+                console.warn('Could not fetch audio buffer for', srcId, e);
+              }
+            }
+          }
+
+          if (cancelled) return;
 
           if (foundBuffer) {
             let plaintextBuffer = foundBuffer;
@@ -376,9 +546,8 @@ export function useScriptEngine() {
               }
             }
 
-            if (!audioContextRef.current && typeof window !== 'undefined' && (window.AudioContext || (window as any).webkitAudioContext)) {
-              const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-              audioContextRef.current = new AudioCtx();
+            if (!audioContextRef.current) {
+              audioContextRef.current = getSharedAudioContext();
             }
 
             if (audioContextRef.current) {
@@ -387,9 +556,8 @@ export function useScriptEngine() {
               await new Promise((r) => setTimeout(r, 600));
             }
           } else {
-            if (!audioContextRef.current && typeof window !== 'undefined' && (window.AudioContext || (window as any).webkitAudioContext)) {
-              const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-              audioContextRef.current = new AudioCtx();
+            if (!audioContextRef.current) {
+              audioContextRef.current = getSharedAudioContext();
             }
             if (audioContextRef.current) {
               await playSynthesizedTone(audioContextRef.current, 540, 500);
@@ -398,29 +566,44 @@ export function useScriptEngine() {
             }
           }
         }
+        if (cancelled) return;
         setIsPlayingAudio(false);
-      })();
-    }
+      } else {
+        setIsPlayingAudio(false);
+      }
 
-    // Interactive step: listen (4 modes) or talk block
-    const interactive = (currentStep.listen && currentStep.listen.mode !== 'none') || currentStep.talk;
-    if (interactive) {
-      setIsAwaitingInput(true);
-      const mode = currentStep.talk ? 'talk' : currentStep.listen?.mode;
-      logMessage(`Đang chờ tương tác (${mode})...`);
-    } else {
-      setIsAwaitingInput(false);
-      const delay = (currentStep.audio?.length || 0) * 800 + 600;
-      stepTimerRef.current = window.setTimeout(() => {
+      if (cancelled) return;
+
+      // 2. Interactive step: listen (4 modes) or talk block (ONLY after audio finishes!)
+      const interactive = (currentStep.listen && currentStep.listen.mode !== 'none') || currentStep.talk;
+      if (interactive) {
+        setIsAwaitingInput(true);
+        const mode = currentStep.talk ? 'talk' : currentStep.listen?.mode;
+        logMessage(`Đang chờ tương tác (${mode})...`);
+      } else {
+        setIsAwaitingInput(false);
+        await new Promise((r) => setTimeout(r, 350));
+        if (cancelled) return;
         const nextStep = currentStep.next || evaluateBranches(currentStep, null);
         transitionToStep(nextStep, null);
-      }, Math.max(delay, 500));
-    }
+      }
+    })();
 
     return () => {
+      cancelled = true;
+      stopCurrentAudioPlayback();
       if (stepTimerRef.current) clearTimeout(stepTimerRef.current);
     };
-  }, [currentStep, evaluateBranches, logMessage, transitionToStep]);
+  }, [currentStep, stepRunSeq, evaluateBranches, logMessage, transitionToStep]);
+
+  const jumpToStep = useCallback((stepId: string) => {
+    stopCurrentAudioPlayback();
+    setCurrentStepId(stepId);
+    setStepRunSeq((seq) => seq + 1);
+    setIsAwaitingInput(false);
+    retriedRef.current = false;
+    setRetriedThisStep(false);
+  }, []);
 
   return {
     scene,
@@ -433,8 +616,13 @@ export function useScriptEngine() {
     currentReply,
     retriedThisStep,
     deviceLogs,
+    manifestLists,
+    setManifestLists,
+    manifestFiles,
+    setManifestFiles,
     loadScene,
     handleInputReply,
-    jumpToStep: setCurrentStepId,
+    jumpToStep,
+    registerExternalSceneLoader,
   };
 }

@@ -8,6 +8,8 @@
 import { cdnUrl } from './catalog';
 import { VirtualSdCard } from '../v3/virtual-sd-card';
 import { isBongEncrypted, decryptBongAsset, SimulatedDeviceSecurity } from '../v3/crypto-client';
+import { isImaAdpcmWav, decodeImaAdpcmToAudioBuffer } from '../v3/adpcm-decoder';
+import { getSharedAudioContext, unlockSharedAudioContext } from '../v3/use-script-engine';
 
 export interface DirectAudioNode {
   fileName?: string;
@@ -61,6 +63,10 @@ export class DirectLessonPlayer {
   private indexMap: Map<string, DirectLessonIndexItem> = new Map();
   private currentIndex: DirectLessonIndexItem | null = null;
   private audioEl: HTMLAudioElement | null = null;
+  private activeWebAudioSource: AudioBufferSourceNode | null = null;
+  private activeWebAudioGain: GainNode | null = null;
+  private progressInterval: ReturnType<typeof setInterval> | null = null;
+  private isAudioCancelled = false;
   private autoNext = false;
   private autoNextDelayMs = 1500;
   private autoNextTimer: ReturnType<typeof setTimeout> | null = null;
@@ -112,6 +118,9 @@ export class DirectLessonPlayer {
     this.volume = Math.max(0, Math.min(1, vol));
     if (this.audioEl) {
       this.audioEl.volume = this.volume;
+    }
+    if (this.activeWebAudioGain) {
+      this.activeWebAudioGain.gain.value = this.volume;
     }
   }
 
@@ -166,6 +175,52 @@ export class DirectLessonPlayer {
       ? rec.indexes
       : Array.isArray(rec.nodes)
       ? rec.nodes
+      : Array.isArray(rec.steps)
+      ? (rec.steps as any[]).map((s, idx) => ({
+          order: String(s.id ?? idx),
+          type: s.listen ? s.listen.mode : s.talk ? 'talk' : 'play',
+          content: s.listen?.voice?.options ? s.listen.voice.options.map((o: any) => o.name).join(', ') : '',
+          audios: (s.audio || []).map((a: any) => {
+            const rawSrc = a.src;
+            const srcId = Array.isArray(rawSrc) ? rawSrc[0] : rawSrc;
+            let audioUrl = a.url;
+            if (!audioUrl && typeof srcId === 'string') {
+              if (srcId === 'voc_bong') {
+                audioUrl = 'http://localhost:8000/api/v1/o/87b24c3975ea3e62b1fe6c6a2383e6253d898e69585572c95fca8b41a3b49ea1';
+              }
+            }
+            return {
+              fileName: srcId,
+              url: audioUrl || '',
+              waitMs: a.wait || 0,
+            };
+          }),
+          visuals: (s.visual || []).map((v: any) => ({
+            fileName: typeof v.src === 'string' ? v.src : (typeof v.fileName === 'string' ? v.fileName : undefined),
+            url: v.url || v.src,
+            stop: v.hold ? 'giu' : 'tat',
+            nodeType: v.nodeType || (String(v.url || v.src).endsWith('.eaf') ? 'eaf' : 'image'),
+          })),
+          question: s.listen?.voice?.options
+            ? {
+                type: 'voice',
+                text: s.listen.prompt || '',
+                options: s.listen.voice.options.map((o: any) => o.name),
+              }
+            : s.listen?.touch
+            ? {
+                type: 'touch',
+                layout: s.listen.touch.layout,
+              }
+            : s.listen?.mode === 'hear'
+            ? {
+                type: 'hear',
+                text: 'Bống đang lắng nghe bé...',
+              }
+            : null,
+          next: s.next || (s.branches?.[0]?.go),
+          waitMs: s.wait || 0,
+        }))
       : Array.isArray(rec.parts)
       ? (rec.parts as any[]).map((p, idx, arr) => ({
           order: String(p.id ?? idx),
@@ -345,6 +400,17 @@ export class DirectLessonPlayer {
   }
 
   togglePause(): void {
+    const ctx = getSharedAudioContext();
+    if (this.activeWebAudioSource && ctx) {
+      if (ctx.state === 'running') {
+        void ctx.suspend();
+        this.setState('paused');
+      } else if (ctx.state === 'suspended') {
+        void ctx.resume();
+        this.setState('playing');
+      }
+      return;
+    }
     if (!this.audioEl) return;
     if (this.audioEl.paused) {
       void this.audioEl.play();
@@ -378,7 +444,8 @@ export class DirectLessonPlayer {
   }
 
   private async applyAudioForIndex(item: DirectLessonIndexItem): Promise<void> {
-    if (!item.audios || item.audios.length === 0 || !item.audios[0].url) {
+    this.isAudioCancelled = false;
+    if (!item.audios || item.audios.length === 0) {
       // No audio for this index
       this.setState('playing');
       if (this.autoNext) {
@@ -389,74 +456,170 @@ export class DirectLessonPlayer {
       return;
     }
 
-    const audioNode = item.audios[0];
-    let audioUrl = cdnUrl(audioNode.url);
+    this.setState('loading');
+    unlockSharedAudioContext();
 
-    // Check if Virtual SD Card has this audio file offline
-    try {
-      const parts = audioNode.url.split('/');
-      const fileName = parts[parts.length - 1];
-      const possiblePaths = [
-        audioNode.url,
-        `/sdcard/assets/audio/${fileName}`,
-        `/sdcard/assets/audio/${fileName.replace(/\.[^/.]+$/, '')}`,
-        `/sdcard/assets/audio/welcome.opus`,
-      ];
-      for (const p of possiblePaths) {
-        const buf = await VirtualSdCard.readFile(p);
-        if (buf && buf.byteLength > 0) {
-          let plainBuf = buf;
-          if (isBongEncrypted(buf)) {
-            const key = SimulatedDeviceSecurity.getStoredContentKey();
-            if (key) {
-              plainBuf = await decryptBongAsset(buf, key.rawKeyBase64);
+    for (let i = 0; i < item.audios.length; i++) {
+      if (this.isAudioCancelled) return;
+      const audioNode = item.audios[i];
+
+      if (audioNode.waitMs && audioNode.waitMs > 0) {
+        await new Promise((r) => setTimeout(r, audioNode.waitMs));
+      }
+      if (this.isAudioCancelled) return;
+
+      const rawUrl = audioNode.url;
+      const srcId = audioNode.fileName;
+      let rawBuf: ArrayBuffer | null = null;
+
+      // 1. Check Virtual SD Card
+      if (srcId) {
+        const possiblePaths = [
+          srcId,
+          `/sdcard/assets/audio/${srcId}`,
+          `/sdcard/assets/audio/${srcId}.wav`,
+          `/sdcard/assets/audio/${srcId}.opus`,
+        ];
+        for (const p of possiblePaths) {
+          rawBuf = await VirtualSdCard.readFile(p).catch(() => null);
+          if (rawBuf && rawBuf.byteLength > 0) break;
+        }
+      }
+
+      // 2. Resolve URL
+      let targetUrl = rawUrl ? cdnUrl(rawUrl) : '';
+      if (!targetUrl && srcId) {
+        if (srcId === 'voc_bong' || srcId === 'voc_bong_generic') {
+          targetUrl = 'http://localhost:8000/api/v1/o/87b24c3975ea3e62b1fe6c6a2383e6253d898e69585572c95fca8b41a3b49ea1';
+        }
+      }
+
+      // 3. Fetch buffer if not in SD card and targetUrl is http(s)
+      if (!rawBuf && targetUrl && /^https?:\/\//i.test(targetUrl)) {
+        try {
+          const res = await fetch(targetUrl);
+          if (res.ok) {
+            rawBuf = await res.arrayBuffer();
+            if (srcId) {
+              void VirtualSdCard.writeFile(`/sdcard/assets/audio/${srcId}`, rawBuf);
             }
           }
-          const blob = new Blob([plainBuf], { type: 'audio/wav' });
-          audioUrl = URL.createObjectURL(blob);
-          break;
+        } catch (fetchErr) {
+          console.warn('[DirectLessonPlayer] Fetch audio failed:', targetUrl, fetchErr);
         }
       }
-    } catch {
-      // continue with cdnUrl
+
+      if (this.isAudioCancelled) return;
+
+      if (rawBuf && rawBuf.byteLength > 0) {
+        let plainBuf = rawBuf;
+        if (isBongEncrypted(rawBuf)) {
+          const key = SimulatedDeviceSecurity.getStoredContentKey();
+          if (key) {
+            plainBuf = await decryptBongAsset(rawBuf, key.rawKeyBase64);
+          }
+        }
+
+        const ctx = getSharedAudioContext();
+        if (ctx) {
+          try {
+            if (ctx.state === 'suspended') {
+              await ctx.resume().catch(() => {});
+            }
+
+            let audioBuffer: AudioBuffer;
+            if (isImaAdpcmWav(plainBuf)) {
+              audioBuffer = decodeImaAdpcmToAudioBuffer(ctx, plainBuf);
+            } else {
+              audioBuffer = await ctx.decodeAudioData(plainBuf.slice(0));
+            }
+
+            if (this.isAudioCancelled) return;
+
+            const source = ctx.createBufferSource();
+            source.buffer = audioBuffer;
+            const gain = ctx.createGain();
+            gain.gain.value = this.volume;
+            source.connect(gain);
+            gain.connect(ctx.destination);
+            this.activeWebAudioSource = source;
+            this.activeWebAudioGain = gain;
+
+            this.setState('playing');
+
+            const dur = audioBuffer.duration;
+            const startCtxTime = ctx.currentTime;
+            if (this.handlers.onAudioProgress) {
+              this.handlers.onAudioProgress(0, dur);
+              this.progressInterval = setInterval(() => {
+                if (this.state !== 'playing' || this.isAudioCancelled) return;
+                const curr = Math.min(dur, ctx.currentTime - startCtxTime);
+                this.handlers.onAudioProgress?.(curr, dur);
+              }, 200);
+            }
+
+            source.onended = () => {
+              if (this.progressInterval) {
+                clearInterval(this.progressInterval);
+                this.progressInterval = null;
+              }
+              this.activeWebAudioSource = null;
+              this.setState('ended');
+              if (this.autoNext) {
+                this.scheduleAutoNext();
+              }
+            };
+            source.start(0);
+            return;
+          } catch (wbErr) {
+            console.warn('[DirectLessonPlayer] Web Audio playback failed:', wbErr);
+          }
+        }
+      }
+
+      // Fallback: HTMLAudioElement if targetUrl exists and Web Audio did not run
+      if (targetUrl && !this.isAudioCancelled) {
+        try {
+          const audio = new Audio(targetUrl);
+          audio.volume = this.volume;
+          this.audioEl = audio;
+          audio.onplay = () => this.setState('playing');
+          audio.onpause = () => {
+            if (this.state === 'playing') this.setState('paused');
+          };
+          audio.ontimeupdate = () => {
+            if (this.handlers.onAudioProgress && audio.duration) {
+              this.handlers.onAudioProgress(audio.currentTime, audio.duration);
+            }
+          };
+          audio.onended = () => {
+            this.audioEl = null;
+            this.setState('ended');
+            if (this.autoNext) {
+              this.scheduleAutoNext();
+            }
+          };
+          audio.onerror = (e) => {
+            console.warn('[DirectLessonPlayer] Audio element error:', e);
+            this.audioEl = null;
+            this.setState('ended');
+            if (this.autoNext) {
+              this.scheduleAutoNext();
+            }
+          };
+          await audio.play();
+          return;
+        } catch (htmlAudioErr) {
+          console.warn('[DirectLessonPlayer] HTMLAudio playback failed:', htmlAudioErr);
+        }
+      }
     }
 
-    try {
-      this.setState('loading');
-      const audio = new Audio(audioUrl);
-      audio.volume = this.volume;
-      this.audioEl = audio;
+    if (this.isAudioCancelled) return;
 
-      audio.onplay = () => this.setState('playing');
-      audio.onpause = () => {
-        if (this.state === 'playing') this.setState('paused');
-      };
-      audio.ontimeupdate = () => {
-        if (this.handlers.onAudioProgress && audio.duration) {
-          this.handlers.onAudioProgress(audio.currentTime, audio.duration);
-        }
-      };
-      audio.onended = () => {
-        this.setState('ended');
-        if (this.autoNext) {
-          this.scheduleAutoNext();
-        }
-      };
-      audio.onerror = (e) => {
-        console.warn(`[DirectLessonPlayer] Audio play error on index ${item.order}:`, e);
-        this.setState('ended');
-        if (this.autoNext) {
-          this.scheduleAutoNext();
-        }
-      };
-
-      await audio.play();
-    } catch (err) {
-      console.warn(`[DirectLessonPlayer] Autoplay or playback blocked: ${err}`);
-      this.setState('ended');
-      if (this.autoNext) {
-        this.scheduleAutoNext();
-      }
+    this.setState('ended');
+    if (this.autoNext) {
+      this.scheduleAutoNext();
     }
   }
 
@@ -475,10 +638,23 @@ export class DirectLessonPlayer {
   }
 
   private stopAudioAndTimer(): void {
+    this.isAudioCancelled = true;
     if (this.autoNextTimer) {
       clearTimeout(this.autoNextTimer);
       this.autoNextTimer = null;
     }
+    if (this.progressInterval) {
+      clearInterval(this.progressInterval);
+      this.progressInterval = null;
+    }
+    if (this.activeWebAudioSource) {
+      try {
+        this.activeWebAudioSource.onended = null;
+        this.activeWebAudioSource.stop();
+      } catch {}
+      this.activeWebAudioSource = null;
+    }
+    this.activeWebAudioGain = null;
     if (this.audioEl) {
       this.audioEl.onplay = null;
       this.audioEl.onpause = null;

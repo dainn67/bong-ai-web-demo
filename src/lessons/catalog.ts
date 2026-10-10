@@ -130,14 +130,77 @@ function toSummary(row: unknown, category: LessonCategory): LessonSummary | null
   const dataUrl = asString(entry.data_url);
   if (!dataUrl) return null;
 
+  const rawMetaUrl = asString((entry as any).metadata_url) || asString((entry as any).metadataUrl);
+  let metadataUrl = '';
+  if (rawMetaUrl) {
+    metadataUrl = rawMetaUrl.startsWith('http') ? rawMetaUrl : cdnUrl(rawMetaUrl);
+  } else if (dataUrl.includes('api/v1/o/')) {
+    metadataUrl = dataUrl.startsWith('http') ? dataUrl : `http://localhost:8000/${dataUrl.replace(/^\/+/, '')}`;
+  } else {
+    metadataUrl = cdnUrl(`${dataUrl}/metadata.json`);
+  }
+
   return {
     id,
     title: asString(entry.title) || id,
     description: asString(entry.description) ?? '',
     category,
-    metadataUrl: cdnUrl(`${dataUrl}/metadata.json`),
+    metadataUrl,
     coverUrl: entry.cover_url ? cdnUrl(asString(entry.cover_url)!) : null,
   };
+}
+
+/**
+ * Identifies obsolete legacy test cases, scratch templates, and seed test data.
+ * Used to filter catalog so the simulator only displays valid production content and V3 scenes.
+ */
+export function isLegacyCatalogItem(item: { id?: string | null; title?: string | null }): boolean {
+  const id = item.id || '';
+  const title = item.title || '';
+  if (!id) return true;
+  // If it's a recognized V3 canonical scene, it's never legacy
+  if (
+    id === 'HAHA' ||
+    id === 'START' ||
+    id === 'END' ||
+    id === 'LESSON_TEST' ||
+    id === 'INLIST_DEMO' ||
+    id === 'TALK_DEMO' ||
+    id.startsWith('UNIT_TEST_')
+  ) {
+    return false;
+  }
+  // Check for legacy dummy test cases and scratch templates
+  const idLower = id.toLowerCase();
+  const titleLower = title.toLowerCase();
+  if (
+    idLower.startsWith('tc') ||
+    idLower.startsWith('day-') ||
+    idLower.startsWith('unit-') ||
+    idLower.startsWith('test-') ||
+    idLower.startsWith('testv') ||
+    idLower.startsWith('testbrain') ||
+    idLower.startsWith('bai 2day') ||
+    idLower.includes('template') ||
+    idLower.includes('-day-') ||
+    idLower.includes('-slot-') ||
+    idLower.includes('-intent-') ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+  ) {
+    return true;
+  }
+  if (
+    titleLower.startsWith('[case') ||
+    titleLower.startsWith('[test') ||
+    titleLower.startsWith('unit-') ||
+    titleLower.startsWith('unit ') ||
+    titleLower.startsWith('day-') ||
+    titleLower.startsWith('testv') ||
+    titleLower.includes('template')
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -176,6 +239,9 @@ const MEDIA_ORIGIN = 'https://files.bcserver.xyz';
  * server.
  */
 function rehostKnownCdn(url: string): string {
+  if (url.startsWith('https://bong-api.bcserver.xyz/api/v1/o/')) {
+    return 'http://localhost:8000/api/v1/o/' + url.slice('https://bong-api.bcserver.xyz/api/v1/o/'.length);
+  }
   if (url.startsWith(CDN_ORIGIN)) return CDN_BASE + url.slice(CDN_ORIGIN.length);
   if (url.startsWith(MEDIA_ORIGIN)) return '/media' + url.slice(MEDIA_ORIGIN.length);
   return url;

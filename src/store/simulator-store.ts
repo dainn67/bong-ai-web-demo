@@ -58,7 +58,7 @@ import {
   type TouchWindow,
 } from '../screen/touch-layout';
 import { DEFAULT_TOUCH_TIMEOUT_MS } from '../lessons/lesson-v2-types';
-import { fetchCdnCatalog, parseCatalog, type LessonSummary } from '../lessons/catalog';
+import { parseCatalog, cdnUrl, isLegacyCatalogItem, type LessonSummary } from '../lessons/catalog';
 import { StoryPlayer, loadStory } from '../content/story';
 import { LessonRunner } from '../lessons/lesson-runner';
 import {
@@ -66,6 +66,7 @@ import {
   type DirectLessonIndexItem,
   type DirectPlaybackState,
 } from '../lessons/direct-lesson-player';
+import { unlockSharedAudioContext } from '../v3/use-script-engine';
 
 
 
@@ -183,6 +184,13 @@ interface SimulatorState {
   sendTouchEvent: (result: TouchClassificationResult, detail?: TouchDetail) => void;
   v3TouchHandler: ((result: TouchClassificationResult, detail?: TouchDetail) => void) | null;
   setV3TouchHandler: (handler: ((result: TouchClassificationResult, detail?: TouchDetail) => void) | null) => void;
+  v3LoadSceneHandler: ((sceneId: string) => Promise<void> | void) | null;
+  setV3LoadSceneHandler: (handler: ((sceneId: string) => Promise<void> | void) | null) => void;
+  v3JumpStepHandler: ((stepId: string) => void) | null;
+  setV3JumpStepHandler: (handler: ((stepId: string) => void) | null) => void;
+  v3InputHandler: ((text: string) => void) | null;
+  setV3InputHandler: (handler: ((text: string) => void) | null) => void;
+  setCatalog: (catalog: LessonSummary[]) => void;
   setV3ScreenState: (params: {
     expression?: string;
     mode?: 'idle' | 'emotion' | 'speaking';
@@ -204,6 +212,7 @@ interface SimulatorState {
 
   startListening: () => Promise<void>;
   stopListening: () => void;
+  discardListening: () => void;
   toggleListening: () => void;
   autoMic: boolean;
   toggleAutoMic: () => void;
@@ -269,8 +278,8 @@ interface SimulatorState {
   showLessonPanel: boolean;
   setShowLessonPanel: (show: boolean) => void;
   toggleLessonPanel: () => void;
-  lessonEngineType: 'v2' | 'v3';
-  setLessonEngineType: (type: 'v2' | 'v3') => void;
+  lessonEngineType: 'v2' | 'v3' | 'talk_v3';
+  setLessonEngineType: (type: 'v2' | 'v3' | 'talk_v3') => void;
   lessonSourceMode: 'direct' | 'socket';
   setLessonSourceMode: (mode: 'direct' | 'socket') => void;
 
@@ -369,14 +378,29 @@ function clearAutoMicTimer(): void {
 function scheduleAutoMicStart(get: Getter, delayMs = ECHO_HANGOVER_MS): void {
   clearAutoMicTimer();
   if (!get().autoMic || get().status !== 'connected') return;
+
+  const currentActivity = get().activity;
+  // Inside a lesson or story, mic should ONLY open when explicitly awaiting speech!
+  if (currentActivity.kind === 'lesson' || currentActivity.kind === 'story') {
+    if (currentActivity.waitingFor !== 'speech' && currentActivity.phase !== 'listening') {
+      return;
+    }
+  }
   // If in lesson and waiting for touch, do not auto open mic!
-  if (get().activity.waitingFor === 'touch' || get().touchZones !== null) return;
+  if (currentActivity.waitingFor === 'touch' || get().touchZones !== null) return;
   if (get().speaking) return;
 
   autoMicTimer = setTimeout(async () => {
     autoMicTimer = null;
     if (!get().autoMic || get().status !== 'connected' || get().speaking) return;
-    if (get().activity.waitingFor === 'touch' || get().touchZones !== null) return;
+
+    const act = get().activity;
+    if (act.kind === 'lesson' || act.kind === 'story') {
+      if (act.waitingFor !== 'speech' && act.phase !== 'listening') {
+        return;
+      }
+    }
+    if (act.waitingFor === 'touch' || get().touchZones !== null) return;
 
     if (get().micState !== 'listening') {
       await get().startListening();
@@ -388,10 +412,13 @@ function scheduleAutoMicStart(get: Getter, delayMs = ECHO_HANGOVER_MS): void {
 
 function pauseListeningForAiTurn(set: Setter, get: Getter): void {
   clearAutoMicTimer();
-  if (get().micState === 'listening') {
-    client?.send({ type: 'listen', state: 'stop' });
-  }
+  // Mute and stop local microphone without sending `listen: stop` to server.
+  // The server is already taking its turn (TTS / display thinking / STT).
+  // Sending `listen: stop` causes the server to evaluate trailing audio as a speech turn.
   mic?.setMuted(true);
+  void mic?.stop();
+  mic = null;
+  clearUnmuteTimer();
   set({ micState: 'off', micLevel: 0 });
 }
 
@@ -476,6 +503,46 @@ function clearQuestionTimer(): void {
   questionTimer = null;
 }
 
+export function isV3SceneId(id?: string | null): boolean {
+  if (!id) return false;
+  return (
+    id === 'HAHA' ||
+    id === 'START' ||
+    id === 'END' ||
+    id === 'LESSON_TEST' ||
+    id === 'INLIST_DEMO' ||
+    id === 'TALK_DEMO' ||
+    id.startsWith('UNIT_TEST_')
+  );
+}
+
+export const DEFAULT_V3_CATALOG: LessonSummary[] = [
+  {
+    id: 'HAHA',
+    title: 'Bài Học HAHA (Bản phát hành chuẩn)',
+    description: '42 bước: Chạm 4 vùng pie4, Vuốt 4 hướng, Voice STT/LLM, Hoạt ảnh .eaf',
+    category: 'learning',
+    metadataUrl: 'http://localhost:8000/api/v1/o/73e18d0c6d97fab9f190a3872b9e37fe3fe577f2e77708a6c69de3e79cede89b',
+    coverUrl: null,
+  },
+  {
+    id: 'START',
+    title: 'Bắt đầu (START)',
+    description: 'Khởi động và chuyển tiếp vào HAHA',
+    category: 'learning',
+    metadataUrl: 'http://localhost:8000/api/v1/o/ec77180aa18b7e4f8a455f73fa43ae3b27c7ebcb61c85defd73e54f231bf3434',
+    coverUrl: null,
+  },
+  {
+    id: 'END',
+    title: 'Kết thúc (END)',
+    description: 'Kịch bản kết thúc & đi ngủ',
+    category: 'learning',
+    metadataUrl: 'http://localhost:8000/api/v1/o/d0a9e736acfaae8f16222d5fdbaa0dd8bdc22e9445a61a07d16baa3ef71c29e9',
+    coverUrl: null,
+  },
+];
+
 export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   config: loadConfig(),
   status: 'disconnected',
@@ -504,13 +571,21 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   menu: INITIAL_MENU_STATE,
-  catalog: [],
+  catalog: DEFAULT_V3_CATALOG,
   catalogLoading: false,
   catalogError: null,
+  setCatalog: (catalog) => {
+    if (get().lessonEngineType === 'v3') {
+      const clean = catalog.filter((item) => !isLegacyCatalogItem(item));
+      set({ catalog: clean.length > 0 ? clean : DEFAULT_V3_CATALOG });
+    } else {
+      set({ catalog });
+    }
+  },
 
-  studioMode: 'studio',
+  studioMode: 'device',
   setStudioMode: (studioMode) => set({ studioMode }),
-  showLessonPanel: true,
+  showLessonPanel: false,
   setShowLessonPanel: (showLessonPanel) =>
     set({
       showLessonPanel,
@@ -555,6 +630,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   setLoginModalOpen: (open) => set({ loginModalOpen: open }),
   v3TouchHandler: null,
   setV3TouchHandler: (v3TouchHandler) => set({ v3TouchHandler }),
+  v3LoadSceneHandler: null,
+  setV3LoadSceneHandler: (v3LoadSceneHandler) => set({ v3LoadSceneHandler }),
+  v3JumpStepHandler: null,
+  setV3JumpStepHandler: (v3JumpStepHandler) => set({ v3JumpStepHandler }),
+  v3InputHandler: null,
+  setV3InputHandler: (v3InputHandler) => set({ v3InputHandler }),
   setV3ScreenState: ({ expression, mode, waitingFor, touchLayout, caption, imageUrl, kind }) => {
     const curFace = get().face;
     const curActivity = get().activity;
@@ -570,6 +651,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
     set({
       status: 'connected',
+      speaking: mode === 'speaking',
       face: {
         ...curFace,
         ...(expression !== undefined ? { expression: expression as any } : {}),
@@ -684,6 +766,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
   sendText: (text) => {
     if (!text.trim()) return;
+    if (get().lessonEngineType === 'v3' && get().v3InputHandler) {
+      get().v3InputHandler!(text.trim());
+      set({
+        face: { ...get().face, heard: text.trim() },
+      });
+      return;
+    }
     client?.send({ type: 'listen', state: 'detect', text });
   },
 
@@ -747,6 +836,20 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     // the red ring would stay lit for the rest of the lesson. The three callers
     // — disconnect, the toggle, and an activity ending — are all moments the
     // child's turn is genuinely over.
+    const closed = closeWaitWindow(get().activity, 'speech', 'listening');
+    if (closed) get().setActivity(closed);
+  },
+
+  discardListening: () => {
+    clearAutoMicTimer();
+    if (get().micState === 'listening') {
+      // Discard server audio buffer without triggering ASR
+      client?.send({ type: 'listen', state: 'detect' });
+    }
+    void mic?.stop();
+    mic = null;
+    clearUnmuteTimer();
+    set({ micState: 'off', micLevel: 0 });
     const closed = closeWaitWindow(get().activity, 'speech', 'listening');
     if (closed) get().setActivity(closed);
   },
@@ -825,6 +928,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     } else if (get().activity.kind === 'lesson') {
       const layout = get().activity.touchLayout ?? 'tap2_trai_phai';
       client?.sendTouchEvent(layout, result, detail);
+    }
+
+    if (get().v3TouchHandler) {
+      get().v3TouchHandler!(result, detail);
     }
 
     lesson?.dispatchTouch(result);
@@ -976,13 +1083,21 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     const menu = reduceMenu(state.menu, action, rowCount);
     if (menu === state.menu) return;
     set({ menu });
-    // If opening the menu and socket is disconnected, connect to receive content_catalog
-    if (action.type === 'open' && state.catalog.length === 0 && get().status === 'disconnected') {
-      get().connect();
+    // If opening the menu and catalog is empty, ensure catalog is loaded
+    if (action.type === 'open' && state.catalog.length === 0) {
+      if (get().lessonEngineType === 'v3') {
+        void get().loadCdnCatalog();
+      } else if (get().status === 'disconnected') {
+        get().connect();
+      }
     }
   },
 
   loadCatalog: async () => {
+    if (get().lessonEngineType === 'v3') {
+      await get().loadCdnCatalog();
+      return;
+    }
     // Catalog is delivered exclusively via WebSocket content_catalog frame upon connect.
     if (get().catalog.length === 0 && get().status === 'disconnected') {
       get().connect();
@@ -1003,6 +1118,41 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   startEntry: (entry) => {
+    unlockSharedAudioContext();
+    if (get().micState === 'listening') {
+      get().discardListening();
+    }
+
+    const isV3 = isV3SceneId(entry.id);
+
+    if (isV3) {
+      if (get().lessonEngineType !== 'v3') {
+        set({ lessonEngineType: 'v3' });
+      }
+      set({
+        activity: {
+          ...IDLE_ACTIVITY,
+          kind: 'lesson',
+          title: entry.title,
+          phase: 'playing',
+        },
+        menu: INITIAL_MENU_STATE,
+      });
+
+      if (get().v3LoadSceneHandler) {
+        void get().v3LoadSceneHandler!(entry.id);
+      }
+      void get().selectLesson(entry);
+
+      if (get().lessonSourceMode === 'socket') {
+        if (get().status === 'disconnected') {
+          get().connect();
+        }
+        client?.abort('start_lesson');
+        client?.startLesson(entry.id);
+      }
+      return;
+    }
     if (entry.category === 'stories') void startStory(set, get, entry);
     else if (entry.category === 'topics') void startTopic(set, get, entry);
     else void startLesson(set, get, entry);
@@ -1073,21 +1223,56 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     if (get().catalogLoading) return;
     set({ catalogLoading: true, catalogError: null });
     try {
-      const items = await fetchCdnCatalog();
-      set({ catalog: items, catalogLoading: false });
-      if (!get().selectedLesson && items.length > 0) {
-        const first = items.find((it) => it.category === 'learning') || items[0];
-        if (first) {
-          void get().selectLesson(first);
+      const res = await fetch('http://localhost:8000/api/v1/device/manifest?device_id=simulator_v3_dev');
+      if (res.ok) {
+        const data = await res.json();
+        const v3Items: LessonSummary[] = (data.scenes || []).map((s: any) => ({
+          id: s.id,
+          title:
+            s.id === 'HAHA'
+              ? 'Bài Học HAHA (Bản phát hành chuẩn)'
+              : s.id === 'START'
+              ? 'Bắt đầu (START)'
+              : s.id === 'END'
+              ? 'Kết thúc (END)'
+              : s.id === 'UNIT_TEST_DAY_03_01'
+              ? 'Bài học kiểm thử GĐ3'
+              : `Kịch bản ${s.id}`,
+          description:
+            s.id === 'HAHA'
+              ? '42 bước: Chạm 4 vùng pie4, Vuốt 4 hướng, Voice STT/LLM, Hoạt ảnh .eaf'
+              : `Kịch bản phát hành v${s.ver ?? 1}${s.pin ? ' (Core)' : ''}`,
+          category: 'learning',
+          metadataUrl: s.hash ? `http://localhost:8000/api/v1/o/${s.hash}` : '',
+          coverUrl: null,
+        }));
+        const cleanItems = v3Items.filter((item) => !isLegacyCatalogItem(item));
+        const finalCatalog = cleanItems.length > 0 ? cleanItems : DEFAULT_V3_CATALOG;
+        set({ catalog: finalCatalog, catalogLoading: false });
+        if (!get().selectedLesson && finalCatalog.length > 0) {
+          void get().selectLesson(finalCatalog[0]);
         }
+        return;
       }
-    } catch (err) {
-      set({ catalogError: String(err), catalogLoading: false });
+      set({ catalog: DEFAULT_V3_CATALOG, catalogLoading: false });
+    } catch {
+      set({ catalog: DEFAULT_V3_CATALOG, catalogLoading: false });
     }
   },
 
   selectLesson: async (lessonEntry: LessonSummary) => {
     set({ selectedLesson: lessonEntry });
+
+    const isV3 = isV3SceneId(lessonEntry.id);
+    if (isV3 && get().lessonEngineType !== 'v3') {
+      set({ lessonEngineType: 'v3' });
+    }
+
+    const v3Handler = get().v3LoadSceneHandler;
+    if (isV3 && v3Handler) {
+      void v3Handler(lessonEntry.id);
+    }
+
     if (!lessonEntry.metadataUrl) return;
 
     if (!directPlayer) {
@@ -1136,16 +1321,36 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   playDirectIndex: async (order: string) => {
+    unlockSharedAudioContext();
     stopActivity(set, get);
     const lessonEntry = get().selectedLesson;
+    const isV3 = isV3SceneId(lessonEntry?.id);
+    if (isV3 && get().lessonEngineType !== 'v3') {
+      set({ lessonEngineType: 'v3' });
+    }
+
+    const matched = get().directIndexes.find((idx) => idx.order === order);
+    const visualUrl = matched?.visuals?.[0]?.url;
+
     set({
+      directActiveIndex: matched || null,
+      directPlaybackState: 'playing',
+      lessonPosition: matched ? `${matched.order}/${get().directIndexes.length}` : null,
+      lessonDebug: matched ? `Index ${matched.order}` : null,
       activity: {
         ...IDLE_ACTIVITY,
         kind: 'lesson',
         title: lessonEntry?.title || 'Bài học Bống',
         phase: 'playing',
+        imageUrl: visualUrl ? cdnUrl(visualUrl) : null,
+        imageSeq: (get().activity.imageSeq ?? 0) + 1,
       },
     });
+
+    if (isV3 && get().v3JumpStepHandler) {
+      get().v3JumpStepHandler!(order);
+    }
+
     if (directPlayer) {
       directPlayer.setVolume(get().volume);
       await directPlayer.playIndex(order);
@@ -1194,8 +1399,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     if (get().status !== 'connected') {
       get().connect();
     }
+    if (get().micState === 'listening') {
+      get().discardListening();
+    }
     clearSocketAutoNextTimer();
     ttsDone = false;
+    client?.abort('jump_index');
     client?.jumpLessonIndex(order, selected?.id);
 
     const matched = get().directIndexes.find((idx) => idx.order === order);
@@ -1246,6 +1455,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   playStudioIndex: async (order: string) => {
+    unlockSharedAudioContext();
     if (get().lessonSourceMode === 'socket') {
       get().jumpSocketIndex(order);
     } else {
@@ -1254,6 +1464,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   playStudioNext: async () => {
+    unlockSharedAudioContext();
     if (get().lessonSourceMode === 'socket') {
       get().nextSocketIndex();
     } else {
@@ -1262,6 +1473,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
 
   playStudioPrev: async () => {
+    unlockSharedAudioContext();
     if (get().lessonSourceMode === 'socket') {
       const currentIndex = get().directActiveIndex;
       const indexes = get().directIndexes;
@@ -1296,12 +1508,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   stopStudioLesson: () => {
     clearSocketAutoNextTimer();
     ttsDone = false;
-    if (get().lessonSourceMode === 'socket') {
+    const selected = get().selectedLesson;
+    if (isV3SceneId(selected?.id) || get().lessonSourceMode === 'direct') {
+      get().stopDirectLesson();
+    } else {
       client?.stopLesson();
       get().exitActivity();
       set({ directActiveIndex: null, directPlaybackState: 'idle' });
-    } else {
-      get().stopDirectLesson();
     }
   },
 
@@ -1376,8 +1589,8 @@ function stopActivity(set: Setter, get: Getter): void {
   // arriving afterwards belongs to nobody.
   clearQuestionTimer();
   serverQuestion = null;
-  // The mic belongs to the lesson while one is running; hand it back.
-  if (get().micState === 'listening') get().stopListening();
+  // The mic belongs to the lesson while one is running; hand it back cleanly without submitting trailing audio.
+  if (get().micState === 'listening') get().discardListening();
   // Through the helper, so the silent timer dies with the window it belonged
   // to — otherwise it fires into the next activity and answers a question
   // nobody asked.
@@ -1421,6 +1634,7 @@ async function startStory(set: Setter, get: Getter, entry: LessonSummary): Promi
   if (get().status === 'disconnected') {
     await get().connect();
   }
+  client?.abort('start_story');
   client?.startStory(entry.id);
 }
 
@@ -1435,6 +1649,7 @@ async function startLesson(set: Setter, get: Getter, entry: LessonSummary): Prom
   if (get().status === 'disconnected') {
     await get().connect();
   }
+  client?.abort('start_lesson');
   client?.startLesson(entry.id);
 }
 
@@ -1449,6 +1664,7 @@ async function startTopic(set: Setter, get: Getter, entry: LessonSummary): Promi
   if (get().status === 'disconnected') {
     await get().connect();
   }
+  client?.abort('start_topic');
   client?.startTopic(entry.id);
 }
 
@@ -1512,13 +1728,35 @@ export function handleMessage(set: Setter, get: Getter, message: IncomingMessage
   set({ face, sessionId: client?.currentSessionId ?? null });
 
   if (message.type === 'content_catalog') {
-    const catalog = parseCatalog(message);
+    const rawCatalog = parseCatalog(message);
     set({
-      catalog,
       catalogLoading: false,
       catalogError: null,
       childName: message.child_name || get().childName,
     });
+
+    if (get().lessonEngineType === 'v3') {
+      // In V3 mode, do not allow legacy test cases or scratch items to overwrite the V3 catalog.
+      const v3Items = rawCatalog.filter((item) => isV3SceneId(item.id) && !isLegacyCatalogItem(item));
+      if (v3Items.length > 0) {
+        const current = get().catalog.length > 0 ? get().catalog : DEFAULT_V3_CATALOG;
+        const merged = [...current];
+        for (const item of v3Items) {
+          if (!merged.some((m) => m.id === item.id)) {
+            merged.push(item);
+          }
+        }
+        const cleanCatalog = merged.filter((item) => !isLegacyCatalogItem(item));
+        set({ catalog: cleanCatalog.length > 0 ? cleanCatalog : DEFAULT_V3_CATALOG });
+      } else {
+        const cleanCatalog = get().catalog.filter((item) => !isLegacyCatalogItem(item));
+        set({ catalog: cleanCatalog.length > 0 ? cleanCatalog : DEFAULT_V3_CATALOG });
+      }
+      return;
+    }
+
+    const cleanCatalog = rawCatalog.filter((item) => !isLegacyCatalogItem(item));
+    set({ catalog: cleanCatalog });
     return;
   }
 

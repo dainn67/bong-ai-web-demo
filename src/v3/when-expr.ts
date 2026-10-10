@@ -16,6 +16,7 @@ import type { MemorySpaces } from './types';
 export interface WhenEvalContext {
   reply: string | null;
   memory: MemorySpaces;
+  manifestLists?: Record<string, Array<{ value: string; [k: string]: unknown }>>;
 }
 
 type Tok =
@@ -152,12 +153,21 @@ class Parser {
       if (!t || t.k === 'rp') { this.next(); break; }
       if (args.length > 0) {
         if (t.k !== 'comma') break;
-        this.next();
+        this.next(); // consume comma
       }
+      const cur = this.peek();
+      if (!cur || cur.k === 'rp') { this.next(); break; }
       // For ISBLANK we need the raw var name, not its value.
-      if (name === 'ISBLANK' && t.k === 'var') {
+      if (name === 'ISBLANK' && cur.k === 'var') {
         this.next();
-        argVars.push(t.v);
+        argVars.push(cur.v);
+        args.push(false);
+        continue;
+      }
+      // For INLIST we need the raw var names for both arguments.
+      if (name === 'INLIST' && cur.k === 'var') {
+        this.next();
+        argVars.push(cur.v);
         args.push(false);
         continue;
       }
@@ -168,6 +178,22 @@ class Parser {
       case 'OR': return args.some(Boolean);
       case 'NOT': return !args[0];
       case 'ISBLANK': return resolveVar(argVars[0] ?? '', this.ctx) === undefined;
+      case 'INLIST': {
+        if (argVars.length !== 2) return false;
+        const [varName, listRef] = argVars;
+        const match = /^lists\.([A-Za-z0-9_]+)\.value$/.exec(listRef);
+        if (!match) return false;
+        const listName = match[1];
+        const rawVal = resolveVar(varName, this.ctx);
+        if (rawVal === undefined || rawVal === null || rawVal === '') return false;
+        const valStr = String(rawVal);
+        const list = this.ctx.manifestLists?.[listName];
+        if (!list || !Array.isArray(list)) {
+          console.warn(`[when-expr] INLIST: list '${listName}' not found in manifest`);
+          return false;
+        }
+        return list.some((item) => item && typeof item === 'object' && String(item.value) === valStr);
+      }
       default: return false;
     }
   }

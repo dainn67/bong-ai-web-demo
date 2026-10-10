@@ -12,7 +12,7 @@
  * `src/dev/`, not to the firmware being simulated.
  */
 
-import type { LessonCategory, LessonSummary } from '../lessons/catalog';
+import { isLegacyCatalogItem, type LessonCategory, type LessonSummary } from '../lessons/catalog';
 
 /** What the child can start from the menu. */
 export type DeviceMode = 'freetalk' | 'lesson' | 'story' | 'topic';
@@ -116,5 +116,5 @@ export function reduceMenu(state: MenuState, action: MenuAction, rowCount = 0): 
 export function rowsFor(state: MenuState, catalog: LessonSummary[]): LessonSummary[] {
   if (state.view.screen !== 'picker') return [];
   const { category } = state.view;
-  return catalog.filter((entry) => entry.category === category);
+  return catalog.filter((entry) => entry.category === category && !isLegacyCatalogItem(entry));
 }

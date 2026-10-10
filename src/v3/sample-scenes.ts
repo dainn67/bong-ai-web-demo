@@ -184,3 +184,58 @@ export const SAMPLE_PROMPT_STORE: Record<string, string> = {
     'Trả lời ngắn gọn, ấm áp. Khi bé đã được trả lời xong thì branch="done"; ' +
     'khi bé muốn nghe chuyện thì branch="story"; còn lại branch="continue".',
 };
+
+export const SAMPLE_MANIFEST_LISTS: Record<string, Array<{ value: string; [k: string]: unknown }>> = {
+  colors: [
+    { value: 'red', say: 'Màu đỏ' },
+    { value: 'blue', say: 'Màu xanh' },
+    { value: 'yellow', say: 'Màu vàng' },
+  ],
+};
+
+export const SAMPLE_INLIST_SCENE: V3Scene = {
+  id: 'INLIST_DEMO',
+  entry: '5_ask_fav_color',
+  screen: { base: 'orb', orb: 'thinking', brightness: 80 },
+  volume: 75,
+  steps: [
+    {
+      id: '5_ask_fav_color',
+      orb: 'thinking',
+      audio: [{ src: 'ask_color_audio' }],
+      listen: {
+        mode: 'voice',
+        timeout: 6000,
+        voice: {
+          prompt: 'Bé thích màu gì?',
+          options: [
+            { name: '{lists.colors.value}', desc: 'Màu trong danh sách' },
+            { name: 'other', desc: 'Màu khác' },
+          ],
+        },
+      },
+      branches: [
+        { when: 'INLIST({reply}, {lists.colors.value})', go: '5_confirm', save: { 'user.fav_color': '{reply}' } },
+        { when: '{reply} = other', go: '5_other_color' },
+        { when: 'default', go: '6' },
+      ],
+    },
+    {
+      id: '5_confirm',
+      orb: 'happy',
+      audio: [{ src: 'confirm_color_audio' }],
+      next: '6',
+    },
+    {
+      id: '5_other_color',
+      orb: 'surprised',
+      audio: [{ src: 'other_color_audio' }],
+      next: '6',
+    },
+    {
+      id: '6',
+      orb: 'idle',
+      next: 'END#idle',
+    },
+  ],
+};
