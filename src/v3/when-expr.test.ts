@@ -189,3 +189,22 @@ describe('CT-04 INLIST evaluator vectors', () => {
     expect(runBranches('error')).toEqual({ target: '6', saved: null });
   });
 });
+
+describe('collectKeys (journey vars)', () => {
+  it('collects var tokens, filters reply + lists.*', async () => {
+    const { collectKeys } = await import('./when-expr');
+    const keys = collectKeys([
+      'INLIST({reply}, {lists.colors.value})',
+      'AND({reply} = more, {sys.time} >= {profile.bedtime})',
+      'default',
+      'NOT({tmp.z} < 3)',
+    ]);
+    expect(keys).toEqual(['profile.bedtime', 'sys.time', 'tmp.z']);
+  });
+
+  it('returns empty for no vars / parse errors', async () => {
+    const { collectKeys } = await import('./when-expr');
+    expect(collectKeys(['default'])).toEqual([]);
+    expect(collectKeys(['{reply} = cat'])).toEqual([]);
+  });
+});

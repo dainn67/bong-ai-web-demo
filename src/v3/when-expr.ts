@@ -200,6 +200,29 @@ class Parser {
 }
 
 /**
+ * Collect the variable keys referenced by a set of `when` strings — the
+ * journey `branch` line's `vars` snapshot source (spec v3.1 §1.2).
+ *
+ * Token-scan, not AST: `kind === 'var'` tokens only, minus `lists.*` (those
+ * are manifest list references resolved via manifestLists, not memory) and
+ * `reply` (reported in its own field).
+ */
+export function collectKeys(whens: string[]): string[] {
+  const keys = new Set<string>();
+  for (const w of whens) {
+    if (typeof w !== 'string' || w === 'default') continue;
+    const toks = tokenizeWhen(w);
+    if (typeof toks === 'string') continue; // parse error → skip
+    for (const t of toks) {
+      if (t.k === 'var' && t.v !== 'reply' && !t.v.startsWith('lists.')) {
+        keys.add(t.v);
+      }
+    }
+  }
+  return [...keys].sort();
+}
+
+/**
  * Evaluate a `when` expression string. Returns false on parse errors (fail
  * closed — a broken branch never fires) and for `default` (handled by caller).
  */

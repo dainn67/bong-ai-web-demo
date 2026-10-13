@@ -103,10 +103,17 @@ export const ScriptEnginePanel: React.FC = () => {
       currentReply,
       retriedThisStep,
       deviceLogs,
+      manifestLists,
       setManifestLists,
       loadScene,
       handleInputReply,
       jumpToStep,
+      journey,
+      jline,
+      journeyEndTalk,
+      reserveTalkSeq,
+      talkSeqRef,
+      setJourneyManifest,
     },
     backendManifest: contextBackendManifest,
     isFetchingManifest: contextIsFetchingManifest,
@@ -139,6 +146,18 @@ export const ScriptEnginePanel: React.FC = () => {
       setManifestLists(backendManifest.lists as any);
     }
   }, [backendManifest, setManifestLists]);
+
+  // Push manifest versions into the journey writer (mver + per-scene ver).
+  useEffect(() => {
+    const vers: Record<string, number> = {};
+    for (const s of backendManifest?.scenes || []) {
+      if (s.id && typeof s.ver === 'number') vers[s.id] = s.ver;
+    }
+    setJourneyManifest(backendManifest?.ver, vers, (backendManifest as any)?.channel);
+  }, [backendManifest, setJourneyManifest]);
+
+  // Journey preview details captured at /listen calls (for the Preview submit).
+  const previewDetailsRef = useRef<any[]>([]);
 
   // Security & 2-tier Key Management state
   const [key0Hex, setKey0Hex] = useState(() => SimulatedDeviceSecurity.getDeviceRootKey0Hex());
@@ -681,31 +700,79 @@ export const ScriptEnginePanel: React.FC = () => {
   };
 
   const handleSyncDeviceLogs = async () => {
-    if (deviceLogs.length === 0) {
-      alert('Chưa có bản ghi nhật ký thiết bị nào để gửi lên server.');
-      return;
-    }
     setIsSyncingLogs(true);
     setSyncLogsResult(null);
     try {
-      const res = await fetch('/api/v1/device/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          device_id: 'simulator_v3_dev',
-          logs: deviceLogs,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setSyncLogsResult(`✅ Server đã nhận ${deviceLogs.length} logs (ack_seq: ${data.ack_seq})`);
-      } else {
-        setSyncLogsResult(`❌ Server trả lỗi HTTP ${res.status}`);
+      // v3.1: journey lines flush via the outbox (packet seq, ack prune).
+      const j = journey();
+      const jr = await j.flush();
+      let msg = jr.ok
+        ? `✅ Journey: pending=${j.pendingCount} (đã gửi hết)`
+        : `❌ Journey sync lỗi: ${jr.http || jr.error}`;
+
+      // Legacy deviceLogs path — kept for regression comparison.
+      if (deviceLogs.length > 0) {
+        const res = await fetch('/api/v1/device/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            device_id: 'simulator_v3_dev',
+            logs: deviceLogs,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          msg += ` | ✅ Legacy: ${deviceLogs.length} logs (ack_seq: ${data.ack_seq})`;
+        } else {
+          msg += ` | ❌ Legacy HTTP ${res.status}`;
+        }
       }
+      setSyncLogsResult(msg);
     } catch (err: any) {
       setSyncLogsResult(`❌ Lỗi kết nối: ${err.message}`);
     } finally {
       setIsSyncingLogs(false);
+    }
+  };
+
+  /** Submit the current session as a Preview journey (spec 2.5 POST /preview).
+   * Dev: direct call (permissive auth). Prod path: the Producer Worker holds
+   * BE_THU — browsers never carry the secret (D21). */
+  const handleSubmitPreview = async () => {
+    const j = journey();
+    const lines = j.sessionLines();
+    if (!j.sid || !lines.length) {
+      alert('Chưa có phiên journey nào để xuất preview.');
+      return;
+    }
+    const pvSid = `pv-simulator-${Math.floor(Date.now() / 1000)}`;
+    const payload = {
+      phien: {
+        sid: pvSid,
+        user: 'simulator',
+        mver: backendManifest?.ver ?? 0,
+        channel: 'test',
+        bat_dau: lines[0]?.t,
+        ket_thuc: lines[lines.length - 1]?.t,
+        reason: 'preview_luu',
+      },
+      dong: lines.map((l) => ({ ...l, sid: pvSid })),
+      chi_tiet: previewDetailsRef.current,
+    };
+    try {
+      const res = await fetch('/api/journeys/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setSyncLogsResult(`✅ Preview đã lưu: ${pvSid} (${data.dong} dòng)`);
+      } else {
+        setSyncLogsResult(`❌ Preview lỗi ${res.status}: ${data.loi || JSON.stringify(data)}`);
+      }
+    } catch (err: any) {
+      setSyncLogsResult(`❌ Preview lỗi mạng: ${err.message}`);
     }
   };
 
@@ -853,26 +920,80 @@ export const ScriptEnginePanel: React.FC = () => {
     }
   };
 
-  const handleVoiceTest = async (optionOrText: string) => {
-    if (!currentStep?.listen?.voice) return;
-
-    setIsCallingBackend(true);
-    setBackendListenResult(null);
-
+  /** Record ~4s of real microphone audio; falls back to a silent WAV when the
+   * browser denies mic or MediaRecorder is unavailable. */
+  const captureMicClip = async (): Promise<{ blob: Blob; real: boolean }> => {
     try {
-      // Create a dummy WAV header + bytes to test POST /api/v1/device/listen
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      const chunks: BlobPart[] = [];
+      rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+      const blob = await new Promise<Blob>((resolve) => {
+        rec.onstop = () => resolve(new Blob(chunks, { type: rec.mimeType || 'audio/wav' }));
+        rec.start();
+        setTimeout(() => rec.state !== 'inactive' && rec.stop(), 4000);
+      });
+      stream.getTracks().forEach((t) => t.stop());
+      return { blob, real: true };
+    } catch {
       const wavHeader = new Uint8Array([
         0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45,
         0x66, 0x6d, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
         0x80, 0x3e, 0x00, 0x00, 0x00, 0x7d, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00,
         0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x00, 0x00,
       ]);
-      const blob = new Blob([wavHeader], { type: 'audio/wav' });
+      return { blob: new Blob([wavHeader], { type: 'audio/wav' }), real: false };
+    }
+  };
+
+  /** Blob → base64 for the JSON preview transport. */
+  const blobToBase64 = (b: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
+      fr.onerror = () => reject(fr.error);
+      fr.readAsDataURL(b);
+    });
+
+  /** Resolve {lists.x.value} inside an option name via the manifest lists. */
+  const resolveOptionName = (name: string): string => {
+    const m = /^\{lists\.([A-Za-z0-9_]+)\.value\}$/.exec(name);
+    if (!m) return name;
+    const list = (manifestLists as any)?.[m[1]];
+    return Array.isArray(list) && list[0]?.value ? String(list[0].value) : name;
+  };
+
+  const handleVoiceTest = async (optionOrText: string, micBlob?: Blob) => {
+    if (!currentStep?.listen?.voice) return;
+
+    setIsCallingBackend(true);
+    setBackendListenResult(null);
+
+    // Journey request fields (v3.1): seq = the upcoming `listen` line's seq —
+    // nothing appends between this call and handleInputReply, so peek is exact.
+    const j = journey();
+    const reqSeq = j.peekSeq();
+    const reqLan = retriedThisStep ? 2 : 1;
+    const reqSceneVer = backendManifest?.scenes?.find((s) => s.id === scene?.id)?.ver;
+    const optionNames = (currentStep.listen.voice.options || []).map((o) =>
+      resolveOptionName(o.name),
+    );
+
+    try {
+      const { blob } = micBlob
+        ? { blob: micBlob }
+        : await captureMicClip();
 
       const formData = new FormData();
       formData.append('device_id', 'simulator_v3_dev');
       formData.append('scene', scene?.id || 'LESSON_TEST');
       formData.append('step', currentStep.id);
+      if (j.sid) formData.append('sid', j.sid);
+      formData.append('seq', String(reqSeq));
+      formData.append('lan', String(reqLan));
+      if (reqSceneVer !== undefined) formData.append('scene_ver', String(reqSceneVer));
+      if (backendManifest?.ver !== undefined) formData.append('mver', String(backendManifest.ver));
+      formData.append('options', JSON.stringify(optionNames));
 
       // Resolve prompt — Oct-1 contract: {prompts.x} resolves client-side
       // from the manifest prompt store, then {options} and memory
@@ -884,7 +1005,7 @@ export const ScriptEnginePanel: React.FC = () => {
         (_m, name) => promptStore[name] || `{prompts.${name}}`,
       );
       const optionsText = (currentStep.listen.voice.options || [])
-        .map((o) => `- ${o.name}: ${o.desc}`)
+        .map((o) => `- ${resolveOptionName(o.name)}: ${o.desc}`)
         .join('\n');
       resolvedPrompt = resolvedPrompt.replace(/\{options\}/g, optionsText);
       const childName = backendManifest?.profile?.child_name || 'Bé';
@@ -910,9 +1031,19 @@ export const ScriptEnginePanel: React.FC = () => {
       if (res.ok) {
         const data = await res.json();
         setBackendListenResult(data);
+        // Keep the chi_tiet for the Preview submit (v3.1).
+        previewDetailsRef.current.push({
+          seq: reqSeq,
+          lan: reqLan,
+          audio: await blobToBase64(blob),
+          transcript: data.transcript || '',
+          prompt: resolvedPrompt,
+          option_names: optionNames,
+          llm_raw: data.reply,
+        });
         // K7: device normalizes raw LLM text, then matches option names.
         const norm = normalizeReply(data.reply || '');
-        const optNames = (currentStep.listen.voice?.options || []).map((o) => o.name);
+        const optNames = optionNames;
         const finalReply =
           norm === 'silent' || norm === 'error' || norm === 'unclear' || optNames.includes(norm)
             ? norm
@@ -920,11 +1051,13 @@ export const ScriptEnginePanel: React.FC = () => {
         handleInputReply(finalReply);
       } else {
         // Fallback simulate locally if backend STT unavailable
+        jline({ loai: 'error', code: 'http', where: 'listen', msg: String(res.status) });
         setBackendListenResult({ reply: optionOrText, local_fallback: true });
         handleInputReply(optionOrText);
       }
-    } catch {
+    } catch (e) {
       // Local fallback
+      jline({ loai: 'error', code: 'net', where: 'listen', msg: String(e) });
       setBackendListenResult({ reply: optionOrText, local_fallback: true });
       handleInputReply(optionOrText);
     } finally {
@@ -942,10 +1075,23 @@ export const ScriptEnginePanel: React.FC = () => {
     return res.json();
   };
 
+  /** Journey fields shared by all /talk/* calls of the current step (D18). */
+  const talkJourneyFields = (fd: FormData) => {
+    const j = journey();
+    if (j.sid) fd.append('sid', j.sid);
+    if (talkSeqRef.current != null) fd.append('seq', String(talkSeqRef.current));
+    const sv = backendManifest?.scenes?.find((s) => s.id === scene?.id)?.ver;
+    if (sv !== undefined) fd.append('scene_ver', String(sv));
+    if (backendManifest?.ver !== undefined) fd.append('mver', String(backendManifest.ver));
+  };
+
   const handleTalkStart = async () => {
     const talk = currentStep?.talk;
     if (!talk) return;
     setIsCallingBackend(true);
+    // D18: reserve the `talk` line's seq NOW — step entry already did it via
+    // the engine hook; fall back to a fresh reservation for manual starts.
+    if (talkSeqRef.current == null) reserveTalkSeq();
     try {
       const fd = new FormData();
       fd.append('device_id', 'simulator_v3_dev');
@@ -956,6 +1102,7 @@ export const ScriptEnginePanel: React.FC = () => {
       fd.append('seed', talk.seed || '');
       fd.append('turns', String(talk.turns));
       fd.append('sec', String(talk.sec));
+      talkJourneyFields(fd);
       const data = await talkPost('start', fd);
       setTalkSessionId(data.session);
       setTalkTurnsLeft((currentStep!.talk?.turns ?? 0) - 1);
@@ -981,19 +1128,15 @@ export const ScriptEnginePanel: React.FC = () => {
     return out;
   };
 
-  const handleTalkTurn = async (saidText: string) => {
+  const handleTalkTurn = async (saidText: string, micBlob?: Blob) => {
     if (!talkSessionId) return;
     setIsCallingBackend(true);
     try {
-      const wavHeader = new Uint8Array([
-        0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45,
-        0x66, 0x6d, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
-        0x80, 0x3e, 0x00, 0x00, 0x00, 0x7d, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00,
-        0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x00, 0x00,
-      ]);
+      const { blob } = micBlob ? { blob: micBlob } : await captureMicClip();
       const fd = new FormData();
       fd.append('session', talkSessionId);
-      fd.append('audio', new Blob([wavHeader], { type: 'audio/wav' }), 'turn.wav');
+      fd.append('audio', blob, 'turn.wav');
+      talkJourneyFields(fd);
       const data = await talkPost('turn', fd);
       setTalkTurnsLeft((t) => Math.max(0, t - 1));
       setTalkLog((l) => [...l, `[turn] branch=${data.branch} topic=${data.topic || '-'} said="${saidText}"`]);
@@ -1012,13 +1155,24 @@ export const ScriptEnginePanel: React.FC = () => {
 
   const handleTalkEnd = async () => {
     if (!talkSessionId) return;
+    const talk = currentStep?.talk;
     try {
       const fd = new FormData();
       fd.append('session', talkSessionId);
+      talkJourneyFields(fd);
+      fd.append('end', 'end:finished');
       await talkPost('end', fd);
       setTalkLog((l) => [...l, '[end] session closed']);
     } catch {
       // best-effort
+    }
+    // Close the reserved `talk` journey line (D18).
+    if (talkSeqRef.current != null) {
+      journeyEndTalk({
+        turns: (talk?.turns ?? 0) - talkTurnsLeft,
+        sec: talk?.sec ?? 0,
+        end: 'end:finished',
+      });
     }
     setTalkSessionId(null);
   };
@@ -1703,12 +1857,20 @@ export const ScriptEnginePanel: React.FC = () => {
               <button
                 type="button"
                 onClick={handleSyncDeviceLogs}
-                disabled={isSyncingLogs || deviceLogs.length === 0}
+                disabled={isSyncingLogs}
                 className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shadow-sm disabled:opacity-50 flex items-center gap-1.5"
                 title="Đồng bộ nhật ký lên backend qua POST /api/v1/device/sync"
               >
                 <span>{isSyncingLogs ? '⏳' : '📤'}</span>
-                <span>Gửi Lên Backend (/device/sync - {deviceLogs.length} logs)</span>
+                <span>Sync Journey + Logs ({deviceLogs.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmitPreview}
+                className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold transition shadow-sm"
+                title="Xuất phiên hiện tại làm Preview journey (pv- sid, kênh test)"
+              >
+                🧪 Xuất Preview
               </button>
             </div>
 

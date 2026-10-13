@@ -9,11 +9,12 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { V3Scene, V3Step, MemorySpaces, OrbExpression, DeviceLogEntry, ManifestFileItem } from './types';
 import { resolvePlaceholders } from './script-parser';
-import { evalWhen } from './when-expr';
+import { evalWhen, collectKeys } from './when-expr';
 import { normalizeK7 } from './k7-normalizer';
 import { VirtualSdCard } from './virtual-sd-card';
 import { isBongEncrypted, decryptBongAsset, SimulatedDeviceSecurity } from './crypto-client';
 import { isImaAdpcmWav, decodeImaAdpcmToAudioBuffer } from './adpcm-decoder';
+import { JourneyLog } from './journey-log';
 import {
   SAMPLE_LESSON_TEST,
   SAMPLE_TALK_SCENE,
@@ -211,9 +212,74 @@ export function useScriptEngine() {
   const stepEnteredAtRef = useRef(0);
   const retriedRef = useRef(false);
 
+  // Journey log (v3.1): two seq spaces, persistent outbox, boot resend.
+  const journeyRef = useRef<JourneyLog | null>(null);
+  const journeyMverRef = useRef<number | undefined>(undefined);
+  const journeySceneVersRef = useRef<Record<string, number>>({});
+  const journeyChannelRef = useRef<'test' | 'live'>('live');
+  const talkSeqRef = useRef<number | null>(null); // reserved `talk` line seq (D18)
+  const sessionOpenedAtRef = useRef<number>(0);
+  const logMessageRef = useRef<(msg: string) => void | null>(null);
+  const memoryRef = useRef<MemorySpaces>(memory);
+  useEffect(() => {
+    memoryRef.current = memory;
+  }, [memory]);
+
+  const journey = useCallback((): JourneyLog => {
+    if (!journeyRef.current) {
+      journeyRef.current = new JourneyLog('simulator_v3_dev', (m) => logMessageRef.current?.(m));
+      void journeyRef.current.bootResend();
+    }
+    return journeyRef.current;
+  }, []);
+
+  /** Panel pushes manifest versions so engine-written lines carry them. */
+  const setJourneyManifest = useCallback(
+    (mver: number | undefined, sceneVers: Record<string, number>, channel?: string) => {
+      journeyMverRef.current = mver;
+      journeySceneVersRef.current = sceneVers;
+      if (channel === 'test' || channel === 'live') journeyChannelRef.current = channel;
+    },
+    [],
+  );
+
+  /** Reserve the seq for the upcoming `talk` line — /talk/* share it (D18). */
+  const reserveTalkSeq = useCallback((): number => {
+    talkSeqRef.current = journey().peekSeq();
+    return talkSeqRef.current;
+  }, [journey]);
+
+  /** Write a journey line with the common context fields stamped. */
+  const jline = useCallback(
+    (
+      line: Record<string, unknown> & { loai: string },
+      opts: { sceneId?: string; step?: string } = {},
+    ) => {
+      const sceneId = opts.sceneId ?? scene?.id;
+      journey().append({
+        scene: sceneId,
+        scene_ver: sceneId ? journeySceneVersRef.current[sceneId] : undefined,
+        mver: journeyMverRef.current,
+        step: opts.step ?? currentStep?.id,
+        ...line,
+      });
+    },
+    [journey, scene, currentStep],
+  );
+
+  /** Close the reserved talk line when the talk step exits (D18). */
+  const journeyEndTalk = useCallback(
+    (fields: { turns: number; sec: number; topic?: string; end: string }) => {
+      jline({ loai: 'talk', ...fields, seq: talkSeqRef.current ?? undefined });
+      talkSeqRef.current = null;
+    },
+    [jline],
+  );
+
   const logMessage = useCallback((msg: string) => {
     setExecutionLog((prev) => [...prev.slice(-30), `[${new Date().toLocaleTimeString()}] ${msg}`]);
   }, []);
+  logMessageRef.current = logMessage;
 
   /** Append a device log entry (new schema — seq monotonic, retried 0|1). */
   const pushDeviceLog = useCallback(
@@ -235,6 +301,30 @@ export function useScriptEngine() {
 
   const loadScene = useCallback((newScene: V3Scene, startStepId?: string) => {
     stopCurrentAudioPlayback();
+
+    // Journey session boundaries (spec §1): entering START opens a session,
+    // entering END closes it before the device sleeps.
+    const j = journey();
+    if (newScene.id === 'START') {
+      const mem = memoryRef.current;
+      j.sessionStart({
+        channel: journeyChannelRef.current,
+        sys: {
+          'sys.battery': mem.sys.battery,
+          'sys.hour': new Date().getHours(),
+          'sys.net': mem.sys.net ? 1 : 0,
+          'stat.sessions': mem.stat.sessions,
+          'stat.today_min': mem.stat.today_min,
+        },
+      });
+      sessionOpenedAtRef.current = Date.now();
+    } else if (newScene.id === 'END') {
+      j.sessionEnd(
+        `end:${startStepId || newScene.entry}`,
+        Math.max(0, Math.round((Date.now() - sessionOpenedAtRef.current) / 1000)),
+      );
+    }
+
     setScene(newScene);
     const entry =
       startStepId && newScene.steps.some((s) => s.id === startStepId) ? startStepId : newScene.entry;
@@ -251,7 +341,7 @@ export function useScriptEngine() {
     } else if (newScene.screen?.orb) {
       setActiveOrb(newScene.screen.orb);
     }
-  }, [logMessage]);
+  }, [logMessage, journey]);
 
   const currentStep = scene?.steps.find((s) => s.id === currentStepId) || null;
 
@@ -270,18 +360,30 @@ export function useScriptEngine() {
         if (space === 'sys' || space === 'profile') continue;
 
         if (space === 'learn' || space === 'user' || space === 'tmp' || space === 'stat') {
+          let committed: unknown;
           if (typeof resolved === 'string' && resolved.startsWith('+')) {
             const add = parseInt(resolved.replace('+', ''), 10) || 0;
             const cur = typeof next[space][sub] === 'number' ? next[space][sub] : 0;
-            (next[space] as any)[sub] = cur + add;
+            committed = cur + add;
           } else {
-            (next[space] as any)[sub] = resolved;
+            committed = resolved;
           }
+          (next[space] as any)[sub] = committed;
+          // v3.1: `save` is a journey line — {key, value} post-resolution.
+          journey().append({
+            loai: 'save',
+            key: k,
+            value: committed,
+            scene: scene?.id,
+            scene_ver: scene?.id ? journeySceneVersRef.current[scene.id] : undefined,
+            mver: journeyMverRef.current,
+            step: currentStep?.id,
+          });
         }
       }
       return next;
     });
-  }, []);
+  }, [journey, scene, currentStep]);
 
   // Evaluate branches — `when` is an Excel-style string (or 'default').
   const evaluateBranches = useCallback(
@@ -290,21 +392,42 @@ export function useScriptEngine() {
         return step.next || null;
       }
 
-      for (const branch of step.branches) {
+      // Journey `vars` snapshot — keys used by ANY `when` of this branch table.
+      const varsKeys = collectKeys(step.branches.map((b) => (b as any).when));
+      const vars: Record<string, unknown> = {};
+      for (const k of varsKeys) {
+        const dot = k.indexOf('.');
+        const space = dot > 0 ? (memory as any)[k.slice(0, dot)] : undefined;
+        vars[k] = space ? space[k.slice(dot + 1)] ?? null : null;
+      }
+      if (reply !== null) vars.reply = reply;
+
+      for (let i = 0; i < step.branches.length; i++) {
+        const branch = step.branches[i];
         const when = (branch as any).when;
         const isDefault = 'default' in branch || when === 'default' || when === undefined || when === null;
         if (isDefault) {
           if (branch.save) commitSave(branch.save, reply);
-          return (branch as any).default || branch.go || branch.next || null;
+          const target = (branch as any).default || branch.go || branch.next || null;
+          jline(
+            { loai: 'branch', idx: -1, vars, reply, go: target },
+            { step: step.id },
+          );
+          return target;
         }
         if (typeof when === 'string' && evalWhen(when, { reply, memory, manifestLists })) {
           if (branch.save) commitSave(branch.save, reply);
-          return branch.go || branch.next || null;
+          const target = branch.go || branch.next || null;
+          jline(
+            { loai: 'branch', idx: i, vars, reply, go: target },
+            { step: step.id },
+          );
+          return target;
         }
       }
       return null;
     },
-    [memory, manifestLists, commitSave],
+    [memory, manifestLists, commitSave, jline],
   );
 
   // Jump to next step
@@ -449,6 +572,17 @@ export function useScriptEngine() {
 
       pushDeviceLog(currentStep, mode, normalized);
 
+      // Journey `listen` line — final reply only; the retried attempt shows
+      // up as `retry: 1` on this line (simulator can't measure speech_ms).
+      jline({
+        loai: 'listen',
+        wait_ms: Math.max(0, Date.now() - stepEnteredAtRef.current),
+        speech_ms: null,
+        lat_ms: null,
+        retry: retriedRef.current ? 1 : 0,
+        reply: normalized,
+      });
+
       // silent streak — may short-circuit to END#idle (bypass branches)
       const streakLimit = memory.sys.cfg?.silent_streak ?? SILENT_STREAK_LIMIT;
       const finalReply = normalized;
@@ -465,7 +599,7 @@ export function useScriptEngine() {
       const target = evaluateBranches(currentStep, normalized);
       transitionToStep(target, normalized);
     },
-    [currentStep, evaluateBranches, logMessage, transitionToStep, memory, pushDeviceLog, runRetryAudio],
+    [currentStep, evaluateBranches, logMessage, transitionToStep, memory, pushDeviceLog, runRetryAudio, jline],
   );
 
   // Step entry effect
@@ -480,6 +614,12 @@ export function useScriptEngine() {
     }
 
     logMessage(`--- Đang thực thi Step: ${currentStep.id} ---`);
+
+    // Journey `step` line + reserved seq for talk steps (D18).
+    jline({ loai: 'step' }, { step: currentStep.id });
+    if (currentStep.talk) {
+      talkSeqRef.current = journey().peekSeq();
+    }
 
     let cancelled = false;
     setIsAwaitingInput(false);
@@ -605,7 +745,7 @@ export function useScriptEngine() {
       stopCurrentAudioPlayback();
       if (stepTimerRef.current) clearTimeout(stepTimerRef.current);
     };
-  }, [currentStep, stepRunSeq, evaluateBranches, logMessage, transitionToStep]);
+  }, [currentStep, stepRunSeq, evaluateBranches, logMessage, transitionToStep, jline, journey]);
 
   const jumpToStep = useCallback((stepId: string) => {
     stopCurrentAudioPlayback();
@@ -635,5 +775,11 @@ export function useScriptEngine() {
     handleInputReply,
     jumpToStep,
     registerExternalSceneLoader,
+    journey,
+    jline,
+    journeyEndTalk,
+    reserveTalkSeq,
+    talkSeqRef,
+    setJourneyManifest,
   };
 }
