@@ -3,7 +3,7 @@
  * Complete interactive simulator for Offline-First Script Engine v3 (Phase 1).
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useV3EngineContext } from './v3-engine-context';
 import { validateV3Scene } from './script-parser';
 import {
@@ -756,7 +756,7 @@ export const ScriptEnginePanel: React.FC = () => {
         ket_thuc: lines[lines.length - 1]?.t,
         reason: 'preview_luu',
       },
-      dong: lines.map((l) => ({ ...l, sid: pvSid })),
+      dong: lines.map((l: any) => ({ ...l, sid: pvSid })),
       chi_tiet: previewDetailsRef.current,
     };
     try {

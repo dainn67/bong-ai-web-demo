@@ -17,7 +17,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useScriptEngine, unlockSharedAudioContext } from './use-script-engine';
-import type { V3Scene, V3DeviceManifest, OrbExpression, DeviceLogEntry, MemorySpaces, V3Step } from './types';
+import type { V3Scene, V3DeviceManifest } from './types';
 import { VirtualSdCard } from './virtual-sd-card';
 import {
   SimulatedDeviceSecurity,
@@ -38,23 +38,7 @@ import {
 } from './sample-scenes';
 
 export interface V3EngineContextType {
-  engine: {
-    scene: V3Scene | null;
-    currentStep: V3Step | null;
-    activeOrb: OrbExpression;
-    memory: MemorySpaces;
-    executionLog: string[];
-    isPlayingAudio: boolean;
-    isAwaitingInput: boolean;
-    currentReply: string | null;
-    retriedThisStep: boolean;
-    deviceLogs: DeviceLogEntry[];
-    manifestLists: Record<string, Array<{ value: string; [k: string]: unknown }>>;
-    setManifestLists: (lists: Record<string, Array<{ value: string; [k: string]: unknown }>>) => void;
-    loadScene: (scene: V3Scene, startStepId?: string) => void;
-    handleInputReply: (reply: string) => void;
-    jumpToStep: (stepId: string) => void;
-  };
+  engine: ReturnType<typeof useScriptEngine>;
   backendManifest: V3DeviceManifest | null;
   isFetchingManifest: boolean;
   manifestError: string | null;

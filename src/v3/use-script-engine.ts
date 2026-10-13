@@ -181,6 +181,7 @@ const SILENT_STREAK_LIMIT = 4; // cfg.silent_streak default
 export function useScriptEngine() {
   const [scene, setScene] = useState<V3Scene | null>(null);
   const [currentStepId, setCurrentStepId] = useState<string | null>(null);
+  const currentStep = scene?.steps.find((s) => s.id === currentStepId) || null;
   const [stepRunSeq, setStepRunSeq] = useState(0);
   const [activeOrb, setActiveOrb] = useState<OrbExpression>('idle');
   const [memory, setMemory] = useState<MemorySpaces>(INITIAL_MEMORY);
@@ -342,8 +343,6 @@ export function useScriptEngine() {
       setActiveOrb(newScene.screen.orb);
     }
   }, [logMessage, journey]);
-
-  const currentStep = scene?.steps.find((s) => s.id === currentStepId) || null;
 
   // Commit save memory mutations (sys.*/profile.* are read-only)
   const commitSave = useCallback((saveObj?: Record<string, any>, reply?: string | null) => {

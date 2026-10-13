@@ -137,11 +137,13 @@ export class JourneyLog {
    */
   append(line: Omit<JourneyLine, 'sid' | 'seq' | 't'> & { sid?: string; seq?: number; t?: number }): JourneyLine {
     const full: JourneyLine = {
+      loai: line.loai as string,
       ...line,
       sid: line.sid ?? this.sid ?? `${this.deviceId}-0`,
       seq: line.seq ?? ++this.lineSeq,
       t: line.t ?? Date.now(),
     };
+    this.onLog?.(`[journey] line #${full.seq} ${full.loai}`);
     // A caller-supplied seq (reserved talk line, D18) must still advance the
     // counter — otherwise the next auto seq collides with it.
     if (line.seq !== undefined && line.seq > this.lineSeq) {
