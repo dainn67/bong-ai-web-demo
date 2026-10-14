@@ -79,14 +79,27 @@ function saveOutbox(entries: OutboxEntry[]): void {
   }
 }
 
+let _sharedJourney: JourneyLog | null = null;
+
 /** Test hook: clear persisted journey storage (outbox, packet seq, sid). */
 export function __clearJourneyStorage(): void {
+  _sharedJourney = null;
   _memStore.clear();
   if (typeof localStorage !== 'undefined') {
     localStorage.removeItem(OUTBOX_KEY);
     localStorage.removeItem(PACKET_SEQ_KEY);
     localStorage.removeItem(SID_KEY);
   }
+}
+
+export function getSharedJourneyLog(deviceId = 'simulator_v3_dev', onLog?: (msg: string) => void): JourneyLog {
+  if (!_sharedJourney) {
+    _sharedJourney = new JourneyLog(deviceId, onLog);
+    void _sharedJourney.bootResend();
+  } else if (onLog) {
+    _sharedJourney.setLogger(onLog);
+  }
+  return _sharedJourney;
 }
 
 export class JourneyLog {
@@ -96,6 +109,7 @@ export class JourneyLog {
   private outbox: OutboxEntry[];
   private flushing = false;
   private onLog?: (msg: string) => void;
+  private flushTimer: any = null;
 
   constructor(deviceId: string, onLog?: (msg: string) => void) {
     this.deviceId = deviceId;
@@ -103,9 +117,22 @@ export class JourneyLog {
     this.outbox = loadOutbox();
   }
 
+  setLogger(onLog: (msg: string) => void): void {
+    this.onLog = onLog;
+  }
+
   /** Pending lines never acked — resend on boot. */
   get pendingCount(): number {
     return this.outbox.length;
+  }
+
+  private scheduleDebouncedFlush(delayMs = 600): void {
+    if (typeof window === 'undefined') return;
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      void this.flush();
+    }, delayMs);
   }
 
   private nextPacketSeq(): number {
@@ -153,7 +180,13 @@ export class JourneyLog {
     this.saveSd(full);
     this.persist();
     if (full.loai === 'session_end' || this.outbox.length >= FLUSH_AT) {
+      if (this.flushTimer) {
+        clearTimeout(this.flushTimer);
+        this.flushTimer = null;
+      }
       void this.flush();
+    } else {
+      this.scheduleDebouncedFlush();
     }
     return full;
   }
@@ -165,6 +198,10 @@ export class JourneyLog {
 
   /** Flush pending lines, chunked ≤1500, ordered by insert order. */
   async flush(syncUrl = '/api/v1/device/sync'): Promise<SyncResult> {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
     if (this.flushing) return { ok: true };
     this.flushing = true;
     try {

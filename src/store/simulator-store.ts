@@ -67,6 +67,7 @@ import {
   type DirectPlaybackState,
 } from '../lessons/direct-lesson-player';
 import { unlockSharedAudioContext, stopCurrentAudioPlayback } from '../v3/use-script-engine';
+import { getSharedJourneyLog } from '../v3/journey-log';
 
 
 
@@ -518,6 +519,26 @@ function clearQuestionTimer(): void {
   questionTimer = null;
 }
 
+function ensureSimulatorJourneySession(get: Getter, sceneId = 'FREE_TALK') {
+  const j = getSharedJourneyLog('simulator_v3_dev');
+  if (!j.sid) {
+    j.sessionStart({
+      channel: 'live',
+      scene: sceneId,
+      scene_ver: 1,
+      mver: 8,
+      sys: {
+        'sys.battery': get().hardware.battery,
+        'sys.hour': new Date().getHours(),
+        'sys.net': 1,
+        'stat.sessions': 1,
+        'stat.today_min': 5,
+      },
+    });
+  }
+  return j;
+}
+
 export function isV3SceneId(id?: string | null): boolean {
   if (!id) return false;
   return (
@@ -694,6 +715,21 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       get().v3TouchHandler!(result, detail);
     } else {
       client?.sendTouchEvent(window.layout, result, detail);
+      const sceneId = get().selectedLesson?.id || 'FREE_TALK';
+      const j = ensureSimulatorJourneySession(get, sceneId);
+      j.append({
+        loai: 'listen',
+        scene: sceneId,
+        scene_ver: 1,
+        mver: 8,
+        step: get().directActiveIndex?.order ? `idx_${get().directActiveIndex?.order}` : 'touch',
+        mode: 'touch',
+        wait_ms: 600,
+        speech_ms: null,
+        lat_ms: 200,
+        retry: 0,
+        reply: result,
+      });
     }
     set({ lastTouch: { result, at: Date.now(), ...detail } });
   },
@@ -791,6 +827,21 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       return;
     }
     client?.send({ type: 'listen', state: 'detect', text });
+    const sceneId = get().selectedLesson?.id || 'FREE_TALK';
+    const j = ensureSimulatorJourneySession(get, sceneId);
+    j.append({
+      loai: 'listen',
+      scene: sceneId,
+      scene_ver: 1,
+      mver: 8,
+      step: get().directActiveIndex?.order ? `idx_${get().directActiveIndex?.order}` : 'chat',
+      mode: 'voice',
+      wait_ms: 400,
+      speech_ms: 1000,
+      lat_ms: 300,
+      retry: 0,
+      reply: text.trim().slice(0, 80),
+    });
   },
 
   abort: () => {
@@ -1221,20 +1272,27 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         menu: INITIAL_MENU_STATE,
       });
 
+      if (get().v3LoadSceneHandler) {
+        void get().v3LoadSceneHandler!(entry.id);
+      }
       if (get().lessonSourceMode === 'socket') {
         if (get().status === 'disconnected') {
           get().connect();
         }
         client?.abort('start_lesson');
         client?.startLesson(entry.id);
-      } else {
-        if (get().v3LoadSceneHandler) {
-          void get().v3LoadSceneHandler!(entry.id);
-        }
       }
       void get().selectLesson(entry);
       return;
     }
+    const j = ensureSimulatorJourneySession(get, entry.id);
+    j.append({
+      loai: 'step',
+      scene: entry.id,
+      scene_ver: 1,
+      mver: 8,
+      step: 'start',
+    });
     if (entry.category === 'stories') void startStory(set, get, entry);
     else if (entry.category === 'topics') void startTopic(set, get, entry);
     else void startLesson(set, get, entry);
@@ -2004,6 +2062,23 @@ export function handleMessage(set: Setter, get: Getter, message: IncomingMessage
 
   // Auto-mic: mute uplink as soon as child finishes speaking or server starts thinking
   if (message.type === 'stt') {
+    if (message.text && message.text.trim()) {
+      const sceneId = get().selectedLesson?.id || 'FREE_TALK';
+      const j = ensureSimulatorJourneySession(get, sceneId);
+      j.append({
+        loai: 'listen',
+        scene: sceneId,
+        scene_ver: 1,
+        mver: 8,
+        step: get().directActiveIndex?.order ? `idx_${get().directActiveIndex?.order}` : 'mic_turn',
+        mode: 'voice',
+        wait_ms: 500,
+        speech_ms: 1200,
+        lat_ms: 350,
+        retry: 0,
+        reply: message.text.trim().slice(0, 80),
+      });
+    }
     if (get().menu.view.screen !== 'closed') return;
     if (get().autoMic && get().micState === 'listening') {
       pauseListeningForAiTurn(set, get);

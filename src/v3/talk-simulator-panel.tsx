@@ -5,6 +5,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
+import { useV3EngineContext } from './v3-engine-context';
 
 interface TalkMessage {
   id: string;
@@ -31,7 +32,11 @@ interface TalkSessionState {
 }
 
 export const TalkSimulatorPanel: React.FC = () => {
-  const [deviceId, setDeviceId] = useState<string>('BONG_DEMO_001');
+  const { engine } = useV3EngineContext();
+  const talkSeqRef = useRef<number | null>(null);
+  const talkTurnsUsedRef = useRef<number>(0);
+
+  const [deviceId, setDeviceId] = useState<string>('simulator_v3_dev');
   const [backendUrl, setBackendUrl] = useState<string>(
     import.meta.env.VITE_BACKEND_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
   );
@@ -88,6 +93,23 @@ export const TalkSimulatorPanel: React.FC = () => {
   const handleStartTalk = async () => {
     setLoading(true);
     try {
+      const j = engine.journey();
+      const sid = j.sid || j.sessionStart({
+        channel: 'live',
+        scene: 'scene_free_talk',
+        sys: {
+          'sys.battery': 100,
+          'sys.hour': new Date().getHours(),
+          'sys.net': 1,
+          'stat.sessions': 1,
+          'stat.today_min': 5,
+        },
+      });
+      const seq = engine.reserveTalkSeq();
+      talkSeqRef.current = seq;
+      talkTurnsUsedRef.current = 0;
+      j.append({ loai: 'step', scene: 'scene_free_talk', step: 'step_1' });
+
       const formData = new FormData();
       formData.append('device_id', deviceId);
       formData.append('scene', 'scene_free_talk');
@@ -97,6 +119,10 @@ export const TalkSimulatorPanel: React.FC = () => {
       formData.append('seed', '');
       formData.append('turns', '5');
       formData.append('sec', '90');
+      formData.append('sid', sid);
+      formData.append('seq', String(seq));
+      formData.append('scene_ver', '1');
+      formData.append('mver', '1');
 
       const res = await fetch(`${backendUrl}/api/v1/device/talk/start`, {
         method: 'POST',
@@ -158,8 +184,15 @@ export const TalkSimulatorPanel: React.FC = () => {
     setInputText('');
 
     try {
+      talkTurnsUsedRef.current += 1;
       const formData = new FormData();
       formData.append('session', session.sessionId);
+      if (talkSeqRef.current != null) {
+        formData.append('sid', engine.journey().sid || '');
+        formData.append('seq', String(talkSeqRef.current));
+        formData.append('scene_ver', '1');
+        formData.append('mver', '1');
+      }
       if (audioBlob) {
         formData.append('audio', audioBlob, 'child_speech.wav');
       }
@@ -201,11 +234,29 @@ export const TalkSimulatorPanel: React.FC = () => {
       });
 
       if (data.branch === 'limit') {
+        if (talkSeqRef.current != null) {
+          engine.journeyEndTalk({
+            turns: talkTurnsUsedRef.current,
+            sec: 90,
+            topic: data.topic,
+            end: 'end:limit',
+          });
+          talkSeqRef.current = null;
+        }
         addMessage({
           role: 'system',
           text: '⏳ Đã hết thời lượng hoặc số lượt đàm thoại hôm nay. Hẹn gặp lại bé ngày mai nhé!',
         });
       } else if (data.branch === 'safety') {
+        if (talkSeqRef.current != null) {
+          engine.journeyEndTalk({
+            turns: talkTurnsUsedRef.current,
+            sec: 90,
+            topic: data.topic,
+            end: 'end:safety',
+          });
+          talkSeqRef.current = null;
+        }
         addMessage({
           role: 'system',
           text: '🛡️ Bộ lọc an toàn trẻ em (Safety Guardrail) đã kích hoạt phản hồi sư phạm an toàn.',
@@ -227,6 +278,19 @@ export const TalkSimulatorPanel: React.FC = () => {
     try {
       const formData = new FormData();
       formData.append('session', session.sessionId);
+      if (talkSeqRef.current != null) {
+        formData.append('sid', engine.journey().sid || '');
+        formData.append('seq', String(talkSeqRef.current));
+        formData.append('scene_ver', '1');
+        formData.append('mver', '1');
+        formData.append('end', 'end:finished');
+        engine.journeyEndTalk({
+          turns: talkTurnsUsedRef.current,
+          sec: 90,
+          end: 'end:finished',
+        });
+        talkSeqRef.current = null;
+      }
       await fetch(`${backendUrl}/api/v1/device/talk/end`, {
         method: 'POST',
         body: formData,

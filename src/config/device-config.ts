@@ -93,11 +93,34 @@ export function generateNewMac(): string {
   return newMac;
 }
 
+function isRemoteBrowser(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1'
+  );
+}
+
+function isLocalUrl(u?: string): boolean {
+  return Boolean(u && (u.includes('localhost') || u.includes('127.0.0.1')));
+}
+
+const PROD_OTA_URL = 'https://bong-ai-esp.bcserver.xyz/xiaozhi/ota/';
+const PROD_WS_URL = 'wss://bong-ai-esp.bcserver.xyz/xiaozhi/v1/';
+
 export const DEFAULT_CONFIG: DeviceConfig = {
-  otaUrl: import.meta.env.VITE_OTA_URL ?? 'https://bong-ai-esp.bcserver.xyz/xiaozhi/ota/',
+  otaUrl:
+    isRemoteBrowser() && isLocalUrl(import.meta.env.VITE_OTA_URL)
+      ? PROD_OTA_URL
+      : import.meta.env.VITE_OTA_URL ?? PROD_OTA_URL,
   fallbackWsUrl:
-    import.meta.env.VITE_WS_URL ?? 'wss://bong-ai-esp.bcserver.xyz/xiaozhi/v1/',
-  apiUrl: import.meta.env.VITE_API_URL ?? '',
+    isRemoteBrowser() && isLocalUrl(import.meta.env.VITE_WS_URL)
+      ? PROD_WS_URL
+      : import.meta.env.VITE_WS_URL ?? PROD_WS_URL,
+  apiUrl:
+    isRemoteBrowser() && isLocalUrl(import.meta.env.VITE_API_URL)
+      ? ''
+      : import.meta.env.VITE_API_URL ?? '',
   macAddress: getPersistentMac(),
   deviceName: 'round-badge',
   firmwareVersion: '1.0.0',
@@ -116,10 +139,30 @@ export function loadConfig(): DeviceConfig {
     const parsed = JSON.parse(raw) as Partial<DeviceConfig>;
     const macAddress = (parsed.macAddress && parsed.macAddress.trim()) || stableMac;
     const cfg: DeviceConfig = { ...DEFAULT_CONFIG, ...parsed, macAddress };
-    
+
     // Auto-migrate legacy 8085 port to 8185
     if (cfg.fallbackWsUrl && cfg.fallbackWsUrl.includes(':8085')) {
       cfg.fallbackWsUrl = cfg.fallbackWsUrl.replace(':8085', ':8185');
+    }
+
+    // Auto-heal localhost URLs when running on a remote domain (e.g. bong-ai-demo.bcserver.xyz)
+    if (isRemoteBrowser()) {
+      let healed = false;
+      if (isLocalUrl(cfg.otaUrl)) {
+        cfg.otaUrl = PROD_OTA_URL;
+        healed = true;
+      }
+      if (isLocalUrl(cfg.fallbackWsUrl)) {
+        cfg.fallbackWsUrl = PROD_WS_URL;
+        healed = true;
+      }
+      if (isLocalUrl(cfg.apiUrl)) {
+        cfg.apiUrl = '';
+        healed = true;
+      }
+      if (healed) {
+        saveConfig(cfg);
+      }
     }
     return cfg;
   } catch {

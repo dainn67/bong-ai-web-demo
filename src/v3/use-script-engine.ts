@@ -14,7 +14,7 @@ import { normalizeK7 } from './k7-normalizer';
 import { VirtualSdCard } from './virtual-sd-card';
 import { isBongEncrypted, decryptBongAsset, SimulatedDeviceSecurity } from './crypto-client';
 import { isImaAdpcmWav, decodeImaAdpcmToAudioBuffer } from './adpcm-decoder';
-import { JourneyLog } from './journey-log';
+import { JourneyLog, getSharedJourneyLog } from './journey-log';
 import {
   SAMPLE_LESSON_TEST,
   SAMPLE_TALK_SCENE,
@@ -228,8 +228,7 @@ export function useScriptEngine() {
 
   const journey = useCallback((): JourneyLog => {
     if (!journeyRef.current) {
-      journeyRef.current = new JourneyLog('simulator_v3_dev', (m) => logMessageRef.current?.(m));
-      void journeyRef.current.bootResend();
+      journeyRef.current = getSharedJourneyLog('simulator_v3_dev', (m) => logMessageRef.current?.(m));
     }
     return journeyRef.current;
   }, []);
@@ -303,13 +302,16 @@ export function useScriptEngine() {
   const loadScene = useCallback((newScene: V3Scene, startStepId?: string) => {
     stopCurrentAudioPlayback();
 
-    // Journey session boundaries (spec §1): entering START opens a session,
-    // entering END closes it before the device sleeps.
+    // Journey session boundaries (spec §1): entering START (or first active scene)
+    // opens a session, entering END closes it before the device sleeps.
     const j = journey();
-    if (newScene.id === 'START') {
+    if (newScene.id === 'START' || !j.sid) {
       const mem = memoryRef.current;
       j.sessionStart({
         channel: journeyChannelRef.current,
+        scene: newScene.id,
+        scene_ver: journeySceneVersRef.current[newScene.id] ?? 0,
+        mver: journeyMverRef.current ?? 0,
         sys: {
           'sys.battery': mem.sys.battery,
           'sys.hour': new Date().getHours(),
@@ -324,6 +326,7 @@ export function useScriptEngine() {
         `end:${startStepId || newScene.entry}`,
         Math.max(0, Math.round((Date.now() - sessionOpenedAtRef.current) / 1000)),
       );
+      sessionOpenedAtRef.current = 0;
     }
 
     setScene(newScene);
@@ -436,6 +439,14 @@ export function useScriptEngine() {
       if (!target) {
         logMessage('Kịch bản đã hoàn thành hoặc dừng lại.');
         setIsAwaitingInput(false);
+        const j = journey();
+        if (j.sid && sessionOpenedAtRef.current > 0) {
+          j.sessionEnd(
+            'end:finished',
+            Math.max(0, Math.round((Date.now() - sessionOpenedAtRef.current) / 1000)),
+          );
+          sessionOpenedAtRef.current = 0;
+        }
         return;
       }
 

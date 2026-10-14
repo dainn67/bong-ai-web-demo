@@ -104,6 +104,14 @@ export function V3EngineProvider({ children }: { children: ReactNode }) {
     }
   }, [backendManifest, engine.setManifestFiles]);
 
+  useEffect(() => {
+    const vers: Record<string, number> = {};
+    for (const s of backendManifest?.scenes || []) {
+      if (s.id && typeof s.ver === 'number') vers[s.id] = s.ver;
+    }
+    engine.setJourneyManifest(backendManifest?.ver, vers, (backendManifest as any)?.channel);
+  }, [backendManifest, engine.setJourneyManifest]);
+
   const loadSceneById = useCallback(
     async (id: string, startStepId?: string) => {
       unlockSharedAudioContext();
@@ -351,8 +359,11 @@ export function V3EngineProvider({ children }: { children: ReactNode }) {
 
   // Register input handler for voice/speech replies from TalkBar or mic
   useEffect(() => {
+    if (!engine.currentStep) {
+      setV3InputHandler(null);
+      return;
+    }
     setV3InputHandler((text: string) => {
-      if (!engine.currentStep) return;
       engine.handleInputReply(text);
     });
 
