@@ -153,21 +153,24 @@ export const SAMPLE_START_SCENE: V3Scene = {
 
 export const SAMPLE_END_SCENE: V3Scene = {
   id: 'END',
-  entry: 'finished',
+  entry: 'idle',
   screen: { base: 'orb', orb: 'sleepy', brightness: 30 },
   volume: 50,
   steps: [
     {
-      id: 'finished',
-      orb: 'sleepy',
-      audio: [{ src: 'bedtime_music' }],
-      next: 'idle',
-    },
-    {
       id: 'idle',
       orb: 'sleepy',
+      audio: [{ src: 'bedtime_music' }],
+      next: 'finished',
+    },
+    {
+      id: 'finished',
+      orb: 'sleepy',
       screen: { brightness: 10 },
-      // Sleeps here until physical button pressed
+      save: {
+        'stat.sessions': '+1',
+      },
+      // Terminal step — session_end is emitted after this step completes
     },
   ],
 };
@@ -235,7 +238,7 @@ export const SAMPLE_INLIST_SCENE: V3Scene = {
     {
       id: '6',
       orb: 'idle',
-      next: 'END#idle',
+      next: 'END#finished',
     },
   ],
 };

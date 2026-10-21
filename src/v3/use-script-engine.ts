@@ -13,6 +13,7 @@ import { evalWhen, collectKeys } from './when-expr';
 import { normalizeK7 } from './k7-normalizer';
 import { VirtualSdCard } from './virtual-sd-card';
 import { isBongEncrypted, decryptBongAsset, SimulatedDeviceSecurity } from './crypto-client';
+import { fetchDeviceBlob } from './device-contract-client';
 import { isImaAdpcmWav, decodeImaAdpcmToAudioBuffer } from './adpcm-decoder';
 import { JourneyLog, getSharedJourneyLog } from './journey-log';
 import {
@@ -321,12 +322,6 @@ export function useScriptEngine() {
         },
       });
       sessionOpenedAtRef.current = Date.now();
-    } else if (newScene.id === 'END') {
-      j.sessionEnd(
-        `end:${startStepId || newScene.entry}`,
-        Math.max(0, Math.round((Date.now() - sessionOpenedAtRef.current) / 1000)),
-      );
-      sessionOpenedAtRef.current = 0;
     }
 
     setScene(newScene);
@@ -395,11 +390,12 @@ export function useScriptEngine() {
       }
 
       // Journey `vars` snapshot — keys used by ANY `when` of this branch table.
+      const curMem = memoryRef.current;
       const varsKeys = collectKeys(step.branches.map((b) => (b as any).when));
       const vars: Record<string, unknown> = {};
       for (const k of varsKeys) {
         const dot = k.indexOf('.');
-        const space = dot > 0 ? (memory as any)[k.slice(0, dot)] : undefined;
+        const space = dot > 0 ? (curMem as any)[k.slice(0, dot)] : undefined;
         vars[k] = space ? space[k.slice(dot + 1)] ?? null : null;
       }
       if (reply !== null) vars.reply = reply;
@@ -417,7 +413,7 @@ export function useScriptEngine() {
           );
           return target;
         }
-        if (typeof when === 'string' && evalWhen(when, { reply, memory, manifestLists })) {
+        if (typeof when === 'string' && evalWhen(when, { reply, memory: curMem, manifestLists })) {
           if (branch.save) commitSave(branch.save, reply);
           const target = branch.go || branch.next || null;
           jline(
@@ -442,7 +438,7 @@ export function useScriptEngine() {
         const j = journey();
         if (j.sid && sessionOpenedAtRef.current > 0) {
           j.sessionEnd(
-            'end:finished',
+            scene?.id === 'END' ? 'end_scene' : 'end:finished',
             Math.max(0, Math.round((Date.now() - sessionOpenedAtRef.current) / 1000)),
           );
           sessionOpenedAtRef.current = 0;
@@ -513,25 +509,16 @@ export function useScriptEngine() {
           }
           if (!buf) {
             let audioUrl = aud.url;
-            if (!audioUrl && typeof srcId === 'string') {
-              if (srcId === 'voc_bong' || srcId === 'voc_bong_generic') {
-                audioUrl = '/api/v1/o/87b24c3975ea3e62b1fe6c6a2383e6253d898e69585572c95fca8b41a3b49ea1';
-              } else if (manifestFilesRef.current) {
-                const found = manifestFilesRef.current.find((f) => f.id === srcId);
-                if (found) {
-                  audioUrl = `/api/v1/o/${found.hash}`;
-                }
+            if (!audioUrl && typeof srcId === 'string' && manifestFilesRef.current) {
+              const found = manifestFilesRef.current.find((f) => f.id === srcId);
+              if (found) {
+                audioUrl = `/api/v1/o/${found.hash}`;
               }
             }
             if (audioUrl) {
               try {
-                const localUrl = audioUrl.replace(/^https?:\/\/[^/]+\/api\/v1\/o\//, '/api/v1/o/');
-                let res = await fetch(localUrl);
-                if (!res.ok && localUrl !== audioUrl) res = await fetch(audioUrl);
-                if (res.ok) {
-                  buf = await res.arrayBuffer();
-                  void VirtualSdCard.writeFile(`/sdcard/assets/audio/${srcId}`, buf);
-                }
+                buf = await fetchDeviceBlob(audioUrl);
+                void VirtualSdCard.writeFile(`/sdcard/assets/audio/${srcId}`, buf);
               } catch (e) {
                 console.warn('Could not fetch retry audio:', srcId, e);
               }
@@ -661,30 +648,16 @@ export function useScriptEngine() {
 
           if (!foundBuffer) {
             let audioUrl = aud.url;
-            if (!audioUrl && typeof srcId === 'string') {
-              if (srcId === 'voc_bong' || srcId === 'voc_bong_generic') {
-                audioUrl = '/api/v1/o/87b24c3975ea3e62b1fe6c6a2383e6253d898e69585572c95fca8b41a3b49ea1';
-              } else if (manifestFilesRef.current) {
-                const found = manifestFilesRef.current.find((f) => f.id === srcId);
-                if (found) {
-                  audioUrl = `/api/v1/o/${found.hash}`;
-                }
+            if (!audioUrl && typeof srcId === 'string' && manifestFilesRef.current) {
+              const found = manifestFilesRef.current.find((f) => f.id === srcId);
+              if (found) {
+                audioUrl = `/api/v1/o/${found.hash}`;
               }
             }
             if (audioUrl) {
               try {
-                const localUrl = audioUrl.replace(
-                  /^https?:\/\/[^/]+\/api\/v1\/o\//,
-                  '/api/v1/o/'
-                );
-                let res = await fetch(localUrl);
-                if (!res.ok && localUrl !== audioUrl) {
-                  res = await fetch(audioUrl);
-                }
-                if (res.ok) {
-                  foundBuffer = await res.arrayBuffer();
-                  void VirtualSdCard.writeFile(`/sdcard/assets/audio/${srcId}`, foundBuffer);
-                }
+                foundBuffer = await fetchDeviceBlob(audioUrl);
+                void VirtualSdCard.writeFile(`/sdcard/assets/audio/${srcId}`, foundBuffer);
               } catch (e) {
                 console.warn('Could not fetch audio buffer for', srcId, e);
               }
@@ -757,6 +730,48 @@ export function useScriptEngine() {
     };
   }, [currentStep, stepRunSeq, evaluateBranches, logMessage, transitionToStep, jline, journey]);
 
+  const applyListenHandoff = useCallback(
+    (seed: string) => {
+      if (!seed) return;
+      logMessage(`🔀 [Listen Handoff] Lưu seed câu hỏi của bé: "${seed}"`);
+      const nextMem: MemorySpaces = {
+        ...memoryRef.current,
+        tmp: { ...memoryRef.current.tmp, seed },
+        sys: {
+          ...memoryRef.current.sys,
+          handoff_seed: seed,
+          last_utterance: seed,
+        },
+      };
+      memoryRef.current = nextMem;
+      setMemory(nextMem);
+    },
+    [logMessage],
+  );
+
+  const applyTalkHandoff = useCallback(
+    (handoff: { kind?: string; seed?: string }, fallbackBranchReply?: string) => {
+      if (handoff.seed) {
+        logMessage(`🔀 [Talk Handoff] Lưu seed câu hỏi của bé: "${handoff.seed}"`);
+        const nextMem: MemorySpaces = {
+          ...memoryRef.current,
+          tmp: { ...memoryRef.current.tmp, seed: handoff.seed },
+          sys: {
+            ...memoryRef.current.sys,
+            handoff_seed: handoff.seed,
+            last_utterance: handoff.seed,
+          },
+        };
+        memoryRef.current = nextMem;
+        setMemory(nextMem);
+      }
+      if (fallbackBranchReply) {
+        handleInputReply(fallbackBranchReply);
+      }
+    },
+    [handleInputReply, logMessage],
+  );
+
   const jumpToStep = useCallback((stepId: string) => {
     stopCurrentAudioPlayback();
     setCurrentStepId(stepId);
@@ -783,6 +798,8 @@ export function useScriptEngine() {
     setManifestFiles,
     loadScene,
     handleInputReply,
+    applyListenHandoff,
+    applyTalkHandoff,
     jumpToStep,
     registerExternalSceneLoader,
     journey,

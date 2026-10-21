@@ -255,6 +255,23 @@ forever. Every frame in both directions is logged.
 Tests cover the pure logic — frame parsing, URL building, the face state
 machine. They run in Node with no DOM, so the whole suite is near-instant.
 
+## V3 Offline-First Script Engine & Simulator Parity
+
+`src/v3/` implements the Phase-1/2/3 V3 Offline-First Script Engine and Device Contract client:
+
+- **Device Contract Client (`src/v3/device-contract-client.ts`)**:
+  - `GET /api/v1/device/manifest?device_id=...&caps=bong&fw=1.0.18`: fetches channel-isolated manifest, BONG encrypted blob twin hashes, and RFC 3394 `AES-KW` wrapped `keys.content_key`.
+  - `POST /api/v1/device/listen`: sends multipart `clip` + resolved prompt/options and receives `{ reply, transcript, handoff, diagnostics, error }`.
+  - `POST /api/v1/device/talk/start`, `/talk/turn`, `/talk/end`: drives multi-turn scripted Talk (`MAGIC_BOOK`, `TALK_DEMO`) with `handoff.target` / `handoff.seed` and idempotent `/talk/end`.
+  - `POST /api/v1/device/sync`: flushes compact `JourneyLog` lines with single-flight mutex and `ack_seq` pruning.
+- **2-Tier Key Security (`src/v3/crypto-client.ts`)**:
+  - Unwraps 80-hex `keys.content_key` using per-device 64-hex `k_dev` (`KEY_0`) via Web Crypto `'AES-KW'`.
+  - Holds unwrapped 32-byte `K_content` in volatile memory only (never persisted in plaintext to `localStorage`).
+- **Staging-First Atomic Virtual SD Card (`src/v3/virtual-sd-card.ts`)**:
+  - Downloads and verifies all scene and file blobs in memory staging before committing to `/sdcard/scenes/{id}.json`, `/sdcard/assets/audio/{id}`, and `/sdcard/assets/{id}`.
+- **Canonical E2E Acceptance Runner (`src/v3/e2e-runner.ts`)**:
+  - Verifies `START -> HAHA -> MAGIC_BOOK -> HAHA#praise -> END#finished` end-to-end with Listen/Talk handoffs and single-`session_end` guarantee.
+
 ## Status
 
 Working: OTA handshake, WebSocket with `hello`, heartbeat, backoff reconnect,

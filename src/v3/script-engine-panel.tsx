@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useV3EngineContext } from './v3-engine-context';
-import { validateV3Scene } from './script-parser';
+import { validateV3Scene, resolvePlaceholders } from './script-parser';
 import {
   SAMPLE_LESSON_TEST,
   SAMPLE_TALK_SCENE,
@@ -29,6 +29,20 @@ import type { SdFileInfo, SdStorageStats } from './virtual-sd-card';
 import { type LessonSummary } from '../lessons/catalog';
 import { DEFAULT_V3_CATALOG } from '../store/simulator-store';
 import { convertMetadataToV3Scene } from './metadata-converter';
+import {
+  fetchDeviceBlob,
+  fetchDeviceKey,
+  fetchDeviceManifest,
+  fetchJsonUrl,
+  postDeviceListen,
+  postDeviceTalkEnd,
+  postDeviceTalkStart,
+  postDeviceTalkTurn,
+  postJourneyPreview,
+} from './device-contract-client';
+import { getCapabilityMatrix } from './capability-matrix';
+import { runCanonicalStartHahaMagicBookE2E, type E2ERunReport } from './e2e-runner';
+import { TalkSimulatorPanel } from './talk-simulator-panel';
 
 const GD1_QUICK_SCENES = [
   {
@@ -107,6 +121,8 @@ export const ScriptEnginePanel: React.FC = () => {
       setManifestLists,
       loadScene,
       handleInputReply,
+      applyListenHandoff,
+      applyTalkHandoff,
       jumpToStep,
       journey,
       jline,
@@ -122,7 +138,9 @@ export const ScriptEnginePanel: React.FC = () => {
 
   const setStoreCatalog = useSimulatorStore((state) => state.setCatalog);
 
-  const [activeTab, setActiveTab] = useState<'steps' | 'memory' | 'logs' | 'manifest' | 'security' | 'sdcard'>('steps');
+  const [activeTab, setActiveTab] = useState<'steps' | 'memory' | 'logs' | 'manifest' | 'security' | 'sdcard' | 'matrix' | 'freetalk'>('steps');
+  const [e2eReport, setE2eReport] = useState<E2ERunReport | null>(null);
+  const [isRunningE2E, setIsRunningE2E] = useState(false);
   const [testSpeechText, setTestSpeechText] = useState('cat');
   const [isCallingBackend, setIsCallingBackend] = useState(false);
   const [backendListenResult, setBackendListenResult] = useState<any>(null);
@@ -194,7 +212,7 @@ export const ScriptEnginePanel: React.FC = () => {
   const [isSyncingLogs, setIsSyncingLogs] = useState(false);
   const [syncLogsResult, setSyncLogsResult] = useState<string | null>(null);
 
-  // Load cached manifest on mount + silent auto-fetch if backend available
+  // Load cached manifest on mount (single mount fetch lives in V3EngineProvider)
   useEffect(() => {
     void (async () => {
       const cached = await VirtualSdCard.loadManifestCache();
@@ -219,37 +237,6 @@ export const ScriptEnginePanel: React.FC = () => {
             }))
           );
         }
-      }
-      try {
-        const res = await fetch('/api/v1/device/manifest?device_id=simulator_v3_dev');
-        if (res.ok) {
-          const data: V3DeviceManifest = await res.json();
-          setBackendManifest(data);
-          await VirtualSdCard.saveManifestCache(data);
-          if (data.prompts) await VirtualSdCard.savePromptsCache(data.prompts);
-          if (data.cfg) await VirtualSdCard.saveConfigCache(data.cfg);
-          if (data.scenes && data.scenes.length > 0) {
-            setStoreCatalog(
-              data.scenes.map((s) => ({
-                id: s.id,
-                title:
-                  s.id === 'START'
-                    ? 'Bắt đầu (START)'
-                    : s.id === 'END'
-                    ? 'Kết thúc (END)'
-                    : s.id === 'UNIT_TEST_DAY_03_01'
-                    ? 'Bài học kiểm thử GĐ3'
-                    : `Kịch bản ${s.id}`,
-                description: `Kịch bản phát hành v${s.ver}${s.pin ? ' (Core)' : ''}`,
-                category: 'learning',
-                metadataUrl: '',
-                coverUrl: null,
-              }))
-            );
-          }
-        }
-      } catch {
-        // offline fallback
       }
     })();
   }, [setStoreCatalog]);
@@ -286,19 +273,14 @@ export const ScriptEnginePanel: React.FC = () => {
     setManifestError(null);
     setActiveTab('manifest');
     try {
-      const res = await fetch('/api/v1/device/manifest?device_id=simulator_v3_dev');
-      if (res.ok) {
-        const data: V3DeviceManifest = await res.json();
-        setBackendManifest(data);
-        await VirtualSdCard.saveManifestCache(data);
-        if (data.prompts) {
-          await VirtualSdCard.savePromptsCache(data.prompts);
-        }
-        if (data.cfg) {
-          await VirtualSdCard.saveConfigCache(data.cfg);
-        }
-      } else {
-        setManifestError(`Backend returned ${res.status}: ${res.statusText}`);
+      const data = await fetchDeviceManifest({ deviceId: 'simulator_v3_dev' });
+      setBackendManifest(data);
+      setStoredContentKey(SimulatedDeviceSecurity.getStoredContentKey());
+      if (data.prompts) {
+        await VirtualSdCard.savePromptsCache(data.prompts);
+      }
+      if (data.cfg) {
+        await VirtualSdCard.saveConfigCache(data.cfg);
       }
     } catch (err: any) {
       setManifestError(`Không thể kết nối Backend (port 8000): ${err.message}`);
@@ -367,14 +349,8 @@ export const ScriptEnginePanel: React.FC = () => {
     setIsFetchingKey(true);
     setCryptoError(null);
     try {
-      const res = await fetch('/api/v1/device/key?device_id=simulator_v3_dev');
-      if (res.ok) {
-        const data = await res.json();
-        SimulatedDeviceSecurity.saveWrappedContentKey(data.key_alias, data.key_version, data.key_bytes);
-        setStoredContentKey(SimulatedDeviceSecurity.getStoredContentKey());
-      } else {
-        setCryptoError(`Backend returned ${res.status}: ${res.statusText}`);
-      }
+      await fetchDeviceKey({ deviceId: 'simulator_v3_dev' });
+      setStoredContentKey(SimulatedDeviceSecurity.getStoredContentKey());
     } catch (err: any) {
       setCryptoError(`Không thể kết nối Backend (port 8000): ${err.message}`);
     } finally {
@@ -472,9 +448,8 @@ export const ScriptEnginePanel: React.FC = () => {
   const refreshCatalogAndSd = useCallback(async () => {
     try {
       let items: LessonSummary[] = [];
-      const res = await fetch('/api/v1/device/manifest?device_id=simulator_v3_dev');
-      if (res.ok) {
-        const data = await res.json();
+      try {
+        const data = await fetchDeviceManifest({ deviceId: 'simulator_v3_dev' });
         setBackendManifest(data);
         items = (data.scenes || []).map((s: any) => ({
           id: s.id,
@@ -496,6 +471,8 @@ export const ScriptEnginePanel: React.FC = () => {
           metadataUrl: s.hash ? `/api/v1/o/${s.hash}` : '',
           coverUrl: null,
         }));
+      } catch {
+        // fallback to DEFAULT_V3_CATALOG below
       }
       if (items.length === 0) {
         items = DEFAULT_V3_CATALOG;
@@ -557,11 +534,9 @@ export const ScriptEnginePanel: React.FC = () => {
       try {
         setDownloadNotice(`⏳ Đang tải kịch bản "${id}" từ Blob Store Backend...`);
         const baseClean = '/api/v1';
-        let blobBase = backendManifest?.blob_base ? backendManifest.blob_base.replace(/\/$/, '') : `${baseClean}/o`;
-        blobBase = blobBase.replace(/^https?:\/\/[^/]+\/api\/v1\/o/, '/api/v1/o');
-        const res = await fetch(`${blobBase}/${manifestScene.hash}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        const rawBytes = new Uint8Array(await res.arrayBuffer());
+        const blobBase = backendManifest?.blob_base ? backendManifest.blob_base.replace(/\/$/, '') : `${baseClean}/o`;
+        const rawBuf = await fetchDeviceBlob(manifestScene.hash, blobBase);
+        const rawBytes = new Uint8Array(rawBuf);
         let plainBytes = rawBytes;
         if (isBongEncrypted(rawBytes)) {
           const key = SimulatedDeviceSecurity.getStoredContentKey();
@@ -577,28 +552,6 @@ export const ScriptEnginePanel: React.FC = () => {
       } catch (err: any) {
         setDownloadNotice(`❌ Lỗi tải blob kịch bản từ Backend: ${err?.message || err}`);
         return;
-      }
-    }
-
-    // Direct fallback for production scenes
-    const PROD_HASHES: Record<string, string> = {
-      HAHA: '73e18d0c6d97fab9f190a3872b9e37fe3fe577f2e77708a6c69de3e79cede89b',
-      START: 'ec77180aa18b7e4f8a455f73fa43ae3b27c7ebcb61c85defd73e54f231bf3434',
-      END: 'd0a9e736acfaae8f16222d5fdbaa0dd8bdc22e9445a61a07d16baa3ef71c29e9',
-    };
-    if (PROD_HASHES[id]) {
-      try {
-        setDownloadNotice(`⏳ Đang tải kịch bản "${id}" từ Backend...`);
-        const res = await fetch(`/api/v1/o/${PROD_HASHES[id]}`);
-        if (res.ok) {
-          const text = await res.text();
-          const parsed = JSON.parse(text) as V3Scene;
-          loadScene(parsed);
-          setDownloadNotice(`☁️ Đã nạp kịch bản chuẩn "${id}" từ Backend.`);
-          return;
-        }
-      } catch (err: any) {
-        console.warn('Direct load failed:', err);
       }
     }
 
@@ -635,9 +588,7 @@ export const ScriptEnginePanel: React.FC = () => {
     const metaUrl = item?.metadataUrl || `/cdn/lessions/${id}/metadata.json`;
     try {
       setDownloadNotice(`⏳ Đang tải kịch bản...`);
-      const res = await fetch(metaUrl);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const rawMeta = await res.json();
+      const rawMeta = await fetchJsonUrl(metaUrl);
       const v3Scene = rawMeta.steps ? rawMeta : convertMetadataToV3Scene(id, item?.title || id, rawMeta);
       loadScene(v3Scene);
       setDownloadNotice(`☁️ Đã nạp kịch bản. Bấm "Tải về Thẻ SD" để lưu offline.`);
@@ -655,27 +606,24 @@ export const ScriptEnginePanel: React.FC = () => {
       // 1. Fetch Key (best-effort)
       let activeKeyBase64 = storedContentKey?.rawKeyBase64;
       try {
-        const keyRes = await fetch('/api/v1/device/key?device_id=simulator_v3_dev');
-        if (keyRes.ok) {
-          const keyData = await keyRes.json();
-          SimulatedDeviceSecurity.saveWrappedContentKey(keyData.key_alias, keyData.key_version, keyData.key_bytes);
-          setStoredContentKey(SimulatedDeviceSecurity.getStoredContentKey());
-          activeKeyBase64 = keyData.key_bytes;
-        }
+        await fetchDeviceKey({ deviceId: 'simulator_v3_dev' });
+        const latestKey = SimulatedDeviceSecurity.getStoredContentKey();
+        setStoredContentKey(latestKey);
+        activeKeyBase64 = latestKey?.rawKeyBase64;
       } catch {
         // ignore key fetch
       }
 
       // 2. Fetch Manifest
-      const res = await fetch('/api/v1/device/manifest?device_id=simulator_v3_dev');
-      if (!res.ok) throw new Error(`Backend HTTP ${res.status}: ${res.statusText}`);
-      const manifestData: V3DeviceManifest = await res.json();
+      const manifestData = await fetchDeviceManifest({ deviceId: 'simulator_v3_dev' });
       setBackendManifest(manifestData);
-      await VirtualSdCard.saveManifestCache(manifestData);
-      if (manifestData.prompts) await VirtualSdCard.savePromptsCache(manifestData.prompts);
-      if (manifestData.cfg) await VirtualSdCard.saveConfigCache(manifestData.cfg);
+      const unwrappedKey = SimulatedDeviceSecurity.getStoredContentKey();
+      if (unwrappedKey) {
+        setStoredContentKey(unwrappedKey);
+        activeKeyBase64 = unwrappedKey.rawKeyBase64;
+      }
 
-      // 3. Sync all scene blobs into SD Card
+      // 3. Sync all scene blobs into SD Card (commits manifest.json atomically last)
       setOneClickSyncMessage({ type: 'info', text: '📥 Đang đồng bộ kịch bản và assets vào Thẻ SD ảo...' });
       const syncRes = await VirtualSdCard.syncFromManifest(
         manifestData,
@@ -703,30 +651,12 @@ export const ScriptEnginePanel: React.FC = () => {
     setIsSyncingLogs(true);
     setSyncLogsResult(null);
     try {
-      // v3.1: journey lines flush via the outbox (packet seq, ack prune).
+      // v3.1: journey lines flush via the single outbox authority (packet seq, ack prune).
       const j = journey();
       const jr = await j.flush();
-      let msg = jr.ok
-        ? `✅ Journey: pending=${j.pendingCount} (đã gửi hết)`
+      const msg = jr.ok
+        ? `✅ Journey: pending=${j.pendingCount} (ack_seq: ${jr.ack_seq ?? 0})`
         : `❌ Journey sync lỗi: ${jr.http || jr.error}`;
-
-      // Legacy deviceLogs path — kept for regression comparison.
-      if (deviceLogs.length > 0) {
-        const res = await fetch('/api/v1/device/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            device_id: 'simulator_v3_dev',
-            logs: deviceLogs,
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          msg += ` | ✅ Legacy: ${deviceLogs.length} logs (ack_seq: ${data.ack_seq})`;
-        } else {
-          msg += ` | ❌ Legacy HTTP ${res.status}`;
-        }
-      }
       setSyncLogsResult(msg);
     } catch (err: any) {
       setSyncLogsResult(`❌ Lỗi kết nối: ${err.message}`);
@@ -760,16 +690,11 @@ export const ScriptEnginePanel: React.FC = () => {
       chi_tiet: previewDetailsRef.current,
     };
     try {
-      const res = await fetch('/api/journeys/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
+      const res = await postJourneyPreview(payload);
       if (res.ok) {
-        setSyncLogsResult(`✅ Preview đã lưu: ${pvSid} (${data.dong} dòng)`);
+        setSyncLogsResult(`✅ Preview đã lưu: ${pvSid} (${res.data.dong} dòng)`);
       } else {
-        setSyncLogsResult(`❌ Preview lỗi ${res.status}: ${data.loi || JSON.stringify(data)}`);
+        setSyncLogsResult(`❌ Preview lỗi ${res.status}: ${res.data.loi || JSON.stringify(res.data)}`);
       }
     } catch (err: any) {
       setSyncLogsResult(`❌ Preview lỗi mạng: ${err.message}`);
@@ -801,11 +726,9 @@ export const ScriptEnginePanel: React.FC = () => {
       const manifestScene = backendManifest?.scenes?.find((s) => s.id === selectedLessonId);
       if (manifestScene) {
         const baseClean = '/api/v1';
-        let blobBase = backendManifest?.blob_base ? backendManifest.blob_base.replace(/\/$/, '') : `${baseClean}/o`;
-        blobBase = blobBase.replace(/^https?:\/\/[^/]+\/api\/v1\/o/, '/api/v1/o');
-        const res = await fetch(`${blobBase}/${manifestScene.hash}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status} tải blob scene ${manifestScene.hash}`);
-        const rawBytes = new Uint8Array(await res.arrayBuffer());
+        const blobBase = backendManifest?.blob_base ? backendManifest.blob_base.replace(/\/$/, '') : `${baseClean}/o`;
+        const rawBuf = await fetchDeviceBlob(manifestScene.hash, blobBase);
+        const rawBytes = new Uint8Array(rawBuf);
         let plainBytes = rawBytes;
         if (isBongEncrypted(rawBytes)) {
           plainBytes = new Uint8Array(await decryptBongAsset(rawBytes, keyBase64));
@@ -831,9 +754,7 @@ export const ScriptEnginePanel: React.FC = () => {
       // DB lesson
       const item = catalog.find((c) => c.id === selectedLessonId);
       const metaUrl = item?.metadataUrl || `/cdn/lessions/${selectedLessonId}/metadata.json`;
-      const res = await fetch(metaUrl);
-      if (!res.ok) throw new Error(`Không thể lấy metadata: HTTP ${res.status}`);
-      const rawMeta = await res.json();
+      const rawMeta = await fetchJsonUrl(metaUrl);
 
       const syncResult = await VirtualSdCard.syncLessonToSdCard(
         selectedLessonId,
@@ -890,29 +811,30 @@ export const ScriptEnginePanel: React.FC = () => {
     setIsSyncingSd(true);
     try {
       // 1. Fetch Key
-      const keyRes = await fetch('/api/v1/device/key?device_id=simulator_v3_dev');
       let activeKeyBase64 = storedContentKey?.rawKeyBase64;
-      if (keyRes.ok) {
-        const keyData = await keyRes.json();
-        SimulatedDeviceSecurity.saveWrappedContentKey(keyData.key_alias, keyData.key_version, keyData.key_bytes);
-        setStoredContentKey(SimulatedDeviceSecurity.getStoredContentKey());
-        activeKeyBase64 = keyData.key_bytes;
+      try {
+        await fetchDeviceKey({ deviceId: 'simulator_v3_dev' });
+        const latestKey = SimulatedDeviceSecurity.getStoredContentKey();
+        setStoredContentKey(latestKey);
+        activeKeyBase64 = latestKey?.rawKeyBase64;
+      } catch {
+        // ignore key fetch
       }
 
       // 2. Fetch Manifest
-      const manRes = await fetch('/api/v1/device/manifest?device_id=simulator_v3_dev');
-      if (manRes.ok) {
-        const manData = await manRes.json();
-        setBackendManifest(manData);
-
-        // Pre-save manifest scenes & blobs
-        await VirtualSdCard.syncFromManifest(manData, '/api/v1', activeKeyBase64);
-        await refreshSdStats();
-        await refreshCatalogAndSd();
-        alert(`Đồng bộ thành công! Thẻ nhớ SD ảo đã cập nhật bài học & blobs cho Manifest v${manData.ver}.`);
-      } else {
-        alert(`Lỗi Backend: ${manRes.statusText}`);
+      const manData = await fetchDeviceManifest({ deviceId: 'simulator_v3_dev' });
+      setBackendManifest(manData);
+      const unwrappedKey = SimulatedDeviceSecurity.getStoredContentKey();
+      if (unwrappedKey) {
+        setStoredContentKey(unwrappedKey);
+        activeKeyBase64 = unwrappedKey.rawKeyBase64;
       }
+
+      // Pre-save manifest scenes & blobs
+      await VirtualSdCard.syncFromManifest(manData, '/api/v1', activeKeyBase64);
+      await refreshSdStats();
+      await refreshCatalogAndSd();
+      alert(`Đồng bộ thành công! Thẻ nhớ SD ảo đã cập nhật bài học & blobs cho Manifest v${manData.ver}.`);
     } catch (err: any) {
       alert(`Không thể kết nối Backend (port 8000): ${err.message}`);
     } finally {
@@ -1019,42 +941,43 @@ export const ScriptEnginePanel: React.FC = () => {
         resolvedPrompt = `Phân loại: "{transcript}"\n{options}`.replace('{options}', optionsText);
       }
 
-      formData.append('prompt', resolvedPrompt);
-      formData.append('audio', blob, 'test.wav');
-
-      // Call Backend API
-      const res = await fetch('/api/v1/device/listen', {
-        method: 'POST',
-        body: formData,
+      // Call Backend API via DeviceContractClient
+      const data = await postDeviceListen({
+        deviceId: 'simulator_v3_dev',
+        scene: scene?.id || 'UNKNOWN',
+        step: currentStep.id,
+        mode: 'voice',
+        prompt: resolvedPrompt,
+        options: currentStep.listen.voice.options || [],
+        clip: blob,
+        sid: j.sid || undefined,
+        seq: reqSeq,
+        lan: reqLan,
+        sceneVer: reqSceneVer,
+        mver: backendManifest?.ver,
       });
-
-      if (res.ok) {
-        const data = await res.json();
-        setBackendListenResult(data);
-        // Keep the chi_tiet for the Preview submit (v3.1).
-        previewDetailsRef.current.push({
-          seq: reqSeq,
-          lan: reqLan,
-          audio: await blobToBase64(blob),
-          transcript: data.transcript || '',
-          prompt: resolvedPrompt,
-          option_names: optionNames,
-          llm_raw: data.reply,
-        });
-        // K7: device normalizes raw LLM text, then matches option names.
-        const norm = normalizeReply(data.reply || '');
-        const optNames = optionNames;
-        const finalReply =
-          norm === 'silent' || norm === 'error' || norm === 'unclear' || optNames.includes(norm)
-            ? norm
-            : 'other';
-        handleInputReply(finalReply);
-      } else {
-        // Fallback simulate locally if backend STT unavailable
-        jline({ loai: 'error', code: 'http', where: 'listen', msg: String(res.status) });
-        setBackendListenResult({ reply: optionOrText, local_fallback: true });
-        handleInputReply(optionOrText);
+      setBackendListenResult(data as any);
+      if (data.handoff?.seed) {
+        applyListenHandoff(data.handoff.seed);
       }
+      // Keep the chi_tiet for the Preview submit (v3.1).
+      previewDetailsRef.current.push({
+        seq: reqSeq,
+        lan: reqLan,
+        audio: await blobToBase64(blob),
+        transcript: data.transcript || '',
+        prompt: resolvedPrompt,
+        option_names: optionNames,
+        llm_raw: data.reply,
+      });
+      // K7: device normalizes raw LLM text, then matches option names.
+      const norm = normalizeReply(data.reply || '');
+      const optNames = optionNames;
+      const finalReply =
+        norm === 'silent' || norm === 'error' || norm === 'unclear' || optNames.includes(norm)
+          ? norm
+          : 'other';
+      handleInputReply(finalReply);
     } catch (e) {
       // Local fallback
       jline({ loai: 'error', code: 'net', where: 'listen', msg: String(e) });
@@ -1065,26 +988,6 @@ export const ScriptEnginePanel: React.FC = () => {
     }
   };
 
-  // --- Talk session helpers (B7–B11) ---
-  const talkPost = async (path: string, fd: FormData) => {
-    const res = await fetch(`/api/v1/device/talk/${path}`, {
-      method: 'POST',
-      body: fd,
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json();
-  };
-
-  /** Journey fields shared by all /talk/* calls of the current step (D18). */
-  const talkJourneyFields = (fd: FormData) => {
-    const j = journey();
-    if (j.sid) fd.append('sid', j.sid);
-    if (talkSeqRef.current != null) fd.append('seq', String(talkSeqRef.current));
-    const sv = backendManifest?.scenes?.find((s) => s.id === scene?.id)?.ver;
-    if (sv !== undefined) fd.append('scene_ver', String(sv));
-    if (backendManifest?.ver !== undefined) fd.append('mver', String(backendManifest.ver));
-  };
-
   const handleTalkStart = async () => {
     const talk = currentStep?.talk;
     if (!talk) return;
@@ -1093,20 +996,27 @@ export const ScriptEnginePanel: React.FC = () => {
     // the engine hook; fall back to a fresh reservation for manual starts.
     if (talkSeqRef.current == null) reserveTalkSeq();
     try {
-      const fd = new FormData();
-      fd.append('device_id', 'simulator_v3_dev');
-      fd.append('scene', scene?.id || '');
-      fd.append('step', currentStep!.id);
-      fd.append('voice', talk.voice);
-      fd.append('prompt', resolveTalkPrompt(talk.prompt || ''));
-      fd.append('seed', talk.seed || '');
-      fd.append('turns', String(talk.turns));
-      fd.append('sec', String(talk.sec));
-      talkJourneyFields(fd);
-      const data = await talkPost('start', fd);
-      setTalkSessionId(data.session);
+      const j = journey();
+      const sv = backendManifest?.scenes?.find((s) => s.id === scene?.id)?.ver;
+      const expandedSeed = resolvePlaceholders(talk.seed || '', memory);
+      const data = await postDeviceTalkStart({
+        deviceId: 'simulator_v3_dev',
+        scene: scene?.id || '',
+        step: currentStep!.id,
+        voice: talk.voice,
+        prompt: resolveTalkPrompt(talk.prompt || ''),
+        seed: expandedSeed,
+        options: talk.options || [],
+        turns: talk.turns,
+        sec: talk.sec,
+        sid: j.sid || undefined,
+        seq: talkSeqRef.current ?? undefined,
+        sceneVer: sv,
+        mver: backendManifest?.ver,
+      });
+      setTalkSessionId(data.session ?? null);
       setTalkTurnsLeft((currentStep!.talk?.turns ?? 0) - 1);
-      setTalkLog((l) => [...l, `[start] session=${data.session} branch=${data.branch}`]);
+      setTalkLog((l) => [...l, `[start] session=${data.session} branch=${data.branch} seed="${expandedSeed}"`]);
       if (data.branch && data.branch !== 'continue' && data.branch !== 'silent') {
         handleInputReply(data.branch);
       }
@@ -1133,16 +1043,55 @@ export const ScriptEnginePanel: React.FC = () => {
     setIsCallingBackend(true);
     try {
       const { blob } = micBlob ? { blob: micBlob } : await captureMicClip();
-      const fd = new FormData();
-      fd.append('session', talkSessionId);
-      fd.append('audio', blob, 'turn.wav');
-      talkJourneyFields(fd);
-      const data = await talkPost('turn', fd);
-      setTalkTurnsLeft((t) => Math.max(0, t - 1));
-      setTalkLog((l) => [...l, `[turn] branch=${data.branch} topic=${data.topic || '-'} said="${saidText}"`]);
+      const j = journey();
+      const sv = backendManifest?.scenes?.find((s) => s.id === scene?.id)?.ver;
+      const data = await postDeviceTalkTurn({
+        session: talkSessionId,
+        clip: blob,
+        sid: j.sid || undefined,
+        seq: talkSeqRef.current ?? undefined,
+        sceneVer: sv,
+        mver: backendManifest?.ver,
+      });
+      const nextTurnsLeft = Math.max(0, talkTurnsLeft - 1);
+      setTalkTurnsLeft(nextTurnsLeft);
+      setTalkLog((l) => [
+        ...l,
+        `[turn] branch=${data.branch} topic=${data.topic || '-'} said="${data.transcript || saidText}"${
+          data.handoff?.seed ? ` handoff="${data.handoff.seed}"` : ''
+        }`,
+      ]);
       if (data.branch !== 'continue' && data.branch !== 'silent') {
+        const activeSess = talkSessionId;
+        const talk = currentStep?.talk;
         setTalkSessionId(null);
-        handleInputReply(data.branch);
+        try {
+          await postDeviceTalkEnd({
+            session: activeSess,
+            end: `branch:${data.branch}`,
+            sid: j.sid || undefined,
+            seq: talkSeqRef.current ?? undefined,
+            sceneVer: sv,
+            mver: backendManifest?.ver,
+          });
+        } catch {
+          // best-effort
+        }
+        if (talkSeqRef.current != null) {
+          journeyEndTalk({
+            turns: (talk?.turns ?? 0) - nextTurnsLeft,
+            sec: talk?.sec ?? 0,
+            topic: data.topic,
+            end: `branch:${data.branch}`,
+          });
+        }
+        if (data.handoff?.seed) {
+          applyTalkHandoff(data.handoff, data.branch);
+        } else {
+          handleInputReply(data.branch);
+        }
+      } else if (data.handoff?.seed) {
+        applyTalkHandoff(data.handoff);
       }
     } catch (err: any) {
       setTalkLog((l) => [...l, `[turn] lỗi: ${err.message} → branch "error"`]);
@@ -1156,12 +1105,17 @@ export const ScriptEnginePanel: React.FC = () => {
   const handleTalkEnd = async () => {
     if (!talkSessionId) return;
     const talk = currentStep?.talk;
+    const j = journey();
+    const sv = backendManifest?.scenes?.find((s) => s.id === scene?.id)?.ver;
     try {
-      const fd = new FormData();
-      fd.append('session', talkSessionId);
-      talkJourneyFields(fd);
-      fd.append('end', 'end:finished');
-      await talkPost('end', fd);
+      await postDeviceTalkEnd({
+        session: talkSessionId,
+        end: 'end:finished',
+        sid: j.sid || undefined,
+        seq: talkSeqRef.current ?? undefined,
+        sceneVer: sv,
+        mver: backendManifest?.ver,
+      });
       setTalkLog((l) => [...l, '[end] session closed']);
     } catch {
       // best-effort
@@ -2373,6 +2327,24 @@ export const ScriptEnginePanel: React.FC = () => {
             {sdStats.fileCount}
           </span>
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('matrix')}
+          className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+            activeTab === 'matrix' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <span>✅ Capability &amp; E2E</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('freetalk')}
+          className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+            activeTab === 'freetalk' ? 'bg-fuchsia-600 text-white' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <span>🎙️ Free Talk Sandbox</span>
+        </button>
       </div>
 
       {/* 4. Tab 1: Steps List & Flow */}
@@ -3175,12 +3147,9 @@ export const ScriptEnginePanel: React.FC = () => {
                   for (const item of targets) {
                     try {
                       if (!item.metadataUrl) continue;
-                      const res = await fetch(item.metadataUrl);
-                      if (res.ok) {
-                        const raw = await res.json();
-                        await VirtualSdCard.syncLessonToSdCard(item.id, item.title, raw, keyBase64, keyVer);
-                        syncCount++;
-                      }
+                      const raw = await fetchJsonUrl(item.metadataUrl);
+                      await VirtualSdCard.syncLessonToSdCard(item.id, item.title, raw, keyBase64, keyVer);
+                      syncCount++;
                     } catch {
                       // skip failed item
                     }
@@ -3320,6 +3289,128 @@ export const ScriptEnginePanel: React.FC = () => {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* 4. Tab 7: 3-Column Capability Matrix & E2E Acceptance Runner */}
+      {activeTab === 'matrix' && (() => {
+        const capMatrix = getCapabilityMatrix({
+          hasManifest: Boolean(backendManifest),
+          hasUnwrappedKey: Boolean(SimulatedDeviceSecurity.getActiveContentKeyBytes()),
+          sdSceneCount: syncedSceneIds.size,
+          pendingJourneyLines: journey().pendingCount,
+        });
+        return (
+          <div className="flex flex-col gap-3.5 p-4 bg-slate-950 rounded-xl border border-emerald-500/30 overflow-y-auto max-h-[500px]">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800">
+              <div>
+                <h3 className="text-xs font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>✅</span> Ma Trận Năng Lực 3 Cột &amp; Nghiệm Thu E2E (START → HAHA → MAGIC_BOOK → END)
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Phân tách rõ Firmware Truth, Simulator Parity và Dev Harness Only theo kiến trúc V3.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={isRunningE2E}
+                onClick={async () => {
+                  setIsRunningE2E(true);
+                  try {
+                    const rep = await runCanonicalStartHahaMagicBookE2E({ mode: 'mock' });
+                    setE2eReport(rep);
+                  } finally {
+                    setIsRunningE2E(false);
+                  }
+                }}
+                className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-sm transition disabled:opacity-50"
+              >
+                {isRunningE2E ? '⏳ Đang chạy E2E...' : '🚀 Chạy E2E START → HAHA → MAGIC_BOOK → END'}
+              </button>
+            </div>
+
+            {e2eReport && (
+              <div
+                className={`p-3 rounded-xl border text-xs font-mono flex flex-col gap-1.5 ${
+                  e2eReport.passed
+                    ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200'
+                    : 'bg-rose-950/60 border-rose-500/50 text-rose-200'
+                }`}
+              >
+                <div className="font-bold flex items-center justify-between">
+                  <span>
+                    {e2eReport.passed ? '🎉 E2E ACCEPTANCE PASSED' : '❌ E2E ACCEPTANCE FAILED'}
+                  </span>
+                  <span>
+                    end_events={e2eReport.endEventsCount} (by={e2eReport.endReason || 'n/a'})
+                  </span>
+                </div>
+                <div>Chuỗi bước: {e2eReport.visitedSteps.join(' → ')}</div>
+                <div>
+                  Listen Reply: <span className="text-emerald-300">{e2eReport.listenReply || '-'}</span> | Listen Handoff Seed:{' '}
+                  <span className="text-amber-300">{e2eReport.listenHandoffSeed || '-'}</span> | Talk Branch:{' '}
+                  <span className="text-indigo-300">{e2eReport.talkBranch || '-'}</span>
+                </div>
+                {e2eReport.error && <div className="text-rose-300">Lỗi: {e2eReport.error}</div>}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+              <div className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 flex flex-col gap-2">
+                <div className="font-black text-indigo-300 uppercase tracking-wider text-[11px]">
+                  1. Firmware Truth (ESP32)
+                </div>
+                {capMatrix.firmwareTruth.map((item) => (
+                  <div key={item.id} className="p-2 bg-slate-950 rounded-lg border border-slate-800/80">
+                    <div className="font-bold text-slate-200">{item.title}</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">{item.desc}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-3 bg-slate-900/90 rounded-xl border border-emerald-500/30 flex flex-col gap-2">
+                <div className="font-black text-emerald-300 uppercase tracking-wider text-[11px]">
+                  2. Simulator Parity (Shared Contract)
+                </div>
+                {capMatrix.simulatorParity.map((item) => (
+                  <div key={item.id} className="p-2 bg-slate-950 rounded-lg border border-slate-800/80">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-200">{item.title}</span>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${
+                          item.status === 'ready'
+                            ? 'bg-emerald-500/20 text-emerald-300'
+                            : 'bg-amber-500/20 text-amber-300'
+                        }`}
+                      >
+                        {item.status}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">{item.desc}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-3 bg-slate-900/90 rounded-xl border border-amber-500/30 flex flex-col gap-2">
+                <div className="font-black text-amber-300 uppercase tracking-wider text-[11px]">
+                  3. Dev Harness Only (Browser)
+                </div>
+                {capMatrix.devHarnessOnly.map((item) => (
+                  <div key={item.id} className="p-2 bg-slate-950 rounded-lg border border-slate-800/80">
+                    <div className="font-bold text-slate-200">{item.title}</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">{item.desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 4. Tab 8: Embedded Free Talk Sandbox */}
+      {activeTab === 'freetalk' && (
+        <div className="min-h-[480px]">
+          <TalkSimulatorPanel />
         </div>
       )}
         </div>

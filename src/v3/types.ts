@@ -133,6 +133,7 @@ export interface MemorySpaces {
     time: string;
     battery: number;
     first_run: boolean;
+    handoff_seed?: string;
     last_utterance?: string;
     sleep_gap?: number;
     plan?: string;
@@ -200,6 +201,7 @@ export interface V3DeviceManifest {
   ver: number;
   key_version?: number | null;
   key_alias?: string | null;
+  keys?: { content_key?: string } | null;
   blob_base?: string | null;
   cfg: DeviceManifestConfig;
   profile: DeviceManifestProfile;
@@ -210,20 +212,56 @@ export interface V3DeviceManifest {
   lists?: Record<string, Array<{ value: string; say?: string[] }>>;
 }
 
-/** /listen response — raw LLM reply + transcript (no match/confidence). */
+export interface ListenHandoffPayload {
+  kind: 'question' | 'topic' | string;
+  seed: string;
+  source_transcript?: string;
+}
+
+export interface TalkHandoffPayload {
+  kind?: 'question' | string;
+  seed: string;
+  source_transcript?: string;
+}
+
+export interface V3DiagnosticsPayload {
+  stt_ms?: number | null;
+  llm_ms?: number | null;
+  tts_ms?: number | null;
+  provider?: string | null;
+  model?: string | null;
+  fallback?: boolean | null;
+}
+
+export interface V3ErrorPayload {
+  stage: 'stt' | 'llm' | 'tts' | 'session' | 'safety' | string;
+  code: string;
+  detail?: string | null;
+  retriable?: boolean;
+}
+
+/** /listen response — raw LLM reply + transcript + optional handoff/diagnostics/error. */
 export interface ListenResponse {
   reply: string;
   transcript?: string;
+  handoff?: ListenHandoffPayload;
+  diagnostics?: V3DiagnosticsPayload;
+  error?: V3ErrorPayload;
 }
 
 /** /talk/start + /talk/turn response. */
 export interface TalkResponse {
-  audio: string; // base64 MP3
+  audio: string; // base64 WAV/MP3
   branch: string; // continue|<option>|limit|safety|error|silent
   topic?: string;
   tts_left?: number;
   sync_hint?: boolean;
   session?: string;
+  transcript?: string;
+  assistant_text?: string;
+  handoff?: TalkHandoffPayload;
+  diagnostics?: V3DiagnosticsPayload;
+  error?: V3ErrorPayload;
 }
 
 /** One device log line (2.2.6) — no `match`, `retried` instead of `attempt`. */

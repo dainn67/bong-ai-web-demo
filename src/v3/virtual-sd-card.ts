@@ -6,7 +6,8 @@
  * Provides full offline persistence when internet/WiFi is disconnected.
  */
 
-import { decryptBongAsset, encryptBongAsset, isBongEncrypted } from './crypto-client';
+import { decryptBongAsset, encryptBongAsset, isBongEncrypted, SimulatedDeviceSecurity } from './crypto-client';
+import { fetchDeviceBlob } from './device-contract-client';
 import { SAMPLE_LESSON_TEST, SAMPLE_START_SCENE, SAMPLE_END_SCENE } from './sample-scenes';
 import { convertMetadataToV3Scene } from './metadata-converter';
 import type { V3DeviceManifest } from './types';
@@ -523,7 +524,8 @@ export class VirtualSdCard {
 
   /**
    * Fully syncs scenes, assets, prompts, cfg and profile from a V3DeviceManifest into the Virtual SD Card.
-   * Downloads blobs directly from /api/v1/o/<hash> (or manifest.blob_base).
+   * Downloads blobs into memory staging first and commits atomically to `/sdcard/scenes/*`,
+   * `/sdcard/assets/audio/*`, and `/sdcard/assets/*` only when `errors.length === 0`.
    */
   public static async syncFromManifest(
     manifest: V3DeviceManifest,
@@ -532,17 +534,85 @@ export class VirtualSdCard {
     onProgress?: (msg: string) => void
   ): Promise<{ syncedScenes: number; syncedFiles: number; errors: string[] }> {
     const errors: string[] = [];
+    const stagedBlobs: Array<{ hash: string; bytes: Uint8Array; mime: string }> = [];
+    const stagedWrites: Array<{ path: string; bytes: Uint8Array; mime: string }> = [];
     let syncedScenes = 0;
     let syncedFiles = 0;
 
     const baseClean = apiBase.replace(/\/$/, '');
     let blobBase = manifest.blob_base ? manifest.blob_base.replace(/\/$/, '') : `${baseClean}/o`;
     blobBase = blobBase.replace(/^https?:\/\/[^/]+\/api\/v1\/o/, '/api/v1/o');
-    const fetchFn = typeof window !== 'undefined' && window.fetch ? window.fetch : globalThis.fetch;
+    const resolvedKeyBase64 = activeKeyBase64 || SimulatedDeviceSecurity.getActiveContentKeyBase64() || undefined;
 
     onProgress?.(`Bắt đầu đồng bộ Manifest v${manifest.ver}...`);
 
-    // 1. Cache manifest, prompts, config, profile
+    // 1. Download and stage all Scene blobs
+    const scenes = manifest.scenes || [];
+    for (let i = 0; i < scenes.length; i++) {
+      const sc = scenes[i];
+      onProgress?.(`Tải kịch bản ${sc.id} (${i + 1}/${scenes.length})...`);
+      try {
+        const blobUrl = `${blobBase}/${sc.hash}`;
+        const rawBytes = new Uint8Array(await fetchDeviceBlob(blobUrl));
+
+        let plainBytes: Uint8Array = rawBytes;
+        if (isBongEncrypted(rawBytes)) {
+          if (resolvedKeyBase64) {
+            plainBytes = new Uint8Array(await decryptBongAsset(rawBytes, resolvedKeyBase64));
+          } else {
+            throw new Error(`Kịch bản ${sc.id} bị mã hóa nhưng chưa có activeKey`);
+          }
+        }
+
+        // Validate JSON
+        const text = new TextDecoder().decode(plainBytes);
+        JSON.parse(text);
+
+        stagedBlobs.push({ hash: sc.hash, bytes: rawBytes, mime: 'application/json' });
+        stagedWrites.push({ path: `/sdcard/scenes/${sc.id}.json`, bytes: plainBytes, mime: 'application/json' });
+        syncedScenes++;
+      } catch (err: any) {
+        errors.push(`Scene ${sc.id}: ${err?.message || err}`);
+      }
+    }
+
+    // 2. Download and stage all File assets
+    const files = manifest.files || [];
+    for (let i = 0; i < files.length; i++) {
+      const fl = files[i];
+      onProgress?.(`Tải asset ${fl.id} (${i + 1}/${files.length})...`);
+      try {
+        const blobUrl = `${blobBase}/${fl.hash}`;
+        const rawBytes = new Uint8Array(await fetchDeviceBlob(blobUrl));
+
+        let plainBytes: Uint8Array = rawBytes;
+        if (isBongEncrypted(rawBytes) && resolvedKeyBase64) {
+          plainBytes = new Uint8Array(await decryptBongAsset(rawBytes, resolvedKeyBase64));
+        }
+
+        const mime = fl.kind === 'audio' ? 'audio/wav' : 'application/octet-stream';
+        stagedBlobs.push({ hash: fl.hash, bytes: rawBytes, mime });
+        stagedWrites.push({ path: `/sdcard/assets/${fl.id}`, bytes: plainBytes, mime });
+        if (fl.kind === 'audio') {
+          stagedWrites.push({ path: `/sdcard/assets/audio/${fl.id}`, bytes: plainBytes, mime });
+        }
+        syncedFiles++;
+      } catch (err: any) {
+        errors.push(`File ${fl.id}: ${err?.message || err}`);
+      }
+    }
+
+    // 3. Atomic commit only when all downloads/validations succeeded
+    if (errors.length > 0) {
+      return { syncedScenes: 0, syncedFiles: 0, errors };
+    }
+
+    for (const b of stagedBlobs) {
+      await this.writeBlob(b.hash, b.bytes, b.mime);
+    }
+    for (const w of stagedWrites) {
+      await this.writeFile(w.path, w.bytes, w.mime);
+    }
     await this.saveManifestCache(manifest);
     if (manifest.prompts) {
       await this.savePromptsCache(manifest.prompts);
@@ -556,67 +626,6 @@ export class VirtualSdCard {
         new TextEncoder().encode(JSON.stringify(manifest.profile, null, 2)),
         'application/json'
       );
-    }
-
-    // 2. Download and write all Scene blobs
-    const scenes = manifest.scenes || [];
-    for (let i = 0; i < scenes.length; i++) {
-      const sc = scenes[i];
-      onProgress?.(`Tải kịch bản ${sc.id} (${i + 1}/${scenes.length})...`);
-      try {
-        const blobUrl = `${blobBase}/${sc.hash}`;
-        const resp = await fetchFn(blobUrl);
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status} tải blob scene ${sc.id} (${sc.hash})`);
-        }
-        const arrayBuf = await resp.arrayBuffer();
-        const rawBytes = new Uint8Array(arrayBuf);
-
-        // Store raw blob
-        await this.writeBlob(sc.hash, rawBytes, 'application/json');
-
-        // Parse and save as /sdcard/scenes/{id}.json
-        let plainBytes = rawBytes;
-        if (isBongEncrypted(rawBytes)) {
-          if (activeKeyBase64) {
-            plainBytes = new Uint8Array(await decryptBongAsset(rawBytes, activeKeyBase64));
-          } else {
-            throw new Error(`Kịch bản ${sc.id} bị mã hóa nhưng chưa có activeKey`);
-          }
-        }
-
-        // Validate JSON
-        const text = new TextDecoder().decode(plainBytes);
-        JSON.parse(text); // verify valid json
-
-        await this.writeFile(`/sdcard/scenes/${sc.id}.json`, plainBytes, 'application/json');
-        syncedScenes++;
-      } catch (err: any) {
-        errors.push(`Scene ${sc.id}: ${err?.message || err}`);
-      }
-    }
-
-    // 3. Download and write all File assets
-    const files = manifest.files || [];
-    for (let i = 0; i < files.length; i++) {
-      const fl = files[i];
-      onProgress?.(`Tải asset ${fl.id} (${i + 1}/${files.length})...`);
-      try {
-        const blobUrl = `${blobBase}/${fl.hash}`;
-        const resp = await fetchFn(blobUrl);
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status} tải asset ${fl.id} (${fl.hash})`);
-        }
-        const arrayBuf = await resp.arrayBuffer();
-        const rawBytes = new Uint8Array(arrayBuf);
-
-        // Store by hash and by file ID path
-        await this.writeBlob(fl.hash, rawBytes, fl.kind === 'audio' ? 'audio/wav' : 'application/octet-stream');
-        await this.writeFile(`/sdcard/assets/${fl.id}`, rawBytes, fl.kind === 'audio' ? 'audio/wav' : 'application/octet-stream');
-        syncedFiles++;
-      } catch (err: any) {
-        errors.push(`File ${fl.id}: ${err?.message || err}`);
-      }
     }
 
     onProgress?.(`Đồng bộ hoàn tất: ${syncedScenes} kịch bản, ${syncedFiles} assets.`);

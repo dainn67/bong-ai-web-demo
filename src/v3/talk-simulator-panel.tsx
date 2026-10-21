@@ -6,6 +6,11 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useV3EngineContext } from './v3-engine-context';
+import {
+  postDeviceTalkEnd,
+  postDeviceTalkStart,
+  postDeviceTalkTurn,
+} from './device-contract-client';
 
 interface TalkMessage {
   id: string;
@@ -13,6 +18,8 @@ interface TalkMessage {
   text: string;
   branch?: string;
   topic?: string;
+  handoffTarget?: string;
+  diagnosticsText?: string;
   audioBase64?: string;
   timestamp: string;
 }
@@ -110,39 +117,30 @@ export const TalkSimulatorPanel: React.FC = () => {
       talkTurnsUsedRef.current = 0;
       j.append({ loai: 'step', scene: 'scene_free_talk', step: 'step_1' });
 
-      const formData = new FormData();
-      formData.append('device_id', deviceId);
-      formData.append('scene', 'scene_free_talk');
-      formData.append('step', 'step_1');
-      formData.append('voice', 'Chị HN');
-      formData.append('prompt', 'Chào bé! Hôm nay ở trường hay ở nhà có điều gì vui kể cho Bống nghe với?');
-      formData.append('seed', '');
-      formData.append('turns', '5');
-      formData.append('sec', '90');
-      formData.append('sid', sid);
-      formData.append('seq', String(seq));
-      formData.append('scene_ver', '1');
-      formData.append('mver', '1');
-
-      const res = await fetch(`${backendUrl}/api/v1/device/talk/start`, {
-        method: 'POST',
-        body: formData,
+      const data = await postDeviceTalkStart({
+        deviceId,
+        scene: 'scene_free_talk',
+        step: 'step_1',
+        voice: 'Chị HN',
+        prompt: 'Chào bé! Hôm nay ở trường hay ở nhà có điều gì vui kể cho Bống nghe với?',
+        seed: '',
+        turns: 5,
+        sec: 90,
+        sid,
+        seq,
+        sceneVer: 1,
+        mver: 1,
+        baseUrl: backendUrl,
       });
-
-      if (!res.ok) {
-        throw new Error(`Lỗi kết nối Talk API (${res.status})`);
-      }
-
-      const data = await res.json();
-      const sessionId = data.session || data.session_id;
+      const sessionId = data.session || null;
       setSession({
         sessionId,
         turnsLeft: 5,
-        ttsLeftSec: data.tts_left > 0 ? data.tts_left : 90,
+        ttsLeftSec: (data.tts_left ?? 0) > 0 ? (data.tts_left ?? 90) : 90,
         currentBranch: data.branch || 'continue',
         currentTopic: data.topic || null,
-        todaySummary: data.today_memory || '',
-        reviewSlots: data.review_slots || {},
+        todaySummary: '',
+        reviewSlots: {},
       });
 
       setMessages([
@@ -156,9 +154,17 @@ export const TalkSimulatorPanel: React.FC = () => {
 
       addMessage({
         role: 'assistant',
-        text: data.topic ? `[Chủ đề: ${data.topic}] Bống sẵn sàng lắng nghe câu chuyện của bé!` : 'Bống đang lắng nghe bé nói nè!',
+        text:
+          data.assistant_text ||
+          (data.topic
+            ? `[Chủ đề: ${data.topic}] Bống sẵn sàng lắng nghe câu chuyện của bé!`
+            : 'Bống đang lắng nghe bé nói nè!'),
         branch: data.branch,
         topic: data.topic,
+        handoffTarget: data.handoff?.seed,
+        diagnosticsText: data.diagnostics?.provider
+          ? `${data.diagnostics.provider}/${data.diagnostics.model || ''} (${data.diagnostics.llm_ms ?? 0}ms)`
+          : undefined,
         audioBase64: data.audio,
       });
     } catch (err: any) {
@@ -185,51 +191,42 @@ export const TalkSimulatorPanel: React.FC = () => {
 
     try {
       talkTurnsUsedRef.current += 1;
-      const formData = new FormData();
-      formData.append('session', session.sessionId);
-      if (talkSeqRef.current != null) {
-        formData.append('sid', engine.journey().sid || '');
-        formData.append('seq', String(talkSeqRef.current));
-        formData.append('scene_ver', '1');
-        formData.append('mver', '1');
-      }
-      if (audioBlob) {
-        formData.append('audio', audioBlob, 'child_speech.wav');
-      }
-      if (childSpeech) {
-        formData.append('text', childSpeech);
-        const dummyWav = new Uint8Array([
-          0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45,
-          0x66, 0x6d, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
-          0x80, 0x3e, 0x00, 0x00, 0x00, 0x7d, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00,
-          0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x00, 0x00,
-        ]);
-        formData.append('clip', new Blob([dummyWav], { type: 'audio/wav' }), 'clip.wav');
-      }
-
-      const res = await fetch(`${backendUrl}/api/v1/device/talk/turn`, {
-        method: 'POST',
-        body: formData,
+      const dummyWav = new Uint8Array([
+        0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45,
+        0x66, 0x6d, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+        0x80, 0x3e, 0x00, 0x00, 0x00, 0x7d, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00,
+        0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x00, 0x00,
+      ]);
+      const clipToSend = audioBlob || new Blob([dummyWav], { type: 'audio/wav' });
+      const data = await postDeviceTalkTurn({
+        session: session.sessionId,
+        clip: clipToSend,
+        textHint: childSpeech || undefined,
+        sid: talkSeqRef.current != null ? engine.journey().sid || undefined : undefined,
+        seq: talkSeqRef.current ?? undefined,
+        sceneVer: 1,
+        mver: 1,
+        baseUrl: backendUrl,
       });
-
-      if (!res.ok) {
-        throw new Error(`Turn thất bại (${res.status})`);
-      }
-
-      const data = await res.json();
       setSession((prev) => ({
         ...prev,
         turnsLeft: Math.max(0, prev.turnsLeft - 1),
-        ttsLeftSec: data.tts_left > 0 ? data.tts_left : prev.ttsLeftSec,
+        ttsLeftSec: (data.tts_left ?? 0) > 0 ? (data.tts_left ?? prev.ttsLeftSec) : prev.ttsLeftSec,
         currentBranch: data.branch || prev.currentBranch,
         currentTopic: data.topic || prev.currentTopic,
       }));
 
       addMessage({
         role: 'assistant',
-        text: data.topic ? `[${data.topic}] Bống trả lời:` : '(Bống mỉm cười và trả lời)',
+        text:
+          data.assistant_text ||
+          (data.topic ? `[${data.topic}] Bống trả lời:` : '(Bống mỉm cười và trả lời)'),
         branch: data.branch,
         topic: data.topic,
+        handoffTarget: data.handoff?.seed,
+        diagnosticsText: data.diagnostics?.provider
+          ? `${data.diagnostics.provider}/${data.diagnostics.model || ''} (${data.diagnostics.llm_ms ?? 0}ms)`
+          : undefined,
         audioBase64: data.audio,
       });
 
@@ -276,14 +273,8 @@ export const TalkSimulatorPanel: React.FC = () => {
     if (!session.sessionId) return;
     setLoading(true);
     try {
-      const formData = new FormData();
-      formData.append('session', session.sessionId);
+      const endSeq = talkSeqRef.current;
       if (talkSeqRef.current != null) {
-        formData.append('sid', engine.journey().sid || '');
-        formData.append('seq', String(talkSeqRef.current));
-        formData.append('scene_ver', '1');
-        formData.append('mver', '1');
-        formData.append('end', 'end:finished');
         engine.journeyEndTalk({
           turns: talkTurnsUsedRef.current,
           sec: 90,
@@ -291,9 +282,14 @@ export const TalkSimulatorPanel: React.FC = () => {
         });
         talkSeqRef.current = null;
       }
-      await fetch(`${backendUrl}/api/v1/device/talk/end`, {
-        method: 'POST',
-        body: formData,
+      await postDeviceTalkEnd({
+        session: session.sessionId,
+        end: 'end:finished',
+        sid: endSeq != null ? engine.journey().sid || undefined : undefined,
+        seq: endSeq ?? undefined,
+        sceneVer: 1,
+        mver: 1,
+        baseUrl: backendUrl,
       });
       addMessage({
         role: 'system',

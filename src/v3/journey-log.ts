@@ -102,19 +102,47 @@ export function getSharedJourneyLog(deviceId = 'simulator_v3_dev', onLog?: (msg:
   return _sharedJourney;
 }
 
+export interface JourneyLogOptions {
+  deviceId?: string;
+  endpoint?: string;
+  storage?: Storage | null;
+  fetchImpl?: typeof fetch;
+  onLog?: (msg: string) => void;
+}
+
 export class JourneyLog {
   readonly deviceId: string;
   sid: string | null = null;
+  private endedSid: string | null = null;
   private lineSeq = 0;
+  private startedAtSec = 0;
   private outbox: OutboxEntry[];
-  private flushing = false;
+  private currentSessionLines: JourneyLine[] = [];
+  private flushPromise: Promise<SyncResult> | null = null;
   private onLog?: (msg: string) => void;
   private flushTimer: any = null;
+  private defaultEndpoint = '/api/v1/device/sync';
+  private fetchFn: typeof fetch = (...args) => fetch(...args);
+  private usePersistentStorage = true;
+  private localPacketSeq = 0;
 
-  constructor(deviceId: string, onLog?: (msg: string) => void) {
-    this.deviceId = deviceId;
-    this.onLog = onLog;
-    this.outbox = loadOutbox();
+  constructor(deviceIdOrOpts: string | JourneyLogOptions = 'simulator_v3_dev', onLog?: (msg: string) => void) {
+    if (typeof deviceIdOrOpts === 'string') {
+      this.deviceId = deviceIdOrOpts;
+      this.onLog = onLog;
+      this.outbox = loadOutbox();
+    } else {
+      this.deviceId = deviceIdOrOpts.deviceId || 'simulator_v3_dev';
+      this.onLog = deviceIdOrOpts.onLog || onLog;
+      if (deviceIdOrOpts.endpoint) this.defaultEndpoint = deviceIdOrOpts.endpoint;
+      if (deviceIdOrOpts.fetchImpl) this.fetchFn = deviceIdOrOpts.fetchImpl;
+      if (deviceIdOrOpts.storage === null) {
+        this.usePersistentStorage = false;
+        this.outbox = [];
+      } else {
+        this.outbox = loadOutbox();
+      }
+    }
   }
 
   setLogger(onLog: (msg: string) => void): void {
@@ -136,6 +164,10 @@ export class JourneyLog {
   }
 
   private nextPacketSeq(): number {
+    if (!this.usePersistentStorage) {
+      this.localPacketSeq += 1;
+      return this.localPacketSeq;
+    }
     const cur = Number(_ls.getItem(PACKET_SEQ_KEY) || '0') + 1;
     _ls.setItem(PACKET_SEQ_KEY, String(cur));
     return cur;
@@ -148,14 +180,46 @@ export class JourneyLog {
     // by 1s per collision (cheap for the simulator; firmware adds a nonce).
     while (this.sid === `${this.deviceId}-${epoch}`) epoch += 1;
     this.sid = `${this.deviceId}-${epoch}`;
+    this.endedSid = null;
     this.lineSeq = 0;
-    _ls.setItem(SID_KEY, this.sid);
-    this.append({ loai: 'session_start', ...extra });
+    this.startedAtSec = epoch;
+    this.currentSessionLines = [];
+    if (this.usePersistentStorage) {
+      _ls.setItem(SID_KEY, this.sid);
+    }
+    this.append({ loai: 'session_start', ev: 'start', ...extra });
     return this.sid;
   }
 
-  sessionEnd(reason: string, dur_s: number, extra: Record<string, unknown> = {}): void {
-    this.append({ loai: 'session_end', reason, dur_s, ...extra });
+  /** Emit `session_end` at most once per `sid` (prevents duplicate END#finished -> END#idle end lines). */
+  sessionEnd(reason: string, dur_s = 0, extra: Record<string, unknown> = {}): void {
+    const activeSid = this.sid || this.endedSid;
+    if (!activeSid || this.endedSid === activeSid) return;
+    this.endedSid = activeSid;
+    const computedDur = dur_s > 0 ? dur_s : Math.max(0, Math.floor(Date.now() / 1000) - this.startedAtSec);
+    this.append({
+      loai: 'session_end',
+      ev: 'end',
+      reason,
+      by: reason,
+      dur_s: computedDur,
+      dur: computedDur,
+      ...extra,
+    });
+  }
+
+  /** Convenience helper for compact step lines (`sc`, `st`, `go`, `m`, `ans`, ...). */
+  step(fields: Record<string, unknown>): JourneyLine {
+    return this.append({
+      loai: (fields.m === 'voice' || fields.m === 'hear' || fields.m === 'touch' || fields.m === 'pet'
+        ? 'listen'
+        : fields.m === 'talk'
+        ? 'talk'
+        : 'step') as string,
+      scene: (fields.sc || fields.scene) as string,
+      step: (fields.st || fields.step) as string,
+      ...fields,
+    });
   }
 
   /**
@@ -177,16 +241,19 @@ export class JourneyLog {
       this.lineSeq = line.seq;
     }
     this.outbox.push({ line: full, pkt: null });
-    this.saveSd(full);
-    this.persist();
-    if (full.loai === 'session_end' || this.outbox.length >= FLUSH_AT) {
-      if (this.flushTimer) {
-        clearTimeout(this.flushTimer);
-        this.flushTimer = null;
+    this.currentSessionLines.push(full);
+    if (this.usePersistentStorage) {
+      this.saveSd(full);
+      this.persist();
+      if (full.loai === 'session_end' || this.outbox.length >= FLUSH_AT) {
+        if (this.flushTimer) {
+          clearTimeout(this.flushTimer);
+          this.flushTimer = null;
+        }
+        void this.flush();
+      } else {
+        this.scheduleDebouncedFlush();
       }
-      void this.flush();
-    } else {
-      this.scheduleDebouncedFlush();
     }
     return full;
   }
@@ -196,44 +263,55 @@ export class JourneyLog {
     return this.lineSeq + 1;
   }
 
-  /** Flush pending lines, chunked ≤1500, ordered by insert order. */
-  async flush(syncUrl = '/api/v1/device/sync'): Promise<SyncResult> {
+  /** Flush pending lines, chunked ≤1500, ordered by insert order. Concurrent calls share the active promise. */
+  async flush(syncUrl = this.defaultEndpoint): Promise<SyncResult> {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
-    if (this.flushing) return { ok: true };
-    this.flushing = true;
-    try {
-      while (this.outbox.length > 0) {
-        const batch = this.outbox.slice(0, CHUNK);
-        const pkt = this.nextPacketSeq();
-        const res = await fetch(syncUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            device_id: this.deviceId,
-            seq: pkt,
-            logs: batch.map((e) => e.line),
-          }),
-        });
-        if (!res.ok) {
-          return { ok: false, http: res.status };
+    if (this.flushPromise) return this.flushPromise;
+    if (this.outbox.length === 0) return { ok: true };
+    const run = async (): Promise<SyncResult> => {
+      try {
+        let lastAck = 0;
+        while (this.outbox.length > 0) {
+          const batch = this.outbox.slice(0, CHUNK);
+          const pkt = this.nextPacketSeq();
+          const res = await this.fetchFn(syncUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              device_id: this.deviceId,
+              seq: pkt,
+              logs: batch.map((e) => e.line),
+            }),
+          });
+          if (!res.ok) {
+            return { ok: false, http: res.status };
+          }
+          const data = await res.json().catch(() => ({}));
+          const ack = typeof data.ack_seq === 'number' ? data.ack_seq : pkt;
+          lastAck = ack;
+          if (ack < pkt) {
+            return { ok: false, http: res.status, error: `ack_seq ${ack} < pkt ${pkt}` };
+          }
+          // Mark the batch with its packet seq, then prune everything the BE
+          // cumulatively acked (pkt ≤ ack_seq covers retries too).
+          batch.forEach((e) => { e.pkt = pkt; });
+          this.outbox = this.outbox.filter((e) => e.pkt === null || e.pkt > ack);
+          if (this.usePersistentStorage) {
+            this.persist();
+          }
         }
-        const data = await res.json().catch(() => ({}));
-        const ack = typeof data.ack_seq === 'number' ? data.ack_seq : pkt;
-        // Mark the batch with its packet seq, then prune everything the BE
-        // cumulatively acked (pkt ≤ ack_seq covers retries too).
-        batch.forEach((e) => { e.pkt = pkt; });
-        this.outbox = this.outbox.filter((e) => e.pkt === null || e.pkt > ack);
-        this.persist();
+        return { ok: true, ack_seq: lastAck };
+      } catch (err: unknown) {
+        return { ok: false, error: String(err) };
+      } finally {
+        this.flushPromise = null;
       }
-      return { ok: true };
-    } catch (err: unknown) {
-      return { ok: false, error: String(err) };
-    } finally {
-      this.flushing = false;
-    }
+    };
+    this.flushPromise = run();
+    return this.flushPromise;
   }
 
   /** Boot-time resend — call once on engine init. */
@@ -241,10 +319,11 @@ export class JourneyLog {
     return this.outbox.length ? this.flush() : null;
   }
 
-  /** All lines of the current session (for the Preview submit). */
+  /** All lines of the current session (for the Preview submit and E2E verification). */
   sessionLines(): JourneyLine[] {
     if (!this.sid) return [];
-    return this.outbox.map((e) => e.line).filter((l) => l.sid === this.sid);
+    const fromOutbox = this.outbox.map((e) => e.line).filter((l) => l.sid === this.sid);
+    return fromOutbox.length >= this.currentSessionLines.length ? fromOutbox : [...this.currentSessionLines];
   }
 
   private persist(): void {

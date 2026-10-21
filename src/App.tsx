@@ -5,7 +5,6 @@ import { TalkBar } from './dev/talk-bar';
 import { DevDrawer } from './dev/dev-drawer';
 import { QrPairingModal } from './dev/qr-pairing-modal';
 import { ScriptEnginePanel } from './v3/script-engine-panel';
-import { TalkSimulatorPanel } from './v3/talk-simulator-panel';
 import { V3EngineProvider } from './v3/v3-engine-context';
 import { useSimulatorStore } from './store/simulator-store';
 import { fetchProfile, hasStoredSession, type Account } from './api/auth-client';
@@ -32,8 +31,6 @@ function AppContent() {
   const [qaModalOpen, setQaModalOpen] = useState(false);
   const showLessonPanel = useSimulatorStore((state) => state.showLessonPanel);
   const setShowLessonPanel = useSimulatorStore((state) => state.setShowLessonPanel);
-  const lessonEngineType = useSimulatorStore((state) => state.lessonEngineType);
-  const setLessonEngineType = useSimulatorStore((state) => state.setLessonEngineType);
   const setLoginOpen = useSimulatorStore((state) => state.setLoginModalOpen);
 
   useEffect(() => {
@@ -80,28 +77,9 @@ function AppContent() {
           <div className="flex-1 min-w-0">
             <div className="mb-3 flex items-center justify-between">
               <div className="flex items-center gap-1.5 p-1 bg-cream-200/80 rounded-xl text-xs font-bold border border-cream-300">
-                <button
-                  type="button"
-                  onClick={() => setLessonEngineType('v3')}
-                  className={`rounded-lg px-3.5 py-1.5 transition ${
-                    lessonEngineType !== 'talk_v3'
-                      ? 'bg-indigo-600 text-white shadow-sm font-black'
-                      : 'text-ink-600 hover:text-ink-900'
-                  }`}
-                >
-                  ⚡ Kịch bản Bống v3 (Offline-First)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLessonEngineType('talk_v3')}
-                  className={`rounded-lg px-3.5 py-1.5 transition ${
-                    lessonEngineType === 'talk_v3'
-                      ? 'bg-amber-500 text-slate-950 font-black shadow-sm'
-                      : 'text-ink-600 hover:text-ink-900'
-                  }`}
-                >
-                  🎙️ Đàm thoại tự do Free Talk v3
-                </button>
+                <span className="rounded-lg px-3.5 py-1.5 bg-indigo-600 text-white shadow-sm font-black">
+                  ⚡ Kịch bản Bống v3 (Offline-First &amp; Scripted Talk)
+                </span>
               </div>
 
               <button
@@ -114,41 +92,11 @@ function AppContent() {
               </button>
             </div>
 
-            {lessonEngineType === 'talk_v3' ? (
-              <TalkSimulatorPanel />
-            ) : (
-              <ScriptEnginePanel />
-            )}
+            <ScriptEnginePanel />
           </div>
         </div>
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-12">
-          {/* Main Mode Switcher: Offline Lesson vs. Free Talk with Xiaozhi AI */}
-          <div className="flex items-center gap-1.5 p-1 bg-cream-200/90 rounded-2xl text-xs font-bold border border-cream-300 shadow-xs">
-            <button
-              type="button"
-              onClick={() => setLessonEngineType('v3')}
-              className={`rounded-xl px-4 py-1.5 transition ${
-                lessonEngineType !== 'talk_v3'
-                  ? 'bg-indigo-600 text-white shadow-sm font-black'
-                  : 'text-ink-600 hover:text-ink-900'
-              }`}
-            >
-              ⚡ Kịch bản Bống v3 (Offline)
-            </button>
-            <button
-              type="button"
-              onClick={() => setLessonEngineType('talk_v3')}
-              className={`rounded-xl px-4 py-1.5 transition ${
-                lessonEngineType === 'talk_v3'
-                  ? 'bg-gradient-to-r from-amber-500 to-coral-500 text-white font-black shadow-sm'
-                  : 'text-ink-600 hover:text-ink-900'
-              }`}
-            >
-              🎙️ Trò Chuyện Tự Do (Xiaozhi AI)
-            </button>
-          </div>
-
           <RoundScreen />
           <BongBubble />
           <TalkBar />

@@ -24,6 +24,11 @@ import {
   decryptBongAsset,
   isBongEncrypted,
 } from './crypto-client';
+import {
+  fetchDeviceBlob,
+  fetchDeviceManifest,
+  fetchJsonUrl,
+} from './device-contract-client';
 import { useSimulatorStore } from '../store/simulator-store';
 import { parseTouchLayout, type TouchLayoutType } from '../screen/touch-layout';
 import { isEafUrl } from '../screen/eaf-view';
@@ -142,49 +147,25 @@ export function V3EngineProvider({ children }: { children: ReactNode }) {
       if (manifestScene) {
         try {
           const baseClean = '/api/v1';
-          let blobBase = backendManifest?.blob_base
+          const blobBase = backendManifest?.blob_base
             ? backendManifest.blob_base.replace(/\/$/, '')
             : `${baseClean}/o`;
-          blobBase = blobBase.replace(/^https?:\/\/[^/]+\/api\/v1\/o/, '/api/v1/o');
-          const res = await fetch(`${blobBase}/${manifestScene.hash}`);
-          if (res.ok) {
-            const rawBytes = new Uint8Array(await res.arrayBuffer());
-            let plainBytes = rawBytes;
-            if (isBongEncrypted(rawBytes)) {
-              const key = SimulatedDeviceSecurity.getStoredContentKey();
-              if (key) {
-                plainBytes = new Uint8Array(await decryptBongAsset(rawBytes, key.rawKeyBase64));
-              }
+          const rawBuf = await fetchDeviceBlob(manifestScene.hash, blobBase);
+          const rawBytes = new Uint8Array(rawBuf);
+          let plainBytes = rawBytes;
+          if (isBongEncrypted(rawBytes)) {
+            const key = SimulatedDeviceSecurity.getStoredContentKey();
+            if (key) {
+              plainBytes = new Uint8Array(await decryptBongAsset(rawBytes, key.rawKeyBase64));
             }
-            const text = new TextDecoder().decode(plainBytes);
-            const parsed = JSON.parse(text) as V3Scene;
-            void VirtualSdCard.writeFile(`/sdcard/scenes/${id}.json`, plainBytes, 'application/json');
-            engine.loadScene(parsed, startStepId);
-            return;
           }
+          const text = new TextDecoder().decode(plainBytes);
+          const parsed = JSON.parse(text) as V3Scene;
+          void VirtualSdCard.writeFile(`/sdcard/scenes/${id}.json`, plainBytes, 'application/json');
+          engine.loadScene(parsed, startStepId);
+          return;
         } catch (err) {
           console.warn('Error loading manifest scene blob:', err);
-        }
-      }
-
-      // Direct fallback for production scenes if manifest is not ready yet
-      const PRODUCTION_SCENE_HASHES: Record<string, string> = {
-        HAHA: '73e18d0c6d97fab9f190a3872b9e37fe3fe577f2e77708a6c69de3e79cede89b',
-        START: 'ec77180aa18b7e4f8a455f73fa43ae3b27c7ebcb61c85defd73e54f231bf3434',
-        END: 'd0a9e736acfaae8f16222d5fdbaa0dd8bdc22e9445a61a07d16baa3ef71c29e9',
-      };
-      if (PRODUCTION_SCENE_HASHES[id]) {
-        try {
-          const res = await fetch(`/api/v1/o/${PRODUCTION_SCENE_HASHES[id]}`);
-          if (res.ok) {
-            const text = await res.text();
-            const parsed = JSON.parse(text) as V3Scene;
-            void VirtualSdCard.writeFile(`/sdcard/scenes/${id}.json`, new TextEncoder().encode(text), 'application/json');
-            engine.loadScene(parsed, startStepId);
-            return;
-          }
-        } catch (err) {
-          console.warn('Error fetching production scene directly:', err);
         }
       }
 
@@ -215,12 +196,9 @@ export function V3EngineProvider({ children }: { children: ReactNode }) {
         const items = await fetchCdnCatalog();
         const item = items.find((c) => c.id === id);
         const metaUrl = item?.metadataUrl || `/cdn/lessions/${id}/metadata.json`;
-        const res = await fetch(metaUrl);
-        if (res.ok) {
-          const rawMeta = await res.json();
-          const v3Scene = convertMetadataToV3Scene(id, item?.title || id, rawMeta);
-          engine.loadScene(v3Scene, startStepId);
-        }
+        const rawMeta = await fetchJsonUrl(metaUrl);
+        const v3Scene = convertMetadataToV3Scene(id, item?.title || id, rawMeta);
+        engine.loadScene(v3Scene, startStepId);
       } catch (err) {
         console.warn('Fallback catalog fetch error:', err);
       }
@@ -259,22 +237,15 @@ export function V3EngineProvider({ children }: { children: ReactNode }) {
     setIsFetchingManifest(true);
     setManifestError(null);
     try {
-      const res = await fetch('/api/v1/device/manifest?device_id=simulator_v3_dev');
-      if (res.ok) {
-        const data: V3DeviceManifest = await res.json();
-        setBackendManifest(data);
-        await VirtualSdCard.saveManifestCache(data);
-        if (data.prompts) await VirtualSdCard.savePromptsCache(data.prompts);
-        if (data.cfg) await VirtualSdCard.saveConfigCache(data.cfg);
+      const data = await fetchDeviceManifest({ deviceId: 'simulator_v3_dev' });
+      setBackendManifest(data);
+      if (data.prompts) await VirtualSdCard.savePromptsCache(data.prompts);
+      if (data.cfg) await VirtualSdCard.saveConfigCache(data.cfg);
 
-        if (data.scenes && data.scenes.length > 0) {
-          void syncCatalogWithManifest(data.scenes);
-        }
-        return data;
-      } else {
-        setManifestError(`Backend HTTP ${res.status}`);
-        return null;
+      if (data.scenes && data.scenes.length > 0) {
+        void syncCatalogWithManifest(data.scenes);
       }
+      return data;
     } catch (err: any) {
       setManifestError(err?.message || 'Lỗi mạng');
       return null;
